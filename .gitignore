@@ -1,0 +1,5 @@
+.env
+*.local.json
+
+bin/
+.flux-state/

@@ -1,0 +1,58 @@
+# Flux server for a self-hosted GitLab instance.
+#
+# Copy .env.example to .env, fill in the required values, then run:
+#   docker compose -f compose.yml up --build -d
+#
+# Configure the GitLab group webhook to POST to:
+#   http(s)://<flux-host>/webhooks/gitlab
+# using FLUX_GITLAB_WEBHOOK_SECRET as its secret token. Enable issue,
+# merge-request, pipeline, push, and deployment events as appropriate.
+# If group webhooks are unavailable, configure the same hook on each project.
+
+name: ${COMPOSE_PROJECT_NAME:-flux}
+
+services:
+  flux:
+    build:
+      context: .
+      target: server
+      args:
+        VERSION: ${VERSION:-dev-docker}
+    restart: unless-stopped
+    ports:
+      - "${FLUX_PORT:-8080}:8080"
+    environment:
+      TZ: "${TZ:-UTC}"
+
+      # Flux HTTP server and local durable state.
+      FLUX_ADDR: ":8080"
+      FLUX_STATE_DIR: /var/lib/flux
+      FLUX_RECONCILE_INTERVAL: "${FLUX_RECONCILE_INTERVAL:-5m}"
+
+      # GitLab group source and background reconciliation credential.
+      FLUX_GITLAB_URL: "${FLUX_GITLAB_URL:?set FLUX_GITLAB_URL}"
+      FLUX_GITLAB_SERVICE_TOKEN: "${FLUX_GITLAB_SERVICE_TOKEN:?set FLUX_GITLAB_SERVICE_TOKEN}"
+      FLUX_GITLAB_GROUP: "${FLUX_GITLAB_GROUP:?set FLUX_GITLAB_GROUP}"
+      FLUX_SPRINT_GOAL: "${FLUX_SPRINT_GOAL:-}"
+      FLUX_GITLAB_BLOCKED_LABELS: "${FLUX_GITLAB_BLOCKED_LABELS:-status::blocked,blocked}"
+      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:?set FLUX_GITLAB_WEBHOOK_SECRET}"
+
+      # Sealed browser session key. Generate with: openssl rand -hex 32
+      FLUX_SESSION_KEY: "${FLUX_SESSION_KEY:?set FLUX_SESSION_KEY to 64 hex characters}"
+
+      # GitLab OAuth application. Register the exact redirect URL in GitLab.
+      FLUX_GITLAB_OAUTH_CLIENT_ID: "${FLUX_GITLAB_OAUTH_CLIENT_ID:?set FLUX_GITLAB_OAUTH_CLIENT_ID}"
+      FLUX_GITLAB_OAUTH_CLIENT_SECRET: "${FLUX_GITLAB_OAUTH_CLIENT_SECRET:?set FLUX_GITLAB_OAUTH_CLIENT_SECRET}"
+      FLUX_GITLAB_OAUTH_REDIRECT_URL: "${FLUX_GITLAB_OAUTH_REDIRECT_URL:?set FLUX_GITLAB_OAUTH_REDIRECT_URL}"
+
+    volumes:
+      - state:/var/lib/flux
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  state:
