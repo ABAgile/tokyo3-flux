@@ -149,6 +149,54 @@ type FlowPayload = {
 	uncertainties?: string[];
 };
 
+type HumanContextEntry = {
+	id?: string;
+	revision?: number;
+	kind?: string;
+	status?: string;
+	confidence?: string;
+	created_at?: string;
+	updated_at?: string;
+	author_subject?: string;
+	statement?: string;
+	category?: string;
+	item_ids?: string[];
+	milestone?: string;
+	scope_action?: string;
+	decision_owner?: string;
+	reporting_from?: string;
+	reporting_until?: string;
+	effective_at?: string;
+	source_urls?: string[];
+	supersedes_id?: string;
+};
+
+type ContextCoveragePayload = {
+	context_started_at?: string;
+	retained_from?: string;
+	last_updated_at?: string;
+	provenance?: string;
+	records?: number;
+	revisions?: number;
+	retention?: string;
+	scope?: string;
+	uncertainties?: string[];
+};
+
+type ContextPayload = {
+	status?: string;
+	entries?: HumanContextEntry[];
+	coverage?: ContextCoveragePayload;
+};
+
+type ContextParams = {
+	from?: string;
+	to?: string;
+	item_id?: string;
+	kind?: string;
+	limit?: number;
+};
+
 type FluxTodayDetails = {
 	command: string;
 	generatedAt?: string;
@@ -194,6 +242,15 @@ type FluxFlowDetails = {
 	changeCount: number;
 	completedCount: number;
 	bucketCount: number;
+	uncertaintyCount: number;
+	truncated?: boolean;
+	fullOutputPath?: string;
+};
+
+type FluxContextDetails = {
+	command: string;
+	resultCount: number;
+	revisionCount: number;
 	uncertaintyCount: number;
 	truncated?: boolean;
 	fullOutputPath?: string;
@@ -279,6 +336,10 @@ function parseFlowPayload(output: string): FlowPayload {
 	return parseObjectPayload(output, "flux flow") as FlowPayload;
 }
 
+function parseContextPayload(output: string): ContextPayload {
+	return parseObjectPayload(output, "flux context") as ContextPayload;
+}
+
 async function saveFullOutput(output: string, filename = "today.json"): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), "pi-flux-"));
 	const path = join(directory, filename);
@@ -355,6 +416,16 @@ function apiFlowURL(rawURL: string, params: FlowParams): URL {
 	if (params.to?.trim()) endpoint.searchParams.set("to", params.to.trim());
 	if (params.item_id?.trim()) endpoint.searchParams.set("item_id", params.item_id.trim());
 	if (params.milestone?.trim()) endpoint.searchParams.set("milestone", params.milestone.trim());
+	return endpoint;
+}
+
+function apiContextURL(rawURL: string, params: ContextParams): URL {
+	const endpoint = new URL("/api/context", apiBaseURL(rawURL));
+	if (params.from?.trim()) endpoint.searchParams.set("from", params.from.trim());
+	if (params.to?.trim()) endpoint.searchParams.set("to", params.to.trim());
+	if (params.item_id?.trim()) endpoint.searchParams.set("item_id", params.item_id.trim());
+	if (params.kind?.trim()) endpoint.searchParams.set("kind", params.kind.trim());
+	if (params.limit !== undefined) endpoint.searchParams.set("limit", String(params.limit));
 	return endpoint;
 }
 
@@ -697,6 +768,56 @@ async function fetchFlow(
 		return fetchFlowAPI(apiURL, token, params, signal);
 	}
 	return fetchFlowCLI(pi, command, params, signal);
+}
+
+async function fetchContextCLI(
+	pi: ExtensionAPI,
+	command: string,
+	params: ContextParams,
+	signal: AbortSignal,
+): Promise<{ payload: ContextPayload; output: string }> {
+	const args = ["context", "--json", "--limit", String(params.limit ?? 50)];
+	if (params.from?.trim()) args.push("--from", params.from.trim());
+	if (params.to?.trim()) args.push("--to", params.to.trim());
+	if (params.item_id?.trim()) args.push("--item", params.item_id.trim());
+	if (params.kind?.trim()) args.push("--kind", params.kind.trim());
+	const output = await fetchJSONCLIOutput(pi, command, args, signal, "flux context");
+	return { payload: parseContextPayload(output), output };
+}
+
+async function fetchContextAPI(
+	apiURL: string,
+	token: string,
+	params: ContextParams,
+	signal: AbortSignal,
+): Promise<{ payload: ContextPayload; output: string }> {
+	const output = await fetchReadOnlyAPIOutput(token, apiContextURL(apiURL, params), signal, "human context lookup");
+	return { payload: parseContextPayload(output), output };
+}
+
+async function fetchContext(
+	pi: ExtensionAPI,
+	command: string,
+	apiURL: string,
+	token: string,
+	params: ContextParams,
+	signal: AbortSignal,
+): Promise<{ payload: ContextPayload; output: string }> {
+	if (apiURL || token) {
+		if (!apiURL || !token) throw new Error("FLUX_API_URL and FLUX_API_TOKEN must be set together");
+		return fetchContextAPI(apiURL, token, params, signal);
+	}
+	return fetchContextCLI(pi, command, params, signal);
+}
+
+function contextDetails(command: string, payload: ContextPayload): FluxContextDetails {
+	const uncertainties = payload.coverage?.uncertainties ?? [];
+	return {
+		command,
+		resultCount: Array.isArray(payload.entries) ? payload.entries.length : 0,
+		revisionCount: typeof payload.coverage?.revisions === "number" ? payload.coverage.revisions : 0,
+		uncertaintyCount: uncertainties.length,
+	};
 }
 
 function snapshotDetails(command: string, payload: SnapshotPayload): FluxSnapshotDetails {
@@ -1264,6 +1385,61 @@ export default function fluxExtension(pi: ExtensionAPI) {
 				0,
 				0,
 			);
+		},
+	});
+
+	pi.registerTool({
+		name: "flux_context",
+		label: "Flux Human Context",
+		description:
+			"Read confirmed, human-reported delivery context for an optional time window, work item, or kind. This is read-only; it is an explicitly labeled overlay and does not change GitLab-derived status or counts.",
+		promptSnippet: "Read confirmed human delivery context from Flux",
+		promptGuidelines: [
+			"Use flux_context when a ceremony report needs confirmed human explanations or scope decisions alongside GitLab evidence.",
+			"Treat every entry as reported human context, not as GitLab evidence or an independently verified cause.",
+			"Report the coverage and uncertainties, and do not infer blame, performance, medical details, or protected characteristics.",
+		],
+		parameters: Type.Object({
+			from: Type.Optional(Type.String({ description: "Inclusive RFC3339 reporting-window lower bound" })),
+			to: Type.Optional(Type.String({ description: "Exclusive RFC3339 reporting-window upper bound" })),
+			item_id: Type.Optional(Type.String({ description: "Related work-item ID filter" })),
+			kind: Type.Optional(Type.String({ description: "delay_explanation or scope_change" })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+		}),
+
+		async execute(_toolCallId, params, signal) {
+			const request = (params || {}) as ContextParams;
+			const { payload, output } = await fetchContext(pi, command, apiURL, apiToken, request, signal);
+			const truncation = truncateHead(output, {
+				maxLines: DEFAULT_MAX_LINES,
+				maxBytes: DEFAULT_MAX_BYTES,
+			});
+			const details: FluxContextDetails = contextDetails(source, payload);
+			let text = truncation.content;
+			if (truncation.truncated) {
+				details.truncated = true;
+				details.fullOutputPath = await saveFullOutput(output, "context.json");
+				text +=
+					`\n\n[Output truncated: showing ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)} ` +
+					`and ${truncation.outputLines} of ${truncation.totalLines} lines. Full output: ${details.fullOutputPath}]`;
+			}
+			return {
+				content: [{ type: "text", text }],
+				details,
+			};
+		},
+
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("Flux human context")), 0, 0);
+		},
+
+		renderResult(result, { isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("muted", "Loading human context…"), 0, 0);
+			const details = result.details as FluxContextDetails | undefined;
+			if (!details) return new Text(theme.fg("success", "Human context loaded"), 0, 0);
+			const uncertainty = details.uncertaintyCount > 0 ? theme.fg("warning", ` · ${details.uncertaintyCount} uncertainties`) : "";
+			const truncated = details.truncated ? theme.fg("warning", " · truncated") : "";
+			return new Text(theme.fg("success", `Human context loaded · ${details.resultCount} entries · ${details.revisionCount} revisions`) + uncertainty + truncated, 0, 0);
 		},
 	});
 

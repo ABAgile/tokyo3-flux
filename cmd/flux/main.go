@@ -16,6 +16,7 @@ import (
 	"abagile.com/tokyo3/flux/internal/action"
 	"abagile.com/tokyo3/flux/internal/api"
 	fluxauth "abagile.com/tokyo3/flux/internal/auth"
+	humancontext "abagile.com/tokyo3/flux/internal/context"
 	"abagile.com/tokyo3/flux/internal/domain"
 	"abagile.com/tokyo3/flux/internal/fixture"
 	"abagile.com/tokyo3/flux/internal/gitlab"
@@ -63,6 +64,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runHistoricalSnapshot(args[1:], stdout, stderr)
 	case "flow":
 		return runFlow(args[1:], stdout, stderr)
+	case "context":
+		return runContext(args[1:], stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintf(stdout, "%s %s\n", appName, baseversion.Resolve(Version))
 		return err
@@ -133,6 +136,10 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	contextRetentionDefault, err := durationFromEnv("FLUX_CONTEXT_RETENTION", 90*24*time.Hour)
+	if err != nil {
+		return err
+	}
 
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -149,6 +156,7 @@ func runServe(args []string, stderr io.Writer) error {
 	overlapWindow := flags.Duration("reconcile-overlap", overlapDefault, "source activity overlap window for incremental pulls")
 	fullScanInterval := flags.Duration("full-scan-interval", fullScanDefault, "maximum interval between full source scans")
 	historyRetention := flags.Duration("history-retention", historyRetentionDefault, "duration to retain derived history; 0 disables pruning")
+	contextRetention := flags.Duration("context-retention", contextRetentionDefault, "duration to retain human context; 0 disables pruning")
 	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -167,6 +175,9 @@ func runServe(args []string, stderr io.Writer) error {
 	}
 	if *historyRetention < 0 {
 		return errors.New("history retention must not be negative")
+	}
+	if *contextRetention < 0 {
+		return errors.New("context retention must not be negative")
 	}
 
 	fixtureMode := strings.TrimSpace(*fixturePath) != ""
@@ -233,6 +244,7 @@ func runServe(args []string, stderr io.Writer) error {
 	store, err := state.OpenFileStoreWithOptions(*stateDir, state.FileStoreOptions{
 		StaleAfter:       *staleAfter,
 		HistoryRetention: *historyRetention,
+		ContextRetention: *contextRetention,
 	})
 	if err != nil {
 		return fmt.Errorf("open state store: %w", err)
@@ -334,6 +346,18 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configure GitLab action HTTP handler: %w", err)
 	}
+	contextService, err := humancontext.New(humancontext.Config{
+		Store:          store,
+		Log:            rt.Log,
+		RedactSubjects: splitList(os.Getenv("FLUX_CONTEXT_REDACT_SUBJECTS")),
+	})
+	if err != nil {
+		return fmt.Errorf("configure human context service: %w", err)
+	}
+	contextHandler, err := humancontext.NewHandler(contextService, sessions)
+	if err != nil {
+		return fmt.Errorf("configure human context HTTP handler: %w", err)
+	}
 	syncHandler, err := api.NewSyncHandler(reconciler, sessions)
 	if err != nil {
 		return fmt.Errorf("configure manual sync handler: %w", err)
@@ -342,11 +366,17 @@ func runServe(args []string, stderr io.Writer) error {
 	browserAPIHandler := sessions.Gate(apiHandler)
 	machineAPIHandler := machineToken.Gate(apiHandler, browserAPIHandler)
 	syncRoute := machineToken.Gate(syncHandler, sessions.Gate(syncHandler))
+	contextRoute := sessions.Gate(contextHandler)
 	routes := http.NewServeMux()
 	routes.Handle("/auth/", authHandler)
 	routes.Handle("/api/sync/status", machineAPIHandler)
 	routes.Handle("/api/sync/csrf", syncRoute)
 	routes.Handle("/api/sync", syncRoute)
+	routes.Handle("/api/context/csrf", contextRoute)
+	routes.Handle("/api/context/plan", contextRoute)
+	routes.Handle("/api/context/confirm", contextRoute)
+	routes.Handle("/api/context/redact/plan", contextRoute)
+	routes.Handle("/api/context/redact/confirm", contextRoute)
 	routes.Handle("/api/actions/", sessions.Gate(actionHandler))
 	routes.Handle("/api/", machineAPIHandler)
 	routes.Handle("/", sessions.Gate(cockpitHandler))
@@ -363,7 +393,7 @@ func runServe(args []string, stderr io.Writer) error {
 	if fixtureMode {
 		mode = "fixture"
 	}
-	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "reconcile_overlap", *overlapWindow, "full_scan_interval", *fullScanInterval, "history_retention", *historyRetention, "mutation_enabled", mutationClient != nil, "webhook_enabled", webhookEnabled, "mode", mode, "fixture", strings.TrimSpace(*fixturePath))
+	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "reconcile_overlap", *overlapWindow, "full_scan_interval", *fullScanInterval, "history_retention", *historyRetention, "context_retention", *contextRetention, "mutation_enabled", mutationClient != nil, "webhook_enabled", webhookEnabled, "mode", mode, "fixture", strings.TrimSpace(*fixturePath))
 
 	return baserun.Group(rt.Ctx,
 		baserun.HTTPServer(server, 10*time.Second, false),
@@ -575,6 +605,88 @@ func renderFlow(w io.Writer, result state.FlowResult) error {
 		}
 	}
 	return renderUncertainties(w, result.Uncertainties)
+}
+
+func runContext(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("context", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory containing confirmed human context")
+	fromRaw := flags.String("from", "", "inclusive RFC3339 lower bound for reporting-window overlap")
+	toRaw := flags.String("to", "", "exclusive RFC3339 upper bound for reporting-window overlap")
+	itemID := flags.String("item", "", "filter by a work-item ID")
+	kind := flags.String("kind", "", "filter by context kind")
+	limit := flags.Int("limit", state.DefaultContextLimit, "maximum number of context records to print")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("context accepts flags only")
+	}
+	if *limit < 1 || *limit > state.MaxContextLimit {
+		return fmt.Errorf("limit must be between 1 and %d", state.MaxContextLimit)
+	}
+	from, err := parseTimeFlag(*fromRaw, "from")
+	if err != nil {
+		return err
+	}
+	to, err := parseTimeFlag(*toRaw, "to")
+	if err != nil {
+		return err
+	}
+	if !from.IsZero() && !to.IsZero() && !to.After(from) {
+		return errors.New("to must be after from")
+	}
+	store, err := state.OpenFileStore(*stateDir)
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	result, err := store.ListContext(state.ContextQuery{
+		Since:  from,
+		Until:  to,
+		ItemID: *itemID,
+		Kind:   *kind,
+		Limit:  *limit,
+	})
+	if err != nil {
+		return fmt.Errorf("read human context: %w", err)
+	}
+	if *jsonOutput {
+		return renderContextJSON(stdout, result)
+	}
+	return renderContext(stdout, result)
+}
+
+func renderContextJSON(w io.Writer, result state.ContextResult) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func renderContext(w io.Writer, result state.ContextResult) error {
+	if _, err := fmt.Fprintf(w, "Human context: %d confirmed records\n", len(result.Entries)); err != nil {
+		return err
+	}
+	for _, entry := range result.Entries {
+		line := fmt.Sprintf("- %s · %s · %s", entry.UpdatedAt.Format(time.RFC3339), entry.Kind, entry.Statement)
+		if entry.Category != "" {
+			line += " · " + entry.Category
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+		if entry.ReportingFrom != nil && entry.ReportingUntil != nil {
+			if _, err := fmt.Fprintf(w, "  window: %s to %s\n", entry.ReportingFrom.Format(time.RFC3339), entry.ReportingUntil.Format(time.RFC3339)); err != nil {
+				return err
+			}
+		}
+		if len(entry.ItemIDs) > 0 {
+			if _, err := fmt.Fprintf(w, "  items: %s\n", strings.Join(entry.ItemIDs, ", ")); err != nil {
+				return err
+			}
+		}
+	}
+	return renderUncertainties(w, result.Coverage.Uncertainties)
 }
 
 func renderUncertainties(w io.Writer, uncertainties []string) error {
@@ -920,6 +1032,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  flux history --item team/project#12 --json")
 	fmt.Fprintln(w, "  flux snapshot --at 2026-01-01T00:00:00Z --json")
 	fmt.Fprintln(w, "  flux flow --from 2026-01-01T00:00:00Z --json")
+	fmt.Fprintln(w, "  flux context --kind delay_explanation --json")
 	fmt.Fprintln(w, "  flux version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "GitLab scope is configured with FLUX_GITLAB_GROUP.")
@@ -927,4 +1040,5 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Live server also requires FLUX_SESSION_KEY and GitLab OAuth settings; webhook setup is optional.")
 	fmt.Fprintln(w, "Use --fixture or FLUX_FIXTURE_FILE for a loopback-only offline cockpit server.")
 	fmt.Fprintln(w, "Use flux changes, history, snapshot, and flow to inspect the derived historical read model.")
+	fmt.Fprintln(w, "Use flux context to inspect confirmed human-reported delivery context; it does not alter derived state.")
 }

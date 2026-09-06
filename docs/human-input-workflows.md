@@ -1,77 +1,121 @@
 # Human-input workflows
 
-Flux should collect context that GitLab cannot authoritatively represent without
+Flux collects context that GitLab cannot authoritatively represent without
 turning Flux into a second backlog or a personnel-management system. These
 records are evidence for reports, not replacements for GitLab state.
 
 ## Boundaries
 
 - Pi and machine credentials remain read-only.
-- A browser session, CSRF protection, and an explicit confirmation are required
-  to create or edit context.
+- A browser session, session-bound CSRF protection, and an explicit confirmation
+  are required to create, correct, or redact context.
 - Context never changes a derived GitLab status, milestone, throughput count, or
   historical revision.
-- AI may draft a proposed entry and ask a question; a human supplies and
-  confirms the fact.
+- A plan is labeled `proposed` and is held in memory for ten minutes. Only the
+  authenticated actor who created it can confirm it, and confirmation consumes
+  the plan once.
+- AI may draft an entry and ask a question; a human supplies and confirms the
+  fact. AI cannot confirm, correct, or redact it.
 - Do not collect medical details, protected characteristics, performance
   ratings, blame, or speculative causal claims.
 
 ## First-class context types
 
-1. **Incident** — an operational or delivery incident, its affected window,
-   linked work items, impact, and current mitigation.
-2. **Delay explanation** — a human-provided explanation for a late or blocked
-   item, with an optional category such as dependency, review, environment,
-   scope, or external decision.
-3. **Scope change** — an accepted add/remove/defer decision, the responsible
-   decision-maker, reason, and effective observation window.
-4. **Capacity/holiday** — team availability or a non-working period. Store only
-   the minimum aggregate capacity signal needed for planning; avoid individual
-   attendance records.
-5. **Decision/follow-up** — a decision, owner, due date, and link to the
-   ceremony or source discussion.
+The first implemented slice is deliberately small:
 
-Every entry should include a stable ID, kind, created/updated timestamps,
-reporting window, author subject, concise statement, confidence (`confirmed`,
-`reported`, or `proposed`), linked Flux item/entity keys, optional source links,
-and an audit trail. `proposed` entries must not appear as confirmed facts.
+1. **Delay explanation** — a human-provided explanation for a late or blocked
+   item, with a category such as dependency, review, environment, scope,
+   external decision, or other.
+2. **Scope change** — an accepted add/remove/defer decision, optional decision
+   owner, reason, and effective date/window.
 
-## Lifecycle
+Incident, capacity/holiday, and decision/follow-up records remain future types.
+Do not add individual attendance, medical, protected-characteristic, or
+performance data to those future workflows.
+
+Every confirmed entry has a stable ID, revision, kind, timestamps, reporting
+window, authenticated author subject, concise statement, `confirmed` status and
+confidence, optional linked Flux item keys, optional milestone, and optional
+HTTP(S) source links. A content hash is retained for audit correlation. The
+write validator bounds all free-text, IDs, URLs, and list sizes.
+
+## Lifecycle and corrections
 
 ```text
-draft → submitted → confirmed → superseded/closed
-                 ↘ rejected
+plan (proposed) → confirm (confirmed) → correct (new revision)
+                                      ↘ redact (redacted)
 ```
 
-- Pi can produce a draft from observed evidence and a human's answer.
-- The browser displays the exact fields and affected report window before
-  submission.
-- Confirmation is one-time and records the authenticated subject, timestamp,
-  and a content hash.
-- Corrections append a new revision; do not overwrite the evidence needed to
-  explain an earlier report.
-- Retention should follow the history policy, with a shorter default for free
-  text and an explicit deletion/redaction path for administrators.
+- The browser displays the exact normalized fields, operation, reporting window,
+  and expiry before confirmation.
+- Confirmation records the authenticated subject, timestamp, operation, and
+  content hash in a secret-free audit log.
+- A correction submits `supersedes_id` and appends the next revision under the
+  same stable context ID. Earlier revisions remain available for explanation.
+- A redaction is also planned and confirmed in the browser. It appends a
+  redacted revision, scrubs retained free-text fields and source links from all
+  retained revisions for that ID, and preserves only operation metadata plus a
+  one-way original content hash in the audit log.
+- Redaction is allowed for the current revision's author by default. Set
+  `FLUX_CONTEXT_REDACT_SUBJECTS` to a comma-separated allow-list of OAuth
+  subject IDs for an administrator-controlled redaction policy.
+- Redaction and retention are the intentional exceptions to ordinary
+  append-only context storage: redaction rewrites the target record so the
+  removed text is not left in `context.jsonl`.
 
-## Proposed read/write surface
+## Storage and retention
 
-The first implementation can use an append-only context log alongside the
-history log, then move to SQLite with the same model:
+The initial single-process backend is an append-only `context.jsonl` alongside
+`context_audit.jsonl`. State is derived locally; GitLab remains authoritative.
+`GET /api/context/{id}` returns retained revisions and secret-free audit
+metadata, not pending plans.
 
-- `GET /api/context?from=&to=&item_id=&kind=` — browser and machine read view.
-- Browser-only `POST /api/context/plan` — validate and display a proposed entry.
-- Browser-only `POST /api/context/confirm` — CSRF- and approval-gated append.
-- `GET /api/context/{id}` — revisions and audit metadata.
+Human context uses `FLUX_CONTEXT_RETENTION`, independently of derived history,
+with a 90-day server default (`2160h`). Set it to `0` to retain it indefinitely.
+Pruning removes records and audit events older than the configured window and
+reports the retained boundary and uncertainty in `coverage`. This policy is a
+controlled deletion boundary for free text; it does not change GitLab data or
+Flux's derived history.
 
-Machine/API and Pi responses should include `coverage`, `provenance`, and
-`uncertainties`, and distinguish human-reported context from Flux-observed
-changes. Context should be joined into standup, planning, and retrospective
-reports only as an explicitly labeled overlay.
+## API and CLI surface
 
-## Recommended first slice
+Read-only routes are available to browser sessions and valid `FLUX_API_TOKEN`
+machine credentials:
 
-Start with **delay explanations and scope changes**. They answer the most
-useful retrospective questions while keeping the data model small. Validate
-field minimization, correction/redaction, and report wording with the team
-before adding incidents or capacity signals. Do not add capacity forecasting
-or individual-level analytics until the team has explicitly agreed on policy.
+- `GET /api/context?from=&to=&item_id=&kind=&limit=` — latest confirmed entry
+  per context ID, with `coverage` and uncertainties. Reporting windows overlap
+  the query window; `to` is exclusive.
+- `GET /api/context/{id}` — retained revisions and audit metadata for one ID.
+
+Browser-only write routes are protected by the authenticated session and a
+context-specific CSRF token:
+
+- `GET /api/context/csrf`
+- `POST /api/context/plan`
+- `POST /api/context/confirm`
+- `POST /api/context/redact/plan`
+- `POST /api/context/redact/confirm`
+
+`POST /api/context/plan` accepts the two context kinds and optional
+`supersedes_id` for corrections. Redaction plans accept `context_id`. Machine
+Bearer credentials are rejected by the browser session gate, even though
+machine credentials may read confirmed context.
+
+The read-only CLI equivalent is:
+
+```sh
+flux context --kind delay_explanation --json
+flux context --item tokyo3/flux#12 --json
+```
+
+The Pi `flux_context` tool uses the authenticated read API when configured and
+falls back to `flux context --json`. It never sends a GitLab credential and
+cannot invoke a write route.
+
+## Reporting use
+
+Join context into standup, planning, refinement, or retrospective output only
+as an explicitly labeled **human-reported overlay**. Keep GitLab-derived status,
+counts, timestamps, and Flux-observed changes separate. A confirmed statement
+is not independently verified cause evidence; reports must preserve coverage,
+provenance, and uncertainties and must not infer blame or performance.

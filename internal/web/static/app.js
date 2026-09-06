@@ -35,6 +35,14 @@
       busy: false,
       generation: 0,
     },
+    context: {
+      csrfToken: "",
+      plan: null,
+      busy: false,
+      generation: 0,
+      mode: "create",
+      targetID: "",
+    },
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -192,6 +200,62 @@
       lastError: clean(raw.last_error),
       snapshotGeneratedAt: clean(raw.snapshot_generated_at),
     };
+  }
+
+  function normalizeContext(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Flux returned an invalid human context response");
+    }
+    const entries = Array.isArray(raw.entries) ? raw.entries : [];
+    return {
+      entries: entries
+        .filter((entry) => entry && typeof entry === "object" && !Array.isArray(entry))
+        .map((entry) => ({
+          id: clean(entry.id),
+          revision: numberValue(entry.revision, 1),
+          kind: clean(entry.kind),
+          status: clean(entry.status),
+          confidence: clean(entry.confidence),
+          category: clean(entry.category),
+          statement: limited(entry.statement, "", 2000),
+          itemIDs: Array.isArray(entry.item_ids) ? entry.item_ids.map(clean).filter(Boolean).slice(0, 20) : [],
+          milestone: clean(entry.milestone),
+          scopeAction: clean(entry.scope_action),
+          reportingFrom: clean(entry.reporting_from),
+          reportingUntil: clean(entry.reporting_until),
+          effectiveAt: clean(entry.effective_at),
+          sourceURLs: Array.isArray(entry.source_urls) ? entry.source_urls.map(clean).filter(Boolean).slice(0, 5) : [],
+          createdAt: clean(entry.created_at),
+          decisionOwner: clean(entry.decision_owner),
+          updatedAt: clean(entry.updated_at),
+        }))
+        .filter((entry) => entry.id && entry.status === "confirmed" && entry.statement),
+      coverage: raw.coverage && typeof raw.coverage === "object" ? raw.coverage : {},
+    };
+  }
+
+  function contextKindLabel(kind) {
+    if (kind === "delay_explanation") return "Delay explanation";
+    if (kind === "scope_change") return "Scope change";
+    return "Human context";
+  }
+
+  function contextDate(value) {
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return "date unavailable";
+    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(date);
+  }
+
+  function contextWindow(entry) {
+    const fromValue = new Date(entry.reportingFrom);
+    const untilValue = new Date(entry.reportingUntil);
+    if (!entry.reportingFrom || !entry.reportingUntil || Number.isNaN(fromValue.getTime()) || Number.isNaN(untilValue.getTime())) return "reporting window unavailable";
+    let untilLabel = contextDate(untilValue.toISOString());
+    if (untilValue.getUTCHours() === 0 && untilValue.getUTCMinutes() === 0 && untilValue.getUTCSeconds() === 0 && untilValue.getUTCMilliseconds() === 0) {
+      untilValue.setUTCDate(untilValue.getUTCDate() - 1);
+      untilLabel = contextDate(untilValue.toISOString());
+    }
+    return `${contextDate(fromValue.toISOString())} – ${untilLabel}`;
   }
 
   function durationText(milliseconds) {
@@ -735,6 +799,304 @@
     }
   }
 
+  function setContextMessage(message, error = false) {
+    const node = $("#context-message");
+    node.textContent = message;
+    if (error) node.dataset.kind = "error";
+    else delete node.dataset.kind;
+  }
+
+  function resetContextPlan() {
+    state.context.plan = null;
+    $("#context-plan").hidden = true;
+    $("#context-plan-summary").textContent = "";
+    $("#context-plan-detail").textContent = "";
+    $("#context-plan-expiry").textContent = "";
+    $("#context-plan-button").hidden = false;
+    $("#context-plan-button").disabled = false;
+    $("#context-confirm-button").hidden = false;
+    $("#context-confirm-button").disabled = true;
+    $("#context-cancel").textContent = "Cancel";
+    $("#context-plan-button").textContent = state.context.mode === "redact" ? "Preview redaction" : state.context.mode === "correct" ? "Preview correction" : "Preview context";
+    $("#context-confirm-button").textContent = state.context.mode === "redact" ? "Confirm and redact" : state.context.mode === "correct" ? "Confirm correction" : "Confirm and record";
+  }
+
+  function contextIsCurrent(generation) {
+    return state.context.generation === generation;
+  }
+
+  function setContextBusy(busy) {
+    state.context.busy = busy;
+    const form = $("#context-form");
+    const planButton = $("#context-plan-button");
+    const confirmButton = $("#context-confirm-button");
+    const hasPlan = Boolean(state.context.plan);
+    for (const field of form.querySelectorAll("input, select, textarea")) field.disabled = busy || hasPlan;
+    planButton.disabled = busy || hasPlan;
+    confirmButton.disabled = busy || !hasPlan;
+    // Keep Cancel and close available so a stale or slow request cannot trap
+    // the human in the approval dialog.
+    $("#context-cancel").disabled = false;
+    $("#context-dialog-close").disabled = false;
+    if (busy && hasPlan) {
+      confirmButton.textContent = state.context.mode === "redact" ? "Redacting…" : state.context.mode === "correct" ? "Correcting…" : "Recording…";
+      $("#context-cancel").textContent = "Close";
+    } else if (hasPlan) {
+      confirmButton.textContent = state.context.mode === "redact" ? "Confirm and redact" : state.context.mode === "correct" ? "Confirm correction" : "Confirm and record";
+      $("#context-cancel").textContent = "Discard plan";
+    } else {
+      confirmButton.textContent = state.context.mode === "redact" ? "Confirm and redact" : state.context.mode === "correct" ? "Confirm correction" : "Confirm and record";
+      $("#context-cancel").textContent = "Cancel";
+    }
+    if (busy && !planButton.hidden) planButton.textContent = "Planning…";
+    else if (!planButton.hidden) planButton.textContent = state.context.mode === "redact" ? "Preview redaction" : state.context.mode === "correct" ? "Preview correction" : "Preview context";
+  }
+
+  function populateContextItems() {
+    const select = $("#context-item");
+    if (!select) return;
+    const previous = clean(select.value);
+    select.replaceChildren(element("option", "", "No specific item"));
+    select.firstChild.value = "";
+    const items = state.snapshot && Array.isArray(state.snapshot.items) ? state.snapshot.items : [];
+    for (const item of items) {
+      const itemID = clean(item.id);
+      if (!itemID) continue;
+      const title = limited(item.title, "Untitled work item", 100);
+      const option = element("option", "", `${itemID} · ${title}`);
+      option.value = itemID;
+      select.appendChild(option);
+    }
+    if (previous && [...select.options].some((option) => option.value === previous)) select.value = previous;
+  }
+
+  function setContextKind() {
+    const scope = $("#context-kind").value === "scope_change";
+    const fields = $("#context-scope-fields");
+    const action = $("#context-scope-action");
+    const effective = $("#context-effective-at");
+    fields.hidden = !scope;
+    action.required = scope;
+    effective.required = scope;
+    action.disabled = !scope;
+    effective.disabled = !scope;
+    $("#context-decision-owner").disabled = !scope;
+  }
+
+  function dateOnlyToUTC(raw, exclusive) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+    const value = new Date(`${raw}T00:00:00Z`);
+    if (Number.isNaN(value.getTime())) return "";
+    if (exclusive) value.setUTCDate(value.getUTCDate() + 1);
+    return value.toISOString();
+  }
+
+  function contextFormPayload() {
+    const reportingFrom = $("#context-reporting-from").value;
+    const reportingUntil = $("#context-reporting-until").value;
+    const itemID = clean($("#context-item").value);
+    const sourceURL = clean($("#context-source-url").value);
+    return {
+      kind: clean($("#context-kind").value),
+      statement: $("#context-statement").value,
+      category: clean($("#context-category").value),
+      item_ids: itemID ? [itemID] : [],
+      milestone: $("#context-milestone").value,
+      scope_action: clean($("#context-scope-action").value),
+      decision_owner: $("#context-decision-owner").value,
+      reporting_from: dateOnlyToUTC(reportingFrom, false),
+      reporting_until: dateOnlyToUTC(reportingUntil, true),
+      effective_at: dateOnlyToUTC($("#context-effective-at").value, false),
+      source_urls: sourceURL ? [sourceURL] : [],
+      supersedes_id: state.context.mode === "correct" ? state.context.targetID : "",
+    };
+  }
+
+  function dateInputValue(value, inclusiveEnd = false) {
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return "";
+    if (inclusiveEnd) date.setUTCDate(date.getUTCDate() - 1);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function prepareContextDialog(mode, entry = null) {
+    const dialog = $("#context-dialog");
+    state.context.generation += 1;
+    state.context.plan = null;
+    state.context.busy = false;
+    state.context.mode = mode;
+    state.context.targetID = entry ? clean(entry.id) : "";
+    $("#context-form").reset();
+    $("#context-form-fields").hidden = mode === "redact";
+    $("#context-dialog-title").textContent = mode === "redact" ? "Redact delivery context" : mode === "correct" ? "Correct delivery context" : "Record delivery context";
+    $("#context-dialog-context").textContent = mode === "redact"
+      ? "This removes retained free-text context for the selected entry. The operation is append-only in the audit trail and requires explicit confirmation."
+      : "This note is an audited, human-reported overlay. It does not change GitLab status, counts, milestones, or historical revisions.";
+    if (entry && mode === "correct") {
+      $("#context-kind").value = entry.kind || "delay_explanation";
+      $("#context-category").value = entry.category || "other";
+      $("#context-reporting-from").value = dateInputValue(entry.reportingFrom);
+      $("#context-reporting-until").value = dateInputValue(entry.reportingUntil, true) || dateInputValue(entry.reportingFrom);
+      $("#context-milestone").value = entry.milestone;
+      $("#context-item").value = entry.itemIDs[0] || "";
+      $("#context-statement").value = entry.statement;
+      $("#context-scope-action").value = entry.scopeAction || "add";
+      $("#context-effective-at").value = dateInputValue(entry.effectiveAt);
+      $("#context-decision-owner").value = entry.decisionOwner;
+      $("#context-source-url").value = entry.sourceURLs[0] || "";
+    } else {
+      const today = new Date().toISOString().slice(0, 10);
+      $("#context-reporting-from").value = today;
+      $("#context-reporting-until").value = today;
+      $("#context-milestone").value = clean(state.snapshot?.sprint?.name);
+    }
+    populateContextItems();
+    setContextKind();
+    $("#context-form-fields").hidden = mode === "redact";
+    resetContextPlan();
+    setContextMessage(mode === "redact" ? `Review redaction of ${limited(entry?.id, "the selected entry", 100)}.` : mode === "correct" ? "Update the context, then preview the exact correction." : "Describe only observable delivery context, then preview the exact record.");
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    if (mode === "redact") $("#context-plan-button").focus();
+    else $("#context-kind").focus();
+  }
+
+  function openContextDialog() {
+    prepareContextDialog("create");
+  }
+
+  function openContextCorrection(entry) {
+    prepareContextDialog("correct", entry);
+  }
+
+  function openContextRedaction(entry) {
+    prepareContextDialog("redact", entry);
+  }
+
+  function discardContextState() {
+    state.context.generation += 1;
+    state.context.plan = null;
+    state.context.busy = false;
+    resetContextPlan();
+    setContextBusy(false);
+    setContextMessage("");
+  }
+
+  function closeContextDialog() {
+    const dialog = $("#context-dialog");
+    discardContextState();
+    if (dialog.open) dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  async function contextCSRFToken() {
+    if (state.context.csrfToken) return state.context.csrfToken;
+    const data = await fluxRequest("/api/context/csrf", { headers: { Accept: "application/json" } });
+    if (!clean(data.csrf_token)) throw new Error("Flux did not return a context authorization token");
+    state.context.csrfToken = data.csrf_token;
+    return state.context.csrfToken;
+  }
+
+  function contextPlanSummary(plan) {
+    const entry = plan && plan.entry && typeof plan.entry === "object" ? plan.entry : {};
+    if (clean(plan?.operation) === "redact") return `Redact ${contextKindLabel(clean(entry.kind)).toLowerCase()}`;
+    const parts = [contextKindLabel(clean(entry.kind)), clean(entry.category).replace(/_/g, " ")];
+    if (clean(entry.scope_action)) parts.push(clean(entry.scope_action));
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  function contextPlanDetail(plan) {
+    const entry = plan && plan.entry && typeof plan.entry === "object" ? plan.entry : {};
+    if (clean(plan?.operation) === "redact") return `Context: ${limited(entry.id, "selected entry", 100)} · free-text fields will be scrubbed from retained records; audit metadata will remain.`;
+    const details = [`Context: ${limited(entry.id, "new entry", 100)} · revision ${numberValue(entry.revision, 1)}`, limited(entry.statement, "No statement", 2000), contextWindow({ reportingFrom: clean(entry.reporting_from), reportingUntil: clean(entry.reporting_until) })];
+    if (clean(entry.milestone)) details.push(`Milestone: ${limited(entry.milestone, "", 200)}`);
+    if (Array.isArray(entry.item_ids) && entry.item_ids.length > 0) details.push(`Item: ${limited(entry.item_ids[0], "", 300)}`);
+    if (clean(entry.scope_action)) details.push(`Action: ${clean(entry.scope_action)}`);
+    if (clean(entry.effective_at)) details.push(`Effective: ${contextDate(entry.effective_at)}`);
+    if (clean(entry.decision_owner)) details.push(`Decision owner: ${limited(entry.decision_owner, "", 200)}`);
+    if (Array.isArray(entry.source_urls) && entry.source_urls.length > 0) details.push(`Evidence: ${limited(entry.source_urls[0], "", 500)}`);
+    return details.filter(Boolean).join(" · ");
+  }
+
+  async function planContext() {
+    const form = $("#context-form");
+    if (state.context.mode !== "redact" && !form.reportValidity()) return;
+    if (state.context.mode === "redact" && !state.context.targetID) {
+      setContextMessage("Choose a context entry to redact.", true);
+      return;
+    }
+    const generation = state.context.generation;
+    resetContextPlan();
+    setContextMessage("");
+    setContextBusy(true);
+    try {
+      const token = await contextCSRFToken();
+      if (!contextIsCurrent(generation)) return;
+      const data = await fluxRequest(state.context.mode === "redact" ? "/api/context/redact/plan" : "/api/context/plan", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": token,
+        },
+        body: JSON.stringify(state.context.mode === "redact" ? { context_id: state.context.targetID } : contextFormPayload()),
+      });
+      if (!contextIsCurrent(generation)) return;
+      if (!data.plan || !clean(data.plan.plan_id)) throw new Error("Flux did not return a context plan");
+      state.context.plan = data.plan;
+      $("#context-plan-summary").textContent = contextPlanSummary(data.plan);
+      $("#context-plan-detail").textContent = contextPlanDetail(data.plan);
+      $("#context-plan-expiry").textContent = `Confirmation: ${limited(data.plan.confirmation, "exact confirmation required", 180)} · Expires ${formatDate(data.plan.expires_at)}`;
+      $("#context-plan").hidden = false;
+      $("#context-plan-button").hidden = true;
+      setContextMessage("Review the exact record. Confirm only if it is correct and agreed by the team.");
+    } catch (error) {
+      if (!contextIsCurrent(generation)) return;
+      setContextMessage(error instanceof Error ? error.message : "Flux could not create a context plan.", true);
+    } finally {
+      if (contextIsCurrent(generation)) setContextBusy(false);
+    }
+  }
+
+  async function confirmContext() {
+    const generation = state.context.generation;
+    const plan = state.context.plan;
+    if (!plan) return;
+    setContextBusy(true);
+    try {
+      const token = await contextCSRFToken();
+      if (!contextIsCurrent(generation) || state.context.plan !== plan) return;
+      await fluxRequest(state.context.mode === "redact" ? "/api/context/redact/confirm" : "/api/context/confirm", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": token,
+        },
+        body: JSON.stringify({ plan_id: plan.plan_id, confirmation: plan.confirmation }),
+      });
+      if (!contextIsCurrent(generation) || state.context.plan !== plan) return;
+      closeContextDialog();
+      await loadContext();
+    } catch (error) {
+      if (!contextIsCurrent(generation)) return;
+      setContextMessage(error instanceof Error ? error.message : "Flux could not record the confirmed context.", true);
+      setContextBusy(false);
+    }
+  }
+
+  async function loadContext() {
+    try {
+      const data = await fluxRequest("/api/context?limit=20", { headers: { Accept: "application/json" } });
+      renderContext(normalizeContext(data));
+    } catch (error) {
+      const list = $("#context-list");
+      list.replaceChildren(contextErrorState(error instanceof Error ? error.message : "The Flux context API could not be reached."));
+      list.setAttribute("aria-busy", "false");
+      $("#context-summary").textContent = "Confirmed human context unavailable";
+    }
+  }
+
   function renderMetrics(snapshot) {
     const count = (status) => numberValue(snapshot.counts[status]);
     $("#hero-total").textContent = String(snapshot.total);
@@ -822,6 +1184,59 @@
     list.setAttribute("aria-busy", "false");
   }
 
+  function contextEntry(entry) {
+    const article = element("article", "context-entry");
+    const header = element("div", "context-entry-header");
+    header.append(element("span", "context-entry-kind", contextKindLabel(entry.kind)), element("time", "context-entry-time", `Recorded ${contextDate(entry.updatedAt)}`));
+    const statement = element("p", "context-entry-statement", entry.statement);
+    const meta = element("div", "context-entry-meta");
+    meta.setAttribute("aria-label", "Human context details");
+    if (entry.category) meta.appendChild(element("span", "", entry.category.replace(/_/g, " ")));
+    if (entry.reportingFrom && entry.reportingUntil) meta.appendChild(element("span", "", `Window: ${contextWindow(entry)}`));
+    if (entry.milestone) meta.appendChild(element("span", "", `Milestone: ${limited(entry.milestone, "", 120)}`));
+    if (entry.itemIDs.length > 0) meta.appendChild(element("span", "", `Items: ${entry.itemIDs.map((itemID) => limited(itemID, "", 80)).join(", ")}`));
+    if (entry.scopeAction) meta.appendChild(element("span", "", `Action: ${entry.scopeAction}`));
+    const actions = element("div", "context-entry-actions");
+    const correct = element("button", "context-entry-action", "Correct");
+    correct.type = "button";
+    correct.setAttribute("aria-label", `Correct ${contextKindLabel(entry.kind).toLowerCase()} ${limited(entry.id, "entry", 80)}`);
+    correct.addEventListener("click", () => openContextCorrection(entry));
+    const redact = element("button", "context-entry-action context-entry-action--quiet", "Redact");
+    redact.type = "button";
+    redact.setAttribute("aria-label", `Redact ${contextKindLabel(entry.kind).toLowerCase()} ${limited(entry.id, "entry", 80)}`);
+    redact.addEventListener("click", () => openContextRedaction(entry));
+    actions.append(correct, redact);
+    article.append(header, statement);
+    if (meta.childElementCount > 0) article.appendChild(meta);
+    article.appendChild(actions);
+    return article;
+  }
+
+  function contextErrorState(message) {
+    const node = element("div", "error-state");
+    node.append(element("strong", "", "Context unavailable"), element("span", "", limited(message, "Human context could not be loaded.", 180)));
+    return node;
+  }
+
+  function renderContext(data) {
+    const list = $("#context-list");
+    const entries = data.entries.slice(0, 20);
+    const count = data.entries.length;
+    const coverage = data.coverage || {};
+    let summary = `${count} confirmed human-reported ${count === 1 ? "entry" : "entries"}`;
+    if (clean(coverage.last_updated_at)) summary += ` · updated ${formatDate(coverage.last_updated_at)}`;
+    summary += " · overlay only";
+    $("#context-summary").textContent = summary;
+    list.replaceChildren();
+    list.setAttribute("aria-busy", "false");
+    if (entries.length === 0) {
+      list.appendChild(emptyState("No confirmed context yet", "Record an observable delay explanation or scope change when the team has agreed on it."));
+      return;
+    }
+    for (const entry of entries) list.appendChild(contextEntry(entry));
+    if (count > entries.length) list.appendChild(element("div", "empty-state", `Showing ${entries.length} of ${count} confirmed entries.`));
+  }
+
   function render(snapshot) {
     state.snapshot = snapshot;
     const name = clean(snapshot.sprint.name) || "No active milestone";
@@ -836,6 +1251,7 @@
     renderWork(snapshot);
     renderAttention(snapshot);
     renderQueues(snapshot);
+    populateContextItems();
   }
 
   function resetForError(message) {
@@ -1080,11 +1496,44 @@
     }
   });
 
+  $("#context-open-button").addEventListener("click", openContextDialog);
+  $("#context-panel-open-button").addEventListener("click", openContextDialog);
+  $("#context-dialog").addEventListener("close", () => {
+    if (state.context.plan || state.context.busy) discardContextState();
+  });
+  $("#context-dialog-close").addEventListener("click", closeContextDialog);
+  $("#context-cancel").addEventListener("click", closeContextDialog);
+  $("#context-kind").addEventListener("change", () => {
+    if (state.context.plan) resetContextPlan();
+    setContextKind();
+  });
+  for (const field of document.querySelectorAll("#context-form input, #context-form select, #context-form textarea")) {
+    field.addEventListener("input", () => {
+      if (state.context.plan) {
+        resetContextPlan();
+        setContextMessage("The plan was discarded because the context changed.");
+      }
+    });
+    field.addEventListener("change", () => {
+      if (state.context.plan) {
+        resetContextPlan();
+        setContextMessage("The plan was discarded because the context changed.");
+      }
+    });
+  }
+  $("#context-plan-button").addEventListener("click", planContext);
+  $("#context-confirm-button").addEventListener("click", confirmContext);
+  $("#context-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (state.context.plan) confirmContext();
+    else planContext();
+  });
+
   $("#reload-button").addEventListener("click", reloadView);
   $("#sync-button").addEventListener("click", syncNow);
   updateSyncButton();
   (async function initialize() {
-    await Promise.all([loadActionStatus(), loadSyncStatus()]);
+    await Promise.all([loadActionStatus(), loadSyncStatus(), loadContext()]);
     await loadMilestones();
     await reloadView();
   })();

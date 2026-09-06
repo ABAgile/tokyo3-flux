@@ -321,9 +321,11 @@ button {
 .button:focus-visible,
 .filter-button:focus-visible,
 .work-action:focus-visible,
+.context-entry-action:focus-visible,
 .dialog-close:focus-visible,
 .action-field input:focus-visible,
 .action-field select:focus-visible,
+.action-field textarea:focus-visible,
 .sign-out:focus-visible,
 .brand:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
@@ -1051,6 +1053,147 @@ h2 {
   color: var(--red);
 }
 
+.context-panel {
+  margin-top: 18px;
+  overflow: hidden;
+}
+
+.context-panel .panel-header {
+  align-items: center;
+}
+
+.context-list {
+  padding: 0 22px 12px;
+}
+
+.context-entry {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+
+.context-entry-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.context-entry-kind {
+  color: var(--accent-strong);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.context-entry-time {
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.context-entry-statement {
+  max-width: 860px;
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.context-entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  margin-top: 8px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.context-entry-meta span + span::before {
+  margin-right: 9px;
+  color: var(--line-strong);
+  content: "·";
+}
+
+.context-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 11px;
+}
+
+.context-entry-action {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.context-entry-action:hover {
+  border-color: var(--accent);
+}
+
+.context-entry-action--quiet {
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--ink-soft);
+}
+
+.context-entry-action--quiet:hover {
+  color: var(--ink);
+}
+
+.context-dialog.action-dialog {
+  width: min(calc(100% - 32px), 640px);
+  max-width: 640px;
+}
+
+.context-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.context-field-wide {
+  grid-column: 1 / -1;
+}
+
+.context-scope-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.context-scope-fields[hidden] {
+  display: none;
+}
+
+.action-field textarea {
+  width: 100%;
+  min-height: 104px;
+  padding: 10px 11px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.action-field textarea::placeholder {
+  color: var(--ink-faint);
+}
+
 .action-dialog {
   width: min(calc(100% - 32px), 520px);
   max-width: 520px;
@@ -1389,6 +1532,7 @@ h2 {
   .topbar-actions { gap: 11px; }
   .button--quiet { padding: 0 9px; }
   .button--quiet span:not(.theme-icon) { display: none; }
+  .button--quiet .context-button-mark { display: inline; }
   .theme-toggle .theme-icon { display: inline-grid; }
   .sign-out { font-size: 11px; }
   .hero {
@@ -1420,6 +1564,7 @@ h2 {
   .content-grid { gap: 12px; }
   .panel-header,
   .panel-header--work { min-height: 0; align-items: flex-start; padding: 18px 15px 13px; }
+  .context-panel .panel-header { align-items: flex-start; }
   .panel-header--work { flex-direction: column; }
   .filter-group { width: 100%; }
   .filter-button { flex: 1; }
@@ -1432,6 +1577,8 @@ h2 {
   .work-title-line { gap: 8px; }
   .work-title { white-space: normal; }
   .action-dialog-card { padding: 20px; }
+  .context-form-grid,
+  .context-scope-fields { grid-template-columns: 1fr; }
   .action-dialog-actions { justify-content: stretch; }
   .action-dialog-actions .button { flex: 1; }
   .side-column { display: flex; align-items: stretch; }

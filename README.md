@@ -24,6 +24,8 @@ The current scope is:
 - A browser cockpit and machine-readable CLI/API views for agents.
 - An append-only, derived history of observed work-item changes, durable sync-run
   provenance, retention, and bounded time-window analysis.
+- A browser-approved human context overlay for delay explanations and scope
+  changes, with corrections, redaction, retention, and audit metadata.
 - Optional, human-approved addition of one existing GitLab label to an open
   issue in the current rolling view.
 
@@ -58,6 +60,9 @@ The embedded responsive cockpit provides:
 - `Sync now` to queue one pull reconciliation, with pull state, duration, and
   last-error feedback.
 - A label action dialog that follows a dry-run-then-confirm workflow.
+- A human-context dialog that previews and confirms delay explanations or scope
+  changes without changing the GitLab-derived read model; confirmed entries can
+  be corrected or redacted through the same browser approval boundary.
 
 Alternate milestone views are fetched on demand and never change the shared
 cached snapshot. They do not expose mutation controls.
@@ -70,8 +75,10 @@ cached snapshot. They do not expose mutation controls.
   credential, limited to `GET` and `HEAD`.
 - `FLUX_API_TOKEN` authenticates Pi to Flux; it is not a GitLab credential.
 - Pi tools and machine API access are read-only.
-- Browser action routes require a human session and CSRF protection; machine
-  Bearer credentials are rejected there.
+- Browser action and human-context write routes require a human session and CSRF
+  protection; machine Bearer credentials are rejected there.
+- Proposed context is labeled as proposed until confirmation; Pi can read only
+  confirmed context and cannot create, approve, correct, or redact it.
 - GitLab reconciliation uses `FLUX_GITLAB_SERVICE_TOKEN`, which should remain
   read-only.
 
@@ -100,9 +107,10 @@ milestone changes, and bulk actions are not currently implemented.
 - A browser-session and CSRF-protected `Sync now` request can queue one
   immediate pull; machine credentials cannot invoke it.
 - The default durable state directory is `/var/lib/flux`.
-- Snapshot, derived-history, sync-run, webhook-event, and action-audit data are
-  stored locally as `snapshot.json`, `history.jsonl`, `sync_runs.jsonl`,
-  `events.jsonl`, and `audit.jsonl`.
+- Snapshot, derived-history, sync-run, webhook-event, action-audit, and human
+  context data are stored locally as `snapshot.json`, `history.jsonl`,
+  `sync_runs.jsonl`, `events.jsonl`, `audit.jsonl`, `context.jsonl`, and
+  `context_audit.jsonl`.
 - A successful pull records an observation and deterministic work-item diffs;
   label/MR ordering is canonicalized to avoid noisy changes. Sync runs record
   their mode, source watermark, overlap request, outcome, and coverage. The
@@ -111,6 +119,10 @@ milestone changes, and bulk actions are not currently implemented.
 - Derived history and sync-run records are retained for `FLUX_HISTORY_RETENTION`
   (default `8760h`); set it to `0` to disable pruning. Retention creates a
   checkpoint so unchanged items remain reconstructable at the boundary.
+- Human context is retained separately for `FLUX_CONTEXT_RETENTION` (default
+  `2160h`); set it to `0` to retain it indefinitely. Corrections append a new
+  revision. Redaction scrubs retained free text and leaves secret-free audit
+  metadata plus a one-way content hash.
 - Overlap pulls can miss an issue leaving the milestone or merge-request-only
   activity, so full scans remain mandatory and those gaps remain explicit
   uncertainty until the next full scan.
@@ -126,7 +138,7 @@ milestone changes, and bulk actions are not currently implemented.
 
 ## Pi integration
 
-The project-local extension is `.pi/extensions/flux.ts`. It registers ten
+The project-local extension is `.pi/extensions/flux.ts`. It registers eleven
 bounded, read-only tools:
 
 - `flux_today` — complete machine-readable current status.
@@ -134,6 +146,8 @@ bounded, read-only tools:
 - `flux_item_history` — observed before/after history for one work item.
 - `flux_snapshot` — reconstructed state at an observed RFC3339 time.
 - `flux_flow` — observation-based flow and throughput counts.
+- `flux_context` — confirmed human-reported delay and scope context; explicitly
+  labeled as an overlay rather than GitLab evidence.
 - `flux_sprint_status` — compact sprint health and risks.
 - `flux_triage` — items needing attention and suggested next checks.
 - `flux_standup` — factual current-status standup.
@@ -150,9 +164,11 @@ recent matching changes and mark the result when capped.
 
 The current standup and agent views describe current GitLab signals. The
 `flux_changes`, `flux_item_history`, `flux_snapshot`, and `flux_flow` views
-expose observations made after Flux history starts. Exact pre-bootstrap history,
-changes between missed pulls, cycle-time/capacity conclusions, and AI-generated
-backlog decisions still require additional history and human input.
+expose observations made after Flux history starts. `flux_context` exposes only
+confirmed human-reported context and its coverage; it is not independently
+verified cause evidence. Exact pre-bootstrap history, changes between missed
+pulls, cycle-time/capacity conclusions, and AI-generated backlog decisions still
+require additional history and human input.
 
 The intended AI control model is:
 
@@ -160,11 +176,9 @@ The intended AI control model is:
 observe → explain → propose → human approval → apply → reconcile
 ```
 
-Pi can summarize and reason over Flux data, but it cannot approve an action.
-Future ceremony support should add history, team-entered context, and explicit
-proposals before adding any new mutation types. The proposed human-input boundary
-and first delay/scope workflows are documented in
-[`docs/human-input-workflows.md`](docs/human-input-workflows.md).
+Pi can summarize and reason over Flux data, but it cannot approve an action or
+human-context record. The human-input boundary and delay/scope workflows are
+documented in [`docs/human-input-workflows.md`](docs/human-input-workflows.md).
 
 ## Responsibility separation for AI-assisted Scrum
 
@@ -214,6 +228,9 @@ Read and health routes include:
 - `GET /api/snapshots/<RFC3339>`
 - `GET /api/flow?from=<RFC3339>&to=<RFC3339>&item_id=<id>`
   (also supports `milestone`)
+- `GET /api/context?from=<RFC3339>&to=<RFC3339>&item_id=<id>&kind=<kind>`
+  (also supports `limit`)
+- `GET /api/context/<id>` — retained context revisions and secret-free audit metadata.
 - `GET /api/sync/status`
 - `GET /healthz`
 - `GET /readyz`
@@ -225,8 +242,13 @@ the read-only machine credential.
 
 Browser-only action routes include `/api/actions/status`,
 `/api/actions/labels`, `/api/actions/labels/plan`, and
-`/api/actions/labels/confirm`, plus the CSRF-token endpoint. The action routes
-require a browser session and are not machine-API routes.
+`/api/actions/labels/confirm`, plus the CSRF-token endpoint. Human-context
+routes include browser-only `/api/context/plan`, `/api/context/confirm`,
+`/api/context/redact/plan`, and `/api/context/redact/confirm`. These write
+routes require a browser session and are not machine-API routes. Corrections use
+`supersedes_id` on the context plan request; redaction is limited to configured
+`FLUX_CONTEXT_REDACT_SUBJECTS`, or the author of the current revision when that
+list is empty.
 
 Build and run the CLI locally:
 
@@ -237,6 +259,7 @@ make build
 ./bin/flux history --item tokyo3/flux#12 --json
 ./bin/flux snapshot --at 2026-01-01T00:00:00Z --json
 ./bin/flux flow --from 2026-01-01T00:00:00Z --json
+./bin/flux context --kind delay_explanation --json
 ```
 
 For an offline browser/API/Pi cockpit, run the explicit loopback-only fixture
@@ -275,8 +298,9 @@ docker compose -f compose.yml up --build -d
 Live mode requires the group, read-only GitLab token, session key, and OAuth
 settings. The webhook secret, write token, and Flux machine API credentials
 are optional. `FLUX_RECONCILE_OVERLAP` and `FLUX_FULL_SCAN_INTERVAL` control
-incremental/full pull behavior; `FLUX_HISTORY_RETENTION` controls local history
-pruning. Fixture mode requires only the fixture file and a loopback address;
+incremental/full pull behavior; `FLUX_HISTORY_RETENTION` controls local derived
+history pruning and `FLUX_CONTEXT_RETENTION` controls human-context retention.
+Fixture mode requires only the fixture file and a loopback address;
 GitLab credentials are ignored and it generates an ephemeral session key when
 one is not supplied. TLS should be terminated by a reverse proxy in
 production.

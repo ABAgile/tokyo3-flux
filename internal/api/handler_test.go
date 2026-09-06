@@ -354,6 +354,75 @@ func TestHistoricalReadRoutes(t *testing.T) {
 	}
 }
 
+func TestHumanContextReadRoutes(t *testing.T) {
+	store, err := state.OpenFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenFileStore() error = %v", err)
+	}
+	observedAt := time.Date(2026, time.February, 2, 12, 0, 0, 0, time.UTC)
+	from := observedAt.Add(-time.Hour)
+	until := observedAt.Add(time.Hour)
+	entry := domain.HumanContext{
+		ID:             "ctx-1",
+		Revision:       1,
+		Kind:           domain.ContextKindDelayExplanation,
+		Status:         domain.ContextStatusConfirmed,
+		Confidence:     domain.ContextConfidenceConfirmed,
+		CreatedAt:      observedAt,
+		UpdatedAt:      observedAt,
+		Statement:      "A dependency is pending.",
+		Category:       "dependency",
+		ItemIDs:        []string{"team/project#12"},
+		ReportingFrom:  &from,
+		ReportingUntil: &until,
+	}
+	if err := store.RecordContext(entry); err != nil {
+		t.Fatalf("RecordContext() error = %v", err)
+	}
+	handler := NewHandlerWithMilestonesAndHistory(store, http.NotFoundHandler(), time.Hour, nil, "", "", nil, store)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/context?kind=delay_explanation&item_id=team%2Fproject%2312&limit=10", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("context status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var body struct {
+		Status  string                `json:"status"`
+		Entries []domain.HumanContext `json:"entries"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode context response: %v", err)
+	}
+	if body.Status != "ok" || len(body.Entries) != 1 || body.Entries[0].ID != entry.ID {
+		t.Fatalf("context response = %+v", body)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/context/ctx-1", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("context history status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var history struct {
+		Status    string                `json:"status"`
+		Revisions []domain.HumanContext `json:"revisions"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&history); err != nil {
+		t.Fatalf("decode context history: %v", err)
+	}
+	if history.Status != "ok" || len(history.Revisions) != 1 || history.Revisions[0].Statement != entry.Statement {
+		t.Fatalf("context history = %+v", history)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/context?limit=0", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid context query status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	handler := NewHandler(state.NewMemoryStore(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), time.Hour)
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)

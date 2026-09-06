@@ -118,6 +118,44 @@ func TestRunHistoricalViewsJSON(t *testing.T) {
 	}
 }
 
+func TestRunContextJSON(t *testing.T) {
+	directory := t.TempDir()
+	store, err := state.OpenFileStore(directory)
+	if err != nil {
+		t.Fatalf("OpenFileStore() error = %v", err)
+	}
+	now := time.Date(2026, time.June, 1, 9, 0, 0, 0, time.UTC)
+	from := now.Add(-time.Hour)
+	until := now.Add(time.Hour)
+	if err := store.RecordContext(domain.HumanContext{
+		ID:             "ctx-1",
+		Revision:       1,
+		Kind:           domain.ContextKindScopeChange,
+		Status:         domain.ContextStatusConfirmed,
+		Confidence:     domain.ContextConfidenceConfirmed,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		Statement:      "The team deferred one item.",
+		Category:       "scope",
+		ScopeAction:    "defer",
+		ReportingFrom:  &from,
+		ReportingUntil: &until,
+	}); err != nil {
+		t.Fatalf("RecordContext() error = %v", err)
+	}
+	var output bytes.Buffer
+	if err := runContext([]string{"--state-dir", directory, "--kind", "scope_change", "--json"}, &output, &output); err != nil {
+		t.Fatalf("runContext() error = %v", err)
+	}
+	var result state.ContextResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode context: %v\n%s", err, output.String())
+	}
+	if len(result.Entries) != 1 || result.Entries[0].ID != "ctx-1" || result.Entries[0].ScopeAction != "defer" {
+		t.Fatalf("context result = %+v", result)
+	}
+}
+
 func TestRenderTodayJSON(t *testing.T) {
 	generatedAt := time.Date(2025, 9, 5, 12, 0, 0, 0, time.UTC)
 	snapshot := domain.Snapshot{

@@ -14,11 +14,13 @@ import (
 )
 
 const (
-	snapshotFilename = "snapshot.json"
-	eventsFilename   = "events.jsonl"
-	auditFilename    = "audit.jsonl"
-	historyFilename  = "history.jsonl"
-	syncRunsFilename = "sync_runs.jsonl"
+	snapshotFilename     = "snapshot.json"
+	eventsFilename       = "events.jsonl"
+	auditFilename        = "audit.jsonl"
+	historyFilename      = "history.jsonl"
+	syncRunsFilename     = "sync_runs.jsonl"
+	contextFilename      = "context.jsonl"
+	contextAuditFilename = "context_audit.jsonl"
 )
 
 const defaultHistoryStaleAfter = 7 * 24 * time.Hour
@@ -27,12 +29,13 @@ const defaultHistoryStaleAfter = 7 * 24 * time.Hour
 type FileStoreOptions struct {
 	StaleAfter       time.Duration
 	HistoryRetention time.Duration
+	ContextRetention time.Duration
 }
 
 // FileStore is a small, single-process durable store for the first Flux
-// deployment. Snapshot replacement is atomic; derived history, webhook, and
-// mutation metadata are appended as JSON Lines. It is intentionally replaceable
-// by a database-backed Store later.
+// deployment. Snapshot replacement is atomic; derived history, webhook,
+// mutation, and human-context metadata are persisted as JSON Lines. It is
+// intentionally replaceable by a database-backed Store later.
 type FileStore struct {
 	mu               sync.RWMutex
 	directory        string
@@ -44,9 +47,14 @@ type FileStore struct {
 	lastObservedAt   time.Time
 	observationCount int
 	historyRetention time.Duration
+	contextRetention time.Duration
 	syncRuns         []domain.SyncRun
 	sourceWatermark  time.Time
 	lastFullSyncAt   time.Time
+	contextEntries   map[string][]domain.HumanContext
+	contextAudits    map[string][]ContextAuditEvent
+	contextStartedAt time.Time
+	lastContextAt    time.Time
 }
 
 // OpenFileStore creates or opens a store rooted at directory. An existing
@@ -71,6 +79,9 @@ func OpenFileStoreWithOptions(directory string, options FileStoreOptions) (*File
 	if options.HistoryRetention < 0 {
 		return nil, errors.New("history retention must not be negative")
 	}
+	if options.ContextRetention < 0 {
+		return nil, errors.New("context retention must not be negative")
+	}
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
 	}
@@ -79,7 +90,10 @@ func OpenFileStoreWithOptions(directory string, options FileStoreOptions) (*File
 		directory:        directory,
 		staleAfter:       options.StaleAfter,
 		historyRetention: options.HistoryRetention,
+		contextRetention: options.ContextRetention,
 		latest:           make(map[string]historyVersion),
+		contextEntries:   make(map[string][]domain.HumanContext),
+		contextAudits:    make(map[string][]ContextAuditEvent),
 	}
 	data, err := os.ReadFile(store.snapshotPath())
 	if err == nil {
@@ -97,6 +111,12 @@ func OpenFileStoreWithOptions(directory string, options FileStoreOptions) (*File
 	if err := store.loadHistory(); err != nil {
 		return nil, fmt.Errorf("read history: %w", err)
 	}
+	if err := store.loadContext(); err != nil {
+		return nil, fmt.Errorf("read context: %w", err)
+	}
+	if err := store.loadContextAudits(); err != nil {
+		return nil, fmt.Errorf("read context audit: %w", err)
+	}
 	if store.historyRetention > 0 {
 		now := time.Now().UTC()
 		if err := store.pruneHistoryLocked(now); err != nil {
@@ -104,6 +124,11 @@ func OpenFileStoreWithOptions(directory string, options FileStoreOptions) (*File
 		}
 		if err := store.pruneSyncRunsLocked(now); err != nil {
 			return nil, fmt.Errorf("prune sync runs: %w", err)
+		}
+	}
+	if store.contextRetention > 0 {
+		if err := store.pruneContextLocked(time.Now().UTC()); err != nil {
+			return nil, fmt.Errorf("prune context: %w", err)
 		}
 	}
 	return store, nil
@@ -297,6 +322,16 @@ func (s *FileStore) SyncRunsPath() string {
 	return s.syncRunsPath()
 }
 
+// ContextPath returns the append-only human context log path.
+func (s *FileStore) ContextPath() string {
+	return s.contextPath()
+}
+
+// ContextAuditPath returns the secret-free human context audit log path.
+func (s *FileStore) ContextAuditPath() string {
+	return s.contextAuditPath()
+}
+
 func (s *FileStore) snapshotPath() string {
 	return filepath.Join(s.directory, snapshotFilename)
 }
@@ -315,6 +350,14 @@ func (s *FileStore) historyPath() string {
 
 func (s *FileStore) syncRunsPath() string {
 	return filepath.Join(s.directory, syncRunsFilename)
+}
+
+func (s *FileStore) contextPath() string {
+	return filepath.Join(s.directory, contextFilename)
+}
+
+func (s *FileStore) contextAuditPath() string {
+	return filepath.Join(s.directory, contextAuditFilename)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

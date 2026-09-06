@@ -23,6 +23,7 @@ type Handler struct {
 	milestoneSource MilestoneSource
 	syncSource      SyncStatusSource
 	historySource   state.HistoryReader
+	contextSource   state.ContextReader
 	target          string
 	goal            string
 }
@@ -68,6 +69,7 @@ func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler
 		milestoneSource: source,
 		syncSource:      syncSource,
 		historySource:   historySource,
+		contextSource:   contextReader(store),
 		target:          strings.TrimSpace(target),
 		goal:            goal,
 	}
@@ -80,6 +82,8 @@ func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler
 	mux.HandleFunc("GET /api/items/", h.itemHistory)
 	mux.HandleFunc("GET /api/snapshots/", h.snapshotAt)
 	mux.HandleFunc("GET /api/flow", h.flow)
+	mux.HandleFunc("GET /api/context", h.context)
+	mux.HandleFunc("GET /api/context/", h.contextHistory)
 	mux.HandleFunc("GET /api/today", h.today)
 	mux.Handle("POST /webhooks/gitlab", webhook)
 	return mux
@@ -154,6 +158,16 @@ type flowResponse struct {
 	state.FlowResult
 }
 
+type contextResponse struct {
+	Status string `json:"status"`
+	state.ContextResult
+}
+
+type contextHistoryResponse struct {
+	Status string `json:"status"`
+	state.ContextHistoryResult
+}
+
 type todayResponse struct {
 	GeneratedAt time.Time      `json:"generated_at"`
 	Sprint      sprintResponse `json:"sprint"`
@@ -179,6 +193,11 @@ type itemResponse struct {
 	LastActivity  time.Time             `json:"last_activity"`
 	Status        domain.Status         `json:"status"`
 	MergeRequests []domain.MergeRequest `json:"merge_requests,omitempty"`
+}
+
+func contextReader(store state.Reader) state.ContextReader {
+	reader, _ := store.(state.ContextReader)
+	return reader
 }
 
 func (h *Handler) changes(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +269,81 @@ func (h *Handler) itemHistory(w http.ResponseWriter, r *http.Request) {
 		Changes:          result.Changes,
 		Coverage:         result.Coverage,
 	})
+}
+
+func (h *Handler) context(w http.ResponseWriter, r *http.Request) {
+	if h.contextSource == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"status": "unavailable",
+			"error":  "human context is not configured",
+		})
+		return
+	}
+	query, err := parseContextQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
+		return
+	}
+	result, err := h.contextSource.ListContext(query)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "unavailable", "error": "human context lookup failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, contextResponse{Status: "ok", ContextResult: result})
+}
+
+func (h *Handler) contextHistory(w http.ResponseWriter, r *http.Request) {
+	if h.contextSource == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"status": "unavailable",
+			"error":  "human context is not configured",
+		})
+		return
+	}
+	id, err := pathValue(r, "/api/context/", "")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
+		return
+	}
+	result, err := h.contextSource.ContextHistory(id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, state.ErrContextNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSON(w, status, map[string]string{"status": "unavailable", "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, contextHistoryResponse{Status: "ok", ContextHistoryResult: result})
+}
+
+func parseContextQuery(r *http.Request) (state.ContextQuery, error) {
+	values := r.URL.Query()
+	since, err := parseQueryTime(values.Get("from"), "from")
+	if err != nil {
+		return state.ContextQuery{}, err
+	}
+	until, err := parseQueryTime(values.Get("to"), "to")
+	if err != nil {
+		return state.ContextQuery{}, err
+	}
+	if !since.IsZero() && !until.IsZero() && !until.After(since) {
+		return state.ContextQuery{}, errors.New("to must be after from")
+	}
+	limit := 0
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > state.MaxContextLimit {
+			return state.ContextQuery{}, fmt.Errorf("limit must be between 1 and %d", state.MaxContextLimit)
+		}
+	}
+	return state.ContextQuery{
+		Since:  since,
+		Until:  until,
+		ItemID: strings.TrimSpace(values.Get("item_id")),
+		Kind:   strings.TrimSpace(values.Get("kind")),
+		Limit:  limit,
+	}, nil
 }
 
 func (h *Handler) snapshotAt(w http.ResponseWriter, r *http.Request) {
