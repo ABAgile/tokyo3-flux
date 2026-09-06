@@ -142,6 +142,10 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("parse FLUX_SESSION_KEY: %w", err)
 	}
+	machineToken, err := fluxauth.NewMachineToken(os.Getenv("FLUX_API_TOKEN"))
+	if err != nil {
+		return fmt.Errorf("configure FLUX_API_TOKEN: %w", err)
+	}
 	client, err := gitlab.New(gitlab.Config{
 		URL:           *gitlabURL,
 		Token:         envFirst("FLUX_GITLAB_SERVICE_TOKEN", "FLUX_GITLAB_TOKEN"),
@@ -214,8 +218,11 @@ func runServe(args []string, stderr io.Writer) error {
 
 	apiHandler := api.NewHandlerWithMilestones(store, webhookHandler, *staleAfter, client, target, *goal)
 	cockpitHandler := fluxweb.NewHandler(apiHandler)
+	browserAPIHandler := sessions.Gate(apiHandler)
+	machineAPIHandler := machineToken.Gate(apiHandler, browserAPIHandler)
 	routes := http.NewServeMux()
 	routes.Handle("/auth/", authenticator.Handler())
+	routes.Handle("/api/", machineAPIHandler)
 	routes.Handle("/", sessions.Gate(cockpitHandler))
 	server := &http.Server{
 		Addr:              *addr,

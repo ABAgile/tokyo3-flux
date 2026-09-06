@@ -37,6 +37,9 @@ services:
       FLUX_GITLAB_BLOCKED_LABELS: "${FLUX_GITLAB_BLOCKED_LABELS:-status::blocked,blocked}"
       FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:?set FLUX_GITLAB_WEBHOOK_SECRET}"
 
+      # Optional read-only machine credential for API-backed Pi tools.
+      FLUX_API_TOKEN: "${FLUX_API_TOKEN:-}"
+
       # Sealed browser session key. Generate with: openssl rand -hex 32
       FLUX_SESSION_KEY: "${FLUX_SESSION_KEY:?set FLUX_SESSION_KEY to 64 hex characters}"
 

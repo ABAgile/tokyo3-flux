@@ -1,9 +1,10 @@
 /**
  * Flux read-only tools for Pi.
  *
- * The extension deliberately shells out to the Flux CLI instead of duplicating
- * GitLab authentication or reconciliation logic. Set FLUX_CLI when the binary
- * is not on PATH (for example, /tokyo3/proj/abagile/flux/bin/flux).
+ * The extension uses Flux's authenticated API when configured and otherwise
+ * shells out to the Flux CLI. It never duplicates GitLab authentication or
+ * reconciliation logic. Set FLUX_CLI when the binary is not on PATH (for
+ * example, /tokyo3/proj/abagile/flux/bin/flux).
  */
 
 import { mkdtemp, writeFile } from "node:fs/promises";
@@ -41,6 +42,9 @@ type TodayItem = {
 type TodayPayload = {
 	generated_at?: string;
 	sprint?: { name?: string; goal?: string };
+	total?: number;
+	counts?: Record<string, number>;
+	items?: TodayItem[];
 	summary?: {
 		total?: number;
 		counts?: Record<string, number>;
@@ -118,7 +122,7 @@ async function saveFullOutput(output: string): Promise<string> {
 	return path;
 }
 
-async function fetchToday(pi: ExtensionAPI, command: string, signal: AbortSignal): Promise<{ payload: TodayPayload; output: string }> {
+async function fetchTodayCLI(pi: ExtensionAPI, command: string, signal: AbortSignal): Promise<{ payload: TodayPayload; output: string }> {
 	const result = await pi.exec(command, ["today", "--json"], {
 		signal,
 		timeout: 30_000,
@@ -138,13 +142,102 @@ async function fetchToday(pi: ExtensionAPI, command: string, signal: AbortSignal
 	return { payload: parseTodayPayload(output), output };
 }
 
+function apiTodayURL(rawURL: string): URL {
+	let base: URL;
+	try {
+		base = new URL(rawURL);
+	} catch {
+		throw new Error("FLUX_API_URL must be a valid HTTP(S) URL");
+	}
+	if (base.protocol !== "http:" && base.protocol !== "https:") {
+		throw new Error("FLUX_API_URL must use HTTP or HTTPS");
+	}
+	if (base.username || base.password || base.search || base.hash) {
+		throw new Error("FLUX_API_URL must not contain credentials, a query, or a fragment");
+	}
+	return new URL("/api/today", base);
+}
+
+async function fetchTodayAPI(apiURL: string, token: string, signal: AbortSignal): Promise<{ payload: TodayPayload; output: string }> {
+	const endpoint = apiTodayURL(apiURL);
+	const controller = new AbortController();
+	let timedOut = false;
+	const timeout = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, 30_000);
+	const onAbort = () => controller.abort();
+	if (signal.aborted) controller.abort();
+	else signal.addEventListener("abort", onAbort, { once: true });
+
+	try {
+		let response: Response;
+		try {
+			response = await fetch(endpoint, {
+				method: "GET",
+				headers: {
+					Accept: "application/json",
+					Authorization: `Bearer ${token}`,
+				},
+				cache: "no-store",
+				redirect: "manual",
+				signal: controller.signal,
+			});
+		} catch (error) {
+			if (timedOut) throw new Error("Flux API status lookup timed out");
+			if (signal.aborted) throw new Error("Flux API status lookup was cancelled");
+			const detail = error instanceof Error ? error.message : "request failed";
+			throw new Error(`Flux API status lookup failed: ${detail}`);
+		}
+		if (response.status === 401 || response.status === 403) {
+			throw new Error("Flux API authentication failed; check FLUX_API_TOKEN");
+		}
+		if (response.status >= 300 && response.status < 400) {
+			throw new Error("Flux API redirected; check FLUX_API_URL and authentication");
+		}
+		if (!response.ok) {
+			throw new Error(`Flux API returned HTTP ${response.status}`);
+		}
+		const output = (await response.text()).trim();
+		if (!output) throw new Error("Flux API returned no JSON output");
+		return { payload: parseTodayPayload(output), output };
+	} finally {
+		clearTimeout(timeout);
+		signal.removeEventListener("abort", onAbort);
+	}
+}
+
+async function fetchToday(
+	pi: ExtensionAPI,
+	command: string,
+	apiURL: string,
+	apiToken: string,
+	signal: AbortSignal,
+): Promise<{ payload: TodayPayload; output: string }> {
+	if (apiURL || apiToken) {
+		if (!apiURL || !apiToken) {
+			throw new Error("FLUX_API_URL and FLUX_API_TOKEN must be set together");
+		}
+		return fetchTodayAPI(apiURL, apiToken, signal);
+	}
+	return fetchTodayCLI(pi, command, signal);
+}
+
 function itemsOf(payload: TodayPayload): TodayItem[] {
+	if (Array.isArray(payload.items)) return payload.items;
 	return Array.isArray(payload.summary?.items) ? payload.summary.items : [];
+}
+
+function totalOf(payload: TodayPayload): number {
+	if (typeof payload.total === "number") return payload.total;
+	if (typeof payload.summary?.total === "number") return payload.summary.total;
+	return itemsOf(payload).length;
 }
 
 function countsOf(payload: TodayPayload): Record<string, number> {
 	const counts: Record<string, number> = {};
-	for (const [status, count] of Object.entries(payload.summary?.counts ?? {})) {
+	const source = payload.counts ?? payload.summary?.counts ?? {};
+	for (const [status, count] of Object.entries(source)) {
 		const normalized = typeof count === "number" && Number.isFinite(count) ? Math.trunc(count) : 0;
 		if (normalized > 0) {
 			counts[status] = normalized;
@@ -193,7 +286,7 @@ function detailsFor(command: string, payload: TodayPayload): FluxTodayDetails {
 		command,
 		generatedAt: payload.generated_at,
 		sprint: payload.sprint?.name,
-		itemCount: itemsOf(payload).length || payload.summary?.total,
+		itemCount: totalOf(payload),
 	};
 }
 
@@ -206,7 +299,7 @@ function workCountsText(payload: TodayPayload): string {
 }
 
 function sprintStatusText(payload: TodayPayload): { text: string; attentionCount: number } {
-	const total = typeof payload.summary?.total === "number" ? payload.summary.total : itemsOf(payload).length;
+	const total = totalOf(payload);
 	const sprintName = payload.sprint?.name?.trim() || "(unnamed sprint)";
 	const lines = [`Sprint: ${sprintName}`];
 	if (payload.sprint?.goal?.trim()) {
@@ -277,7 +370,7 @@ function standupText(payload: TodayPayload): { text: string; attentionCount: num
 	const inProgress = items.filter((item) => item.status === "in progress");
 	const known = new Set([...done, ...inProgress, ...attention]);
 	const other = items.filter((item) => !known.has(item));
-	const total = typeof payload.summary?.total === "number" ? payload.summary.total : items.length;
+	const total = totalOf(payload);
 	const lines = ["Standup (current GitLab signals)", `Sprint: ${display(payload.sprint?.name, "(unnamed sprint)")}`];
 	if (payload.generated_at?.trim()) {
 		lines.push(`As of: ${payload.generated_at.trim()}`);
@@ -351,12 +444,15 @@ function queueText(
 
 export default function fluxExtension(pi: ExtensionAPI) {
 	const command = process.env.FLUX_CLI?.trim() || "flux";
+	const apiURL = process.env.FLUX_API_URL?.trim() || "";
+	const apiToken = process.env.FLUX_API_TOKEN?.trim() || "";
+	const source = apiURL || apiToken ? "Flux API" : command;
 
 	pi.registerTool({
 		name: "flux_today",
 		label: "Flux Today",
 		description:
-			"Read the current Flux group-scoped milestone status. This is read-only and refreshes from GitLab through the local Flux CLI; it does not mutate GitLab.",
+			"Read the current Flux group-scoped milestone status. This is read-only and uses the configured Flux API or local CLI; it does not mutate GitLab.",
 		promptSnippet: "Read the current Flux team delivery status",
 		promptGuidelines: [
 			"Use flux_today before summarizing sprint health, blockers, or delivery status.",
@@ -365,12 +461,12 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload, output } = await fetchToday(pi, command, signal);
+			const { payload, output } = await fetchToday(pi, command, apiURL, apiToken, signal);
 			const truncation = truncateHead(output, {
 				maxLines: DEFAULT_MAX_LINES,
 				maxBytes: DEFAULT_MAX_BYTES,
 			});
-			const details: FluxTodayDetails = detailsFor(command, payload);
+			const details: FluxTodayDetails = detailsFor(source, payload);
 			let text = truncation.content;
 			if (truncation.truncated) {
 				details.truncated = true;
@@ -413,7 +509,7 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		name: "flux_sprint_status",
 		label: "Flux Sprint Status",
 		description:
-			"Read a compact status of the current Flux sprint, including its goal, status counts, and work items needing attention. This is read-only and refreshes from GitLab through the local Flux CLI.",
+			"Read a compact status of the current Flux sprint, including its goal, status counts, and work items needing attention. This is read-only and uses the configured Flux API or local CLI.",
 		promptSnippet: "Summarize the current Flux sprint and risks",
 		promptGuidelines: [
 			"Use flux_sprint_status for a concise sprint-health summary instead of parsing every work item when the user asks how the sprint is going.",
@@ -422,10 +518,10 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload } = await fetchToday(pi, command, signal);
+			const { payload } = await fetchToday(pi, command, apiURL, apiToken, signal);
 			const status = sprintStatusText(payload);
 			const details: FluxSprintDetails = {
-				...detailsFor(command, payload),
+				...detailsFor(source, payload),
 				attentionCount: status.attentionCount,
 			};
 			return {
@@ -469,10 +565,10 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload } = await fetchToday(pi, command, signal);
+			const { payload } = await fetchToday(pi, command, apiURL, apiToken, signal);
 			const triage = triageText(payload);
 			const details: FluxSprintDetails = {
-				...detailsFor(command, payload),
+				...detailsFor(source, payload),
 				attentionCount: triage.attentionCount,
 			};
 			return {
@@ -517,10 +613,10 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload } = await fetchToday(pi, command, signal);
+			const { payload } = await fetchToday(pi, command, apiURL, apiToken, signal);
 			const standup = standupText(payload);
 			const details: FluxSprintDetails = {
-				...detailsFor(command, payload),
+				...detailsFor(source, payload),
 				attentionCount: standup.attentionCount,
 			};
 			return {
@@ -565,13 +661,13 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload } = await fetchToday(pi, command, signal);
+			const { payload } = await fetchToday(pi, command, apiURL, apiToken, signal);
 			const entries = mergeRequestsOf(
 				payload,
 				(request) => request.state === "open" && request.review_requested === true && request.draft !== true,
 			);
 			const details: FluxListDetails = {
-				...detailsFor(command, payload),
+				...detailsFor(source, payload),
 				resultCount: entries.length,
 			};
 			return {
@@ -610,10 +706,10 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload } = await fetchToday(pi, command, signal);
+			const { payload } = await fetchToday(pi, command, apiURL, apiToken, signal);
 			const entries = mergeRequestsOf(payload, (request) => request.state === "open" && request.pipeline === "failed");
 			const details: FluxListDetails = {
-				...detailsFor(command, payload),
+				...detailsFor(source, payload),
 				resultCount: entries.length,
 			};
 			return {
