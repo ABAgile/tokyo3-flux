@@ -55,6 +55,14 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runToday(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stderr)
+	case "changes":
+		return runChanges(args[1:], stdout, stderr)
+	case "history":
+		return runHistory(args[1:], stdout, stderr)
+	case "snapshot":
+		return runHistoricalSnapshot(args[1:], stdout, stderr)
+	case "flow":
+		return runFlow(args[1:], stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintf(stdout, "%s %s\n", appName, baseversion.Resolve(Version))
 		return err
@@ -113,6 +121,18 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	overlapDefault, err := durationFromEnv("FLUX_RECONCILE_OVERLAP", 5*time.Minute)
+	if err != nil {
+		return err
+	}
+	fullScanDefault, err := durationFromEnv("FLUX_FULL_SCAN_INTERVAL", 24*time.Hour)
+	if err != nil {
+		return err
+	}
+	historyRetentionDefault, err := durationFromEnv("FLUX_HISTORY_RETENTION", 365*24*time.Hour)
+	if err != nil {
+		return err
+	}
 
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -121,11 +141,14 @@ func runServe(args []string, stderr io.Writer) error {
 	gitlabGroup := flags.String("gitlab-group", os.Getenv("FLUX_GITLAB_GROUP"), "GitLab group ID or full path")
 	goal := flags.String("goal", os.Getenv("FLUX_SPRINT_GOAL"), "optional sprint goal override; otherwise use the milestone description")
 	blockedLabels := flags.String("blocked-labels", envOrDefault("FLUX_GITLAB_BLOCKED_LABELS", "status::blocked,blocked"), "comma-separated labels treated as blocked")
-	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory for the cached snapshot and webhook event log")
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory for the cached snapshot, history, and event logs")
 	fixturePath := flags.String("fixture", os.Getenv("FLUX_FIXTURE_FILE"), "normalized snapshot file for local fixture mode")
 	oauthClientID := flags.String("gitlab-oauth-client-id", os.Getenv("FLUX_GITLAB_OAUTH_CLIENT_ID"), "GitLab OAuth application client ID")
 	oauthRedirectURL := flags.String("gitlab-oauth-redirect-url", os.Getenv("FLUX_GITLAB_OAUTH_REDIRECT_URL"), "absolute GitLab OAuth callback URL")
 	interval := flags.Duration("reconcile-interval", intervalDefault, "periodic GitLab reconciliation interval")
+	overlapWindow := flags.Duration("reconcile-overlap", overlapDefault, "source activity overlap window for incremental pulls")
+	fullScanInterval := flags.Duration("full-scan-interval", fullScanDefault, "maximum interval between full source scans")
+	historyRetention := flags.Duration("history-retention", historyRetentionDefault, "duration to retain derived history; 0 disables pruning")
 	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -135,6 +158,15 @@ func runServe(args []string, stderr io.Writer) error {
 	}
 	if *interval <= 0 {
 		return errors.New("reconcile interval must be positive")
+	}
+	if *overlapWindow < 0 {
+		return errors.New("reconcile overlap must not be negative")
+	}
+	if *fullScanInterval <= 0 {
+		return errors.New("full scan interval must be positive")
+	}
+	if *historyRetention < 0 {
+		return errors.New("history retention must not be negative")
 	}
 
 	fixtureMode := strings.TrimSpace(*fixturePath) != ""
@@ -198,7 +230,10 @@ func runServe(args []string, stderr io.Writer) error {
 			}
 		}
 	}
-	store, err := state.OpenFileStore(*stateDir)
+	store, err := state.OpenFileStoreWithOptions(*stateDir, state.FileStoreOptions{
+		StaleAfter:       *staleAfter,
+		HistoryRetention: *historyRetention,
+	})
 	if err != nil {
 		return fmt.Errorf("open state store: %w", err)
 	}
@@ -206,11 +241,13 @@ func runServe(args []string, stderr io.Writer) error {
 	rt := basecli.App{Name: "flux", EnvPrefix: "FLUX"}.Setup(context.Background())
 	defer rt.Shutdown()
 	reconciler, err := reconcile.New(reconcile.Config{
-		Source:   source,
-		Store:    store,
-		Target:   target,
-		Goal:     *goal,
-		Interval: *interval,
+		Source:           source,
+		Store:            store,
+		Target:           target,
+		Goal:             *goal,
+		Interval:         *interval,
+		OverlapWindow:    *overlapWindow,
+		FullScanInterval: *fullScanInterval,
 		OnError: func(err error) {
 			rt.Log.Error("pull reconciliation failed", "error", err)
 		},
@@ -280,7 +317,7 @@ func runServe(args []string, stderr io.Writer) error {
 		authHandler = authenticator.Handler()
 	}
 
-	apiHandler := api.NewHandlerWithSync(store, webhookHandler, *staleAfter, milestoneSource, target, *goal, reconciler)
+	apiHandler := api.NewHandlerWithMilestonesAndHistory(store, webhookHandler, *staleAfter, milestoneSource, target, *goal, reconciler, store)
 	actionService, err := action.New(action.Config{
 		Snapshot: store,
 		Reader:   actionReader,
@@ -326,12 +363,352 @@ func runServe(args []string, stderr io.Writer) error {
 	if fixtureMode {
 		mode = "fixture"
 	}
-	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "mutation_enabled", mutationClient != nil, "webhook_enabled", webhookEnabled, "mode", mode, "fixture", strings.TrimSpace(*fixturePath))
+	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "reconcile_overlap", *overlapWindow, "full_scan_interval", *fullScanInterval, "history_retention", *historyRetention, "mutation_enabled", mutationClient != nil, "webhook_enabled", webhookEnabled, "mode", mode, "fixture", strings.TrimSpace(*fixturePath))
 
 	return baserun.Group(rt.Ctx,
 		baserun.HTTPServer(server, 10*time.Second, false),
 		reconciler.Run,
 	)
+}
+
+func runHistory(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("history", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory containing Flux history")
+	itemID := flags.String("item", "", "work-item ID to inspect")
+	sinceRaw := flags.String("since", "", "inclusive RFC3339 lower bound for Flux observations")
+	untilRaw := flags.String("until", "", "exclusive RFC3339 upper bound for Flux observations")
+	limit := flags.Int("limit", state.DefaultHistoryLimit, "maximum number of changes to print")
+	milestone := flags.String("milestone", "", "filter by milestone name")
+	includeBaseline := flags.Bool("include-baseline", true, "include the initial baseline observation")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("history accepts flags only")
+	}
+	if strings.TrimSpace(*itemID) == "" {
+		return errors.New("history requires --item")
+	}
+	if *limit < 1 || *limit > state.MaxHistoryLimit {
+		return fmt.Errorf("limit must be between 1 and %d", state.MaxHistoryLimit)
+	}
+	since, err := parseTimeFlag(*sinceRaw, "since")
+	if err != nil {
+		return err
+	}
+	until, err := parseTimeFlag(*untilRaw, "until")
+	if err != nil {
+		return err
+	}
+	if !since.IsZero() && !until.IsZero() && !until.After(since) {
+		return errors.New("until must be after since")
+	}
+	return runHistoryQuery(*stateDir, state.ChangeQuery{
+		Since:           since,
+		Until:           until,
+		ItemID:          *itemID,
+		Milestone:       *milestone,
+		Limit:           *limit,
+		IncludeBaseline: *includeBaseline,
+	}, *jsonOutput, stdout)
+}
+
+func runHistoryQuery(stateDir string, query state.ChangeQuery, jsonOutput bool, stdout io.Writer) error {
+	store, err := state.OpenFileStore(stateDir)
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	result, err := store.Changes(query)
+	if err != nil {
+		return fmt.Errorf("read history: %w", err)
+	}
+	if jsonOutput {
+		return renderChangesJSON(stdout, result)
+	}
+	return renderChanges(stdout, result)
+}
+
+func runHistoricalSnapshot(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("snapshot", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory containing Flux history")
+	atRaw := flags.String("at", "", "RFC3339 observation time; defaults to the latest observation")
+	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("snapshot accepts flags only")
+	}
+	at, err := parseTimeFlag(*atRaw, "at")
+	if err != nil {
+		return err
+	}
+	store, err := state.OpenFileStore(*stateDir)
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	result, err := store.SnapshotAt(at)
+	if err != nil {
+		return fmt.Errorf("read historical snapshot: %w", err)
+	}
+	if *jsonOutput {
+		return renderHistoricalSnapshotJSON(stdout, result)
+	}
+	return renderHistoricalSnapshot(stdout, result, *staleAfter)
+}
+
+func runFlow(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("flow", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory containing Flux history")
+	fromRaw := flags.String("from", "", "inclusive RFC3339 lower bound for Flux observations")
+	toRaw := flags.String("to", "", "exclusive RFC3339 upper bound for Flux observations")
+	itemID := flags.String("item", "", "filter by a work-item ID")
+	milestone := flags.String("milestone", "", "filter by milestone name")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("flow accepts flags only")
+	}
+	from, err := parseTimeFlag(*fromRaw, "from")
+	if err != nil {
+		return err
+	}
+	to, err := parseTimeFlag(*toRaw, "to")
+	if err != nil {
+		return err
+	}
+	if !from.IsZero() && !to.IsZero() && !to.After(from) {
+		return errors.New("to must be after from")
+	}
+	store, err := state.OpenFileStore(*stateDir)
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	result, err := store.Flow(state.FlowQuery{From: from, Until: to, ItemID: *itemID, Milestone: *milestone})
+	if err != nil {
+		return fmt.Errorf("read flow: %w", err)
+	}
+	if *jsonOutput {
+		return renderFlowJSON(stdout, result)
+	}
+	return renderFlow(stdout, result)
+}
+
+func renderHistoricalSnapshotJSON(w io.Writer, result state.SnapshotResult) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func renderHistoricalSnapshot(w io.Writer, result state.SnapshotResult, staleAfter time.Duration) error {
+	if _, err := fmt.Fprintf(w, "As of: %s\n", result.AsOf.Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if !result.ObservedAt.IsZero() {
+		if _, err := fmt.Fprintf(w, "Observed: %s\n", result.ObservedAt.Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	if result.SyncRunID != "" {
+		if _, err := fmt.Fprintf(w, "Sync run: %s\n", result.SyncRunID); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Snapshot generated: %s\n", result.Snapshot.GeneratedAt.Format(time.RFC3339)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Milestone: %s\n", result.Snapshot.Sprint.Name); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Work: %d items\n", len(result.Snapshot.Sprint.WorkItems)); err != nil {
+		return err
+	}
+	for _, item := range result.Snapshot.Sprint.WorkItems {
+		status := domain.DeriveStatus(item, result.Snapshot.GeneratedAt, staleAfter)
+		if _, err := fmt.Fprintf(w, "- %s · %s · %s\n", status, item.ID, item.Title); err != nil {
+			return err
+		}
+	}
+	return renderUncertainties(w, result.Uncertainties)
+}
+
+func renderFlowJSON(w io.Writer, result state.FlowResult) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func renderFlow(w io.Writer, result state.FlowResult) error {
+	if result.From != nil || result.Until != nil {
+		from, until := "beginning", "latest"
+		if result.From != nil {
+			from = result.From.Format(time.RFC3339)
+		}
+		if result.Until != nil {
+			until = result.Until.Format(time.RFC3339)
+		}
+		if _, err := fmt.Fprintf(w, "Flow: %s to %s\n", from, until); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "Changes: %d · added %d · started %d · completed %d · reopened %d\n", result.Changes, result.Added, result.Started, result.Completed, result.Reopened); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Blocked: %d · unblocked %d · status transitions %d · milestone changes %d\n", result.Blocked, result.Unblocked, result.StatusTransitions, result.MilestoneChanges); err != nil {
+		return err
+	}
+	if len(result.Buckets) > 0 {
+		if _, err := fmt.Fprintln(w, "Daily:"); err != nil {
+			return err
+		}
+		for _, bucket := range result.Buckets {
+			if _, err := fmt.Fprintf(w, "- %s · %d changes · %d completed · %d blocked\n", bucket.Date, bucket.Changes, bucket.Completed, bucket.Blocked); err != nil {
+				return err
+			}
+		}
+	}
+	return renderUncertainties(w, result.Uncertainties)
+}
+
+func renderUncertainties(w io.Writer, uncertainties []string) error {
+	if len(uncertainties) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, "Uncertainties:"); err != nil {
+		return err
+	}
+	for _, uncertainty := range uncertainties {
+		if _, err := fmt.Fprintf(w, "- %s\n", uncertainty); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runChanges(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("changes", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory containing Flux history")
+	sinceRaw := flags.String("since", "", "inclusive RFC3339 lower bound for Flux observations")
+	untilRaw := flags.String("until", "", "exclusive RFC3339 upper bound for Flux observations")
+	itemID := flags.String("item", "", "filter by a work-item ID")
+	milestone := flags.String("milestone", "", "filter by milestone name")
+	limit := flags.Int("limit", state.DefaultHistoryLimit, "maximum number of changes to print")
+	includeBaseline := flags.Bool("include-baseline", false, "include the initial baseline observation")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("changes accepts flags only")
+	}
+	if *limit < 1 || *limit > state.MaxHistoryLimit {
+		return fmt.Errorf("limit must be between 1 and %d", state.MaxHistoryLimit)
+	}
+	since, err := parseTimeFlag(*sinceRaw, "since")
+	if err != nil {
+		return err
+	}
+	until, err := parseTimeFlag(*untilRaw, "until")
+	if err != nil {
+		return err
+	}
+	if !since.IsZero() && !until.IsZero() && !until.After(since) {
+		return errors.New("until must be after since")
+	}
+	store, err := state.OpenFileStore(*stateDir)
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	result, err := store.Changes(state.ChangeQuery{
+		Since:           since,
+		Until:           until,
+		ItemID:          *itemID,
+		Milestone:       *milestone,
+		Limit:           *limit,
+		IncludeBaseline: *includeBaseline,
+	})
+	if err != nil {
+		return fmt.Errorf("read history: %w", err)
+	}
+	if *jsonOutput {
+		return renderChangesJSON(stdout, result)
+	}
+	return renderChanges(stdout, result)
+}
+
+func parseTimeFlag(raw, name string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	value, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%s must be RFC3339", name)
+	}
+	return value, nil
+}
+
+func renderChangesJSON(w io.Writer, result state.ChangeResult) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(result)
+}
+
+func renderChanges(w io.Writer, result state.ChangeResult) error {
+	if result.HistoryStartedAt != nil {
+		if _, err := fmt.Fprintf(w, "History started: %s\n", result.HistoryStartedAt.Format(time.RFC3339)); err != nil {
+			return err
+		}
+	}
+	if result.LastObservedAt != nil {
+		if _, err := fmt.Fprintf(w, "Last observed: %s · %d observations\n", result.LastObservedAt.Format(time.RFC3339), result.Observations); err != nil {
+			return err
+		}
+	}
+	if len(result.Changes) == 0 {
+		if _, err := fmt.Fprintln(w, "No historical changes recorded."); err != nil {
+			return err
+		}
+		return renderUncertainties(w, result.Coverage.Uncertainties)
+	}
+	for _, change := range result.Changes {
+		label := change.ItemID
+		if label == "" {
+			label = change.EntityKey
+		}
+		line := fmt.Sprintf("- %s · %s · %s", change.ObservedAt.Format(time.RFC3339), change.Kind, label)
+		if change.Milestone != "" {
+			line += " · " + change.Milestone
+		}
+		if _, err := fmt.Fprintln(w, line); err != nil {
+			return err
+		}
+		for _, field := range change.ChangedFields {
+			if _, err := fmt.Fprintf(w, "  %s: %s → %s\n", field.Field, changeValueText(field.Before), changeValueText(field.After)); err != nil {
+				return err
+			}
+		}
+	}
+	return renderUncertainties(w, result.Coverage.Uncertainties)
+}
+
+func changeValueText(value any) string {
+	if value == nil {
+		return "∅"
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "?"
+	}
+	return string(data)
 }
 
 func durationFromEnv(name string, fallback time.Duration) (time.Duration, error) {
@@ -539,10 +916,15 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  flux today --gitlab-url URL --gitlab-group GROUP [--json]")
 	fmt.Fprintln(w, "  flux serve --addr 127.0.0.1:8080")
 	fmt.Fprintln(w, "  flux serve --fixture examples/today.json --addr 127.0.0.1:8080")
+	fmt.Fprintln(w, "  flux changes --since 2026-01-01T00:00:00Z --json")
+	fmt.Fprintln(w, "  flux history --item team/project#12 --json")
+	fmt.Fprintln(w, "  flux snapshot --at 2026-01-01T00:00:00Z --json")
+	fmt.Fprintln(w, "  flux flow --from 2026-01-01T00:00:00Z --json")
 	fmt.Fprintln(w, "  flux version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "GitLab scope is configured with FLUX_GITLAB_GROUP.")
 	fmt.Fprintln(w, "GitLab credentials are read from FLUX_GITLAB_SERVICE_TOKEN or FLUX_GITLAB_TOKEN.")
 	fmt.Fprintln(w, "Live server also requires FLUX_SESSION_KEY and GitLab OAuth settings; webhook setup is optional.")
 	fmt.Fprintln(w, "Use --fixture or FLUX_FIXTURE_FILE for a loopback-only offline cockpit server.")
+	fmt.Fprintln(w, "Use flux changes, history, snapshot, and flow to inspect the derived historical read model.")
 }

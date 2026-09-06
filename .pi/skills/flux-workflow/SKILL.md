@@ -11,15 +11,18 @@ For local development, build or install the Flux CLI and make it available to th
 
 For API-backed access, set `FLUX_API_URL` to the authenticated Flux server and set `FLUX_API_TOKEN` to the server's scoped read-only machine credential. Set both together; the extension uses the API instead of the CLI. If neither is set, the local CLI remains the fallback. Never use the GitLab service token as `FLUX_API_TOKEN`. Give Pi only these API variables; do not export the server's `FLUX_GITLAB_SERVICE_TOKEN` or `FLUX_GITLAB_WRITE_TOKEN` into the Pi process.
 
-Use `flux_today` as the source for the complete group-scoped delivery status. Use `flux_sprint_status` for a compact sprint-health summary with risks. Use `flux_triage`, `flux_standup`, `flux_review_queue`, and `flux_pipeline_failures` for focused read-only views. The CLI path reconciles the active GitLab milestone; the API path reads Flux's authenticated read model.
+Use `flux_today` as the source for the complete group-scoped delivery status. Use `flux_changes` for the derived history of observations in an explicit time window, `flux_item_history` for one work item, `flux_snapshot` for a point-in-time reconstruction, and `flux_flow` for observation-based throughput counts. Use `flux_sprint_status` for a compact sprint-health summary with risks. Use `flux_triage`, `flux_standup`, `flux_review_queue`, and `flux_pipeline_failures` for focused read-only views. The CLI path reconciles the active GitLab milestone; the API path reads Flux's authenticated read model.
 
+- Call `flux_changes` for questions about what Flux observed changing since a supplied time, carry-over evidence, or historical status transitions; report its coverage metadata and do not treat baseline records as creation events.
+- Call `flux_item_history` for a single issue's before/after evidence, `flux_snapshot` for observed point-in-time state, and `flux_flow` for bounded observed transition counts; preserve each result's uncertainties.
 - Call `flux_sprint_status` for concise questions about sprint health, the goal, counts, or risks.
 - Call `flux_triage` when the user asks what needs attention or what should happen next.
-- Call `flux_standup` for a factual current-status standup; do not invent historical changes.
+- Call `flux_standup` for a factual current-status standup; use `flux_changes` when historical evidence is needed and do not invent changes outside its recorded window.
 - Call `flux_review_queue` for open, non-draft merge requests with explicit review requests.
 - Call `flux_pipeline_failures` for open merge requests whose latest relevant pipeline failed.
 - Call `flux_today` when the user needs complete machine-readable work-item details.
 - Treat all Flux tools as read-only; they do not approve, assign, edit, retry, or otherwise mutate GitLab.
+- Flux history starts at its first successful observation; do not infer pre-bootstrap changes or changes missed while Flux was unavailable. Flow is not cycle time, capacity, or causal analysis.
 - Explain statuses as derived signals from GitLab: `todo`, `in progress`, `awaiting review`, `pipeline failing`, `blocked`, `stale`, and `done`.
 - Keep GitLab authoritative. Do not present the read-only tool as permission to mutate issues, merge requests, labels, or pipelines.
 - If the tool fails, report the configuration or reconciliation error instead of guessing from stale conversation context.

@@ -31,6 +31,26 @@ type SyncStatus struct {
 	LastError       string
 }
 
+// SyncRun is durable provenance for one pull attempt. SourceWatermark is the
+// greatest source-side activity timestamp observed in a successful snapshot;
+// it is a watermark, not proof that an incremental endpoint was used.
+type SyncRun struct {
+	ID                  string     `json:"id"`
+	Target              string     `json:"target"`
+	Mode                string     `json:"mode"`
+	FullScan            bool       `json:"full_scan"`
+	Status              string     `json:"status"`
+	StartedAt           time.Time  `json:"started_at"`
+	CompletedAt         time.Time  `json:"completed_at"`
+	ObservedAt          *time.Time `json:"observed_at,omitempty"`
+	SnapshotGeneratedAt *time.Time `json:"snapshot_generated_at,omitempty"`
+	RequestedAfter      *time.Time `json:"requested_after,omitempty"`
+	SourceWatermark     *time.Time `json:"source_watermark,omitempty"`
+	ItemCount           int        `json:"item_count"`
+	Coverage            string     `json:"coverage"`
+	Error               string     `json:"error,omitempty"`
+}
+
 // Sprint contains the work currently being coordinated.
 type Sprint struct {
 	Name      string     `json:"name"`

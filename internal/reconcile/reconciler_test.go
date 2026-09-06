@@ -76,6 +76,56 @@ func (f *fakeStore) putCount() int {
 	return f.puts
 }
 
+func (f *fakeStore) Get() (domain.Snapshot, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.snapshot, f.puts > 0
+}
+
+type metadataStore struct {
+	fakeStore
+	watermark  time.Time
+	lastFull   time.Time
+	observedID string
+	observedAt time.Time
+	runs       []domain.SyncRun
+}
+
+func (s *metadataStore) PutObserved(snapshot domain.Snapshot, runID string, observedAt time.Time) error {
+	s.fakeStore.Put(snapshot)
+	s.observedID = runID
+	s.observedAt = observedAt
+	return nil
+}
+
+func (s *metadataStore) RecordSyncRun(run domain.SyncRun) error {
+	s.runs = append(s.runs, run)
+	if run.Status == "success" {
+		if run.SourceWatermark != nil {
+			s.watermark = *run.SourceWatermark
+		}
+		if run.FullScan {
+			s.lastFull = run.CompletedAt
+		}
+	}
+	return nil
+}
+
+func (s *metadataStore) SourceWatermark() time.Time { return s.watermark }
+func (s *metadataStore) LastFullSyncAt() time.Time  { return s.lastFull }
+
+type incrementalSource struct {
+	fakeSource
+	since       time.Time
+	incremental int
+}
+
+func (s *incrementalSource) SnapshotSince(_ context.Context, _ string, _ string, since time.Time, _ domain.Snapshot) (domain.Snapshot, error) {
+	s.since = since
+	s.incremental++
+	return s.snapshot, s.err
+}
+
 func TestRunInitialAndTriggeredSync(t *testing.T) {
 	source := &fakeSource{snapshot: domain.Snapshot{Sprint: domain.Sprint{Name: "Flow 01"}}}
 	store := &fakeStore{}
@@ -174,6 +224,52 @@ func TestRunReportsSourceErrors(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+func TestReconcileRecordsRunAndWatermark(t *testing.T) {
+	activity := time.Date(2026, time.June, 1, 12, 0, 0, 0, time.UTC)
+	source := &fakeSource{snapshot: domain.Snapshot{GeneratedAt: activity, Sprint: domain.Sprint{WorkItems: []domain.WorkItem{{ID: "project/42#12", LastActivity: activity}}}}}
+	store := &metadataStore{}
+	reconciler, err := New(Config{Source: source, Store: store, Target: "tokyo3", Interval: time.Hour, FullScanInterval: 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	reconciler.reconcile(context.Background())
+	if len(store.runs) != 1 || store.runs[0].Status != "success" || !store.runs[0].FullScan || store.runs[0].Mode != "full" || store.runs[0].ItemCount != 1 {
+		t.Fatalf("sync runs = %+v", store.runs)
+	}
+	if store.observedID != store.runs[0].ID || store.observedAt.IsZero() || store.runs[0].SourceWatermark == nil || !store.runs[0].SourceWatermark.Equal(activity) {
+		t.Fatalf("observation metadata = id %q at %s run %+v", store.observedID, store.observedAt, store.runs[0])
+	}
+}
+
+func TestReconcileUsesOverlapCapableSourceBetweenFullScans(t *testing.T) {
+	watermark := time.Now().UTC().Add(-10 * time.Minute)
+	lastFull := time.Now().UTC().Add(-time.Hour)
+	source := &incrementalSource{fakeSource: fakeSource{snapshot: domain.Snapshot{Sprint: domain.Sprint{Name: "Flow 01"}}}}
+	store := &metadataStore{
+		fakeStore: fakeStore{snapshot: domain.Snapshot{Sprint: domain.Sprint{Name: "Flow 01"}}, puts: 1},
+		watermark: watermark,
+		lastFull:  lastFull,
+	}
+	reconciler, err := New(Config{
+		Source:           source,
+		Store:            store,
+		Target:           "tokyo3",
+		Interval:         time.Hour,
+		OverlapWindow:    5 * time.Minute,
+		FullScanInterval: 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	reconciler.reconcile(context.Background())
+	if source.incremental != 1 || !source.since.Equal(watermark.Add(-5*time.Minute)) {
+		t.Fatalf("incremental source = calls %d since %s", source.incremental, source.since)
+	}
+	if len(store.runs) != 1 || store.runs[0].Mode != "overlap" || store.runs[0].FullScan || store.runs[0].RequestedAfter == nil || !store.runs[0].RequestedAfter.Equal(source.since) {
+		t.Fatalf("overlap run = %+v", store.runs)
+	}
 }
 
 func TestNewValidation(t *testing.T) {

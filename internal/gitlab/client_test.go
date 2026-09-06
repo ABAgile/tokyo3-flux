@@ -257,6 +257,58 @@ func TestGroupSnapshotUsesProjectIdentityForRelatedData(t *testing.T) {
 	}
 }
 
+func TestSnapshotSinceMergesChangedIssues(t *testing.T) {
+	var updatedAfter string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/groups/team/platform/milestones":
+			writeJSON(t, w, []map[string]any{{"title": "Flow 01", "state": "active"}})
+		case "/api/v4/groups/team/platform/issues":
+			updatedAfter = r.URL.Query().Get("updated_after")
+			if r.URL.Query().Get("milestone") != "Flow 01" || r.URL.Query().Get("include_subgroups") != "true" {
+				t.Errorf("incremental issue query = %v", r.URL.Query())
+			}
+			writeJSON(t, w, []map[string]any{{
+				"iid":        13,
+				"project_id": 42,
+				"title":      "Changed issue",
+				"state":      "opened",
+				"references": map[string]string{"full": "team/platform/service#13"},
+				"updated_at": "2026-02-02T12:00:00Z",
+			}})
+		case "/api/v4/projects/42/issues/13/related_merge_requests":
+			writeJSON(t, w, []map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(Config{URL: server.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	previous := domain.Snapshot{
+		Sprint: domain.Sprint{
+			Name: "Flow 01",
+			WorkItems: []domain.WorkItem{{
+				ID:        "team/platform/service#12",
+				ProjectID: 42,
+				Title:     "Unchanged issue",
+				State:     domain.IssueOpen,
+			}},
+		},
+	}
+	after := time.Date(2026, time.February, 2, 11, 55, 0, 0, time.UTC)
+	snapshot, err := client.SnapshotSince(context.Background(), "team/platform", "", after, previous)
+	if err != nil {
+		t.Fatalf("SnapshotSince() error = %v", err)
+	}
+	if updatedAfter != after.Format(time.RFC3339Nano) || len(snapshot.Sprint.WorkItems) != 2 || snapshot.Sprint.WorkItems[0].ID != "team/platform/service#12" || snapshot.Sprint.WorkItems[1].ID != "team/platform/service#13" {
+		t.Fatalf("incremental snapshot = %+v, updated_after = %q", snapshot, updatedAfter)
+	}
+}
+
 func TestSelectCurrentMilestone(t *testing.T) {
 	now := time.Date(2026, 2, 20, 12, 0, 0, 0, time.UTC)
 	milestones := []milestoneResponse{

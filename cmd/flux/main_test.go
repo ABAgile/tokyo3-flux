@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"abagile.com/tokyo3/flux/internal/domain"
+	"abagile.com/tokyo3/flux/internal/state"
 )
 
 func TestIsLoopbackAddress(t *testing.T) {
@@ -32,6 +33,88 @@ func TestServeSessionKey(t *testing.T) {
 	}
 	if _, err := serveSessionKey("", false); err == nil {
 		t.Fatal("live session key error = nil")
+	}
+}
+
+func TestRunChangesJSON(t *testing.T) {
+	directory := t.TempDir()
+	store, err := state.OpenFileStore(directory)
+	if err != nil {
+		t.Fatalf("OpenFileStore() error = %v", err)
+	}
+	item := domain.WorkItem{ID: "team/project#12", ProjectID: 42, Title: "Original", State: domain.IssueOpen}
+	if err := store.Put(domain.Snapshot{GeneratedAt: time.Now().UTC(), Sprint: domain.Sprint{Name: "Flow 01", WorkItems: []domain.WorkItem{item}}}); err != nil {
+		t.Fatalf("first Put() error = %v", err)
+	}
+	item.Title = "Changed"
+	if err := store.Put(domain.Snapshot{GeneratedAt: time.Now().UTC(), Sprint: domain.Sprint{Name: "Flow 01", WorkItems: []domain.WorkItem{item}}}); err != nil {
+		t.Fatalf("second Put() error = %v", err)
+	}
+
+	var output bytes.Buffer
+	if err := runChanges([]string{"--state-dir", directory, "--json"}, &output, &output); err != nil {
+		t.Fatalf("runChanges() error = %v", err)
+	}
+	var result state.ChangeResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("decode changes: %v\n%s", err, output.String())
+	}
+	if result.Observations != 2 || len(result.Changes) != 1 || result.Changes[0].After == nil || result.Changes[0].After.Title != "Changed" {
+		t.Fatalf("changes result = %+v", result)
+	}
+}
+
+func TestRunHistoricalViewsJSON(t *testing.T) {
+	directory := t.TempDir()
+	store, err := state.OpenFileStore(directory)
+	if err != nil {
+		t.Fatalf("OpenFileStore() error = %v", err)
+	}
+	first := time.Date(2026, time.June, 1, 9, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+	item := domain.WorkItem{ID: "team/project#12", ProjectID: 42, Title: "Historical item", State: domain.IssueOpen, Assignee: "alex", LastActivity: first}
+	if err := store.PutObserved(domain.Snapshot{GeneratedAt: first, Sprint: domain.Sprint{Name: "Flow 01", WorkItems: []domain.WorkItem{item}}}, "run-1", first); err != nil {
+		t.Fatalf("first PutObserved() error = %v", err)
+	}
+	item.State = domain.IssueClosed
+	if err := store.PutObserved(domain.Snapshot{GeneratedAt: second, Sprint: domain.Sprint{Name: "Flow 01", WorkItems: []domain.WorkItem{item}}}, "run-2", second); err != nil {
+		t.Fatalf("second PutObserved() error = %v", err)
+	}
+
+	var snapshotOutput bytes.Buffer
+	if err := runHistoricalSnapshot([]string{"--state-dir", directory, "--at", second.Format(time.RFC3339), "--json"}, &snapshotOutput, &snapshotOutput); err != nil {
+		t.Fatalf("runHistoricalSnapshot() error = %v", err)
+	}
+	var snapshot state.SnapshotResult
+	if err := json.Unmarshal(snapshotOutput.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode historical snapshot: %v\n%s", err, snapshotOutput.String())
+	}
+	if len(snapshot.Snapshot.Sprint.WorkItems) != 1 || snapshot.Snapshot.Sprint.WorkItems[0].State != domain.IssueClosed {
+		t.Fatalf("historical snapshot = %+v", snapshot)
+	}
+
+	var historyOutput bytes.Buffer
+	if err := runHistory([]string{"--state-dir", directory, "--item", item.ID, "--json"}, &historyOutput, &historyOutput); err != nil {
+		t.Fatalf("runHistory() error = %v", err)
+	}
+	var history state.ChangeResult
+	if err := json.Unmarshal(historyOutput.Bytes(), &history); err != nil {
+		t.Fatalf("decode item history: %v\n%s", err, historyOutput.String())
+	}
+	if len(history.Changes) != 2 || history.Changes[0].Kind != state.ChangeKindUpdated {
+		t.Fatalf("item history = %+v", history)
+	}
+
+	var flowOutput bytes.Buffer
+	if err := runFlow([]string{"--state-dir", directory, "--from", first.Format(time.RFC3339), "--to", second.Add(time.Hour).Format(time.RFC3339), "--json"}, &flowOutput, &flowOutput); err != nil {
+		t.Fatalf("runFlow() error = %v", err)
+	}
+	var flow state.FlowResult
+	if err := json.Unmarshal(flowOutput.Bytes(), &flow); err != nil {
+		t.Fatalf("decode flow: %v\n%s", err, flowOutput.String())
+	}
+	if flow.Changes != 1 || flow.Completed != 1 {
+		t.Fatalf("flow = %+v", flow)
 	}
 }
 

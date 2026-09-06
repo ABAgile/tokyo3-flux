@@ -227,6 +227,133 @@ func TestSyncStatus(t *testing.T) {
 	}
 }
 
+type fakeHistoryReader struct {
+	result   state.ChangeResult
+	query    state.ChangeQuery
+	snapshot state.SnapshotResult
+	flow     state.FlowResult
+}
+
+func (f *fakeHistoryReader) Changes(query state.ChangeQuery) (state.ChangeResult, error) {
+	f.query = query
+	return f.result, nil
+}
+
+func (f *fakeHistoryReader) SnapshotAt(time.Time) (state.SnapshotResult, error) {
+	return f.snapshot, nil
+}
+
+func (f *fakeHistoryReader) Flow(state.FlowQuery) (state.FlowResult, error) {
+	return f.flow, nil
+}
+
+func TestChanges(t *testing.T) {
+	observedAt := time.Date(2026, time.February, 2, 12, 0, 0, 0, time.UTC)
+	history := &fakeHistoryReader{result: state.ChangeResult{
+		Observations: 3,
+		Changes: []state.Change{{
+			ID:         "change-1",
+			Kind:       state.ChangeKindUpdated,
+			ObservedAt: observedAt,
+			ItemID:     "team/project#12",
+		}},
+	}}
+	handler := NewHandlerWithMilestonesAndHistory(
+		state.NewMemoryStore(),
+		http.NotFoundHandler(),
+		time.Hour,
+		nil,
+		"",
+		"",
+		nil,
+		history,
+	)
+	since := observedAt.Add(-time.Hour).Format(time.RFC3339Nano)
+	until := observedAt.Add(time.Hour).Format(time.RFC3339Nano)
+	request := httptest.NewRequest(http.MethodGet, "/api/changes?since="+since+"&until="+until+"&item_id=team%2Fproject%2312&milestone=Flow+01&limit=20&include_baseline=true", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("changes status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var body struct {
+		Status       string         `json:"status"`
+		Observations int            `json:"observations"`
+		Changes      []state.Change `json:"changes"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode changes: %v", err)
+	}
+	if body.Status != "ok" || body.Observations != 3 || len(body.Changes) != 1 || body.Changes[0].ID != "change-1" {
+		t.Fatalf("changes response = %+v", body)
+	}
+	if history.query.ItemID != "team/project#12" || history.query.Milestone != "Flow 01" || history.query.Limit != 20 || !history.query.IncludeBaseline || !history.query.Since.Equal(observedAt.Add(-time.Hour)) || !history.query.Until.Equal(observedAt.Add(time.Hour)) {
+		t.Fatalf("history query = %+v", history.query)
+	}
+}
+
+func TestChangesRejectsInvalidQuery(t *testing.T) {
+	history := &fakeHistoryReader{}
+	handler := NewHandlerWithMilestonesAndHistory(state.NewMemoryStore(), http.NotFoundHandler(), time.Hour, nil, "", "", nil, history)
+	request := httptest.NewRequest(http.MethodGet, "/api/changes?limit=0", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || history.query.Limit != 0 {
+		t.Fatalf("invalid changes response = %d, query = %+v", response.Code, history.query)
+	}
+}
+
+func TestHistoricalReadRoutes(t *testing.T) {
+	observedAt := time.Date(2026, time.February, 2, 12, 0, 0, 0, time.UTC)
+	history := &fakeHistoryReader{
+		snapshot: state.SnapshotResult{AsOf: observedAt, Snapshot: domain.Snapshot{GeneratedAt: observedAt}},
+		flow:     state.FlowResult{Changes: 2, Completed: 1},
+	}
+	handler := NewHandlerWithMilestonesAndHistory(state.NewMemoryStore(), http.NotFoundHandler(), time.Hour, nil, "", "", nil, history)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/items/team%2Fproject%2312/history?limit=20", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || history.query.ItemID != "team/project#12" || !history.query.IncludeBaseline {
+		t.Fatalf("item history response = %d, query = %+v", response.Code, history.query)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/snapshots/2026-02-02T12:00:00Z", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("snapshot response = %d, want %d", response.Code, http.StatusOK)
+	}
+	var snapshotBody struct {
+		Status string    `json:"status"`
+		AsOf   time.Time `json:"as_of"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&snapshotBody); err != nil {
+		t.Fatalf("decode snapshot response: %v", err)
+	}
+	if snapshotBody.Status != "ok" || !snapshotBody.AsOf.Equal(observedAt) {
+		t.Fatalf("snapshot body = %+v", snapshotBody)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/flow?from=2026-02-01T00:00:00Z&to=2026-02-03T00:00:00Z&item_id=team%2Fproject%2312", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("flow response = %d, want %d", response.Code, http.StatusOK)
+	}
+	var flowBody struct {
+		Status    string `json:"status"`
+		Changes   int    `json:"changes"`
+		Completed int    `json:"completed"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&flowBody); err != nil {
+		t.Fatalf("decode flow response: %v", err)
+	}
+	if flowBody.Status != "ok" || flowBody.Changes != 2 || flowBody.Completed != 1 {
+		t.Fatalf("flow body = %+v", flowBody)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	handler := NewHandler(state.NewMemoryStore(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), time.Hour)
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)

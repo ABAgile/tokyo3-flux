@@ -28,6 +28,9 @@ services:
       FLUX_ADDR: ":8080"
       FLUX_STATE_DIR: /var/lib/flux
       FLUX_RECONCILE_INTERVAL: "${FLUX_RECONCILE_INTERVAL:-5m}"
+      FLUX_RECONCILE_OVERLAP: "${FLUX_RECONCILE_OVERLAP:-5m}"
+      FLUX_FULL_SCAN_INTERVAL: "${FLUX_FULL_SCAN_INTERVAL:-24h}"
+      FLUX_HISTORY_RETENTION: "${FLUX_HISTORY_RETENTION:-8760h}"
 
       # GitLab group source and background reconciliation credential.
       FLUX_GITLAB_URL: "${FLUX_GITLAB_URL:?set FLUX_GITLAB_URL}"
