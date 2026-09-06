@@ -122,7 +122,67 @@ func (c *Client) Snapshot(ctx context.Context, target, goal string) (domain.Snap
 	if err != nil {
 		return domain.Snapshot{}, err
 	}
+	return c.snapshotForMilestone(ctx, target, milestone, goal)
+}
 
+// ListMilestones returns the active group milestones available for a cockpit
+// selection. The GitLab service token stays on the server.
+func (c *Client) ListMilestones(ctx context.Context, target string) ([]domain.Milestone, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, errors.New("GitLab group is required")
+	}
+	milestones, err := c.listMilestones(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]domain.Milestone, 0, len(milestones))
+	for _, milestone := range milestones {
+		if strings.TrimSpace(milestone.Title) == "" || (milestone.State != "" && milestone.State != "active") {
+			continue
+		}
+		result = append(result, domain.Milestone{
+			Name:      milestone.Title,
+			Goal:      milestone.Description,
+			State:     milestone.State,
+			StartDate: milestone.StartDate,
+			DueDate:   milestone.DueDate,
+		})
+	}
+	return result, nil
+}
+
+// SnapshotForMilestone returns a snapshot for a specifically selected active
+// group milestone. It does not change the background rolling milestone or the
+// reconciled store.
+func (c *Client) SnapshotForMilestone(ctx context.Context, target, name, goal string) (domain.Snapshot, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return domain.Snapshot{}, errors.New("GitLab group is required")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.Snapshot{}, errors.New("GitLab milestone is required")
+	}
+
+	milestones, err := c.listMilestones(ctx, target)
+	if err != nil {
+		return domain.Snapshot{}, err
+	}
+	var selected milestoneResponse
+	for _, milestone := range milestones {
+		if milestone.Title == name && (milestone.State == "" || milestone.State == "active") {
+			selected = milestone
+			break
+		}
+	}
+	if selected.Title == "" {
+		return domain.Snapshot{}, fmt.Errorf("active GitLab milestone %q not found", name)
+	}
+	return c.snapshotForMilestone(ctx, target, selected, goal)
+}
+
+func (c *Client) snapshotForMilestone(ctx context.Context, target string, milestone milestoneResponse, goal string) (domain.Snapshot, error) {
 	issues, err := c.listIssues(ctx, target, milestone.Title)
 	if err != nil {
 		return domain.Snapshot{}, err

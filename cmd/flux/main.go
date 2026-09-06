@@ -18,6 +18,7 @@ import (
 	"abagile.com/tokyo3/flux/internal/gitlab"
 	"abagile.com/tokyo3/flux/internal/reconcile"
 	"abagile.com/tokyo3/flux/internal/state"
+	fluxweb "abagile.com/tokyo3/flux/internal/web"
 	"abagile.com/tokyo3/flux/internal/webhook"
 	basecli "github.com/abagile/tokyo3-base/cli"
 	basecrypto "github.com/abagile/tokyo3-base/crypto"
@@ -211,10 +212,11 @@ func runServe(args []string, stderr io.Writer) error {
 		return fmt.Errorf("configure GitLab OAuth: %w", err)
 	}
 
-	apiHandler := api.NewHandler(store, webhookHandler, *staleAfter)
+	apiHandler := api.NewHandlerWithMilestones(store, webhookHandler, *staleAfter, client, target, *goal)
+	cockpitHandler := fluxweb.NewHandler(apiHandler)
 	routes := http.NewServeMux()
 	routes.Handle("/auth/", authenticator.Handler())
-	routes.Handle("/", sessions.Gate(apiHandler))
+	routes.Handle("/", sessions.Gate(cockpitHandler))
 	server := &http.Server{
 		Addr:              *addr,
 		Handler:           routes,

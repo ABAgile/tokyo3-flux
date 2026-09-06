@@ -17,6 +17,15 @@ type Sprint struct {
 	WorkItems []WorkItem `json:"work_items"`
 }
 
+// Milestone describes an active GitLab milestone available to the cockpit.
+type Milestone struct {
+	Name      string `json:"name"`
+	Goal      string `json:"goal,omitempty"`
+	State     string `json:"state"`
+	StartDate string `json:"start_date,omitempty"`
+	DueDate   string `json:"due_date,omitempty"`
+}
+
 // WorkItem is the small, normalized unit used by Flux's first status view.
 type WorkItem struct {
 	ID            string         `json:"id"`

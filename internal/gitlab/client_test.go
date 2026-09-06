@@ -127,6 +127,68 @@ func TestSnapshot(t *testing.T) {
 	}
 }
 
+func TestListAndSnapshotForMilestone(t *testing.T) {
+	var requestedMilestone string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/groups/team/platform/milestones":
+			writeJSON(t, w, []map[string]any{
+				{"title": "Flow 01", "description": "First slice", "state": "active", "start_date": "2026-01-01", "due_date": "2026-01-31"},
+				{"title": "Flow 02", "description": "Second slice", "state": "active", "start_date": "2026-02-01", "due_date": "2026-02-28"},
+			})
+		case "/api/v4/groups/team/platform/issues":
+			requestedMilestone = r.URL.Query().Get("milestone")
+			writeJSON(t, w, []map[string]any{{
+				"iid":        18,
+				"project_id": 42,
+				"title":      "Second-slice issue",
+				"state":      "opened",
+				"references": map[string]string{"full": "team/platform/service#18"},
+				"updated_at": "2026-02-10T10:30:00Z",
+			}})
+		case "/api/v4/projects/42/issues/18/related_merge_requests":
+			writeJSON(t, w, []map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(Config{URL: server.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	milestones, err := client.ListMilestones(context.Background(), "team/platform")
+	if err != nil {
+		t.Fatalf("ListMilestones() error = %v", err)
+	}
+	if got, want := len(milestones), 2; got != want {
+		t.Fatalf("milestone count = %d, want %d", got, want)
+	}
+	if got, want := milestones[1].Name, "Flow 02"; got != want {
+		t.Errorf("second milestone = %q, want %q", got, want)
+	}
+
+	snapshot, err := client.SnapshotForMilestone(context.Background(), "team/platform", "Flow 02", "")
+	if err != nil {
+		t.Fatalf("SnapshotForMilestone() error = %v", err)
+	}
+	if got, want := snapshot.Sprint.Name, "Flow 02"; got != want {
+		t.Errorf("snapshot milestone = %q, want %q", got, want)
+	}
+	if got, want := snapshot.Sprint.Goal, "Second slice"; got != want {
+		t.Errorf("snapshot goal = %q, want %q", got, want)
+	}
+	if got, want := requestedMilestone, "Flow 02"; got != want {
+		t.Errorf("issues milestone = %q, want %q", got, want)
+	}
+
+	if _, err := client.SnapshotForMilestone(context.Background(), "team/platform", "Flow 99", ""); err == nil {
+		t.Fatal("SnapshotForMilestone() error = nil for unavailable milestone")
+	}
+}
+
 func TestGroupSnapshotUsesProjectIdentityForRelatedData(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
