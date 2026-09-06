@@ -23,6 +23,7 @@ func TestRenderTodayJSON(t *testing.T) {
 					ProjectPath:  "tokyo3/flux",
 					Title:        "Add the first agent tool",
 					State:        domain.IssueOpen,
+					Labels:       []string{"status::blocked", "priority::high"},
 					Blocked:      true,
 					LastActivity: generatedAt,
 				},
@@ -48,6 +49,7 @@ func TestRenderTodayJSON(t *testing.T) {
 			Items  []struct {
 				ID          string        `json:"id"`
 				ProjectPath string        `json:"project_path"`
+				Labels      []string      `json:"labels"`
 				Status      domain.Status `json:"status"`
 			} `json:"items"`
 		} `json:"summary"`
@@ -69,7 +71,7 @@ func TestRenderTodayJSON(t *testing.T) {
 		t.Fatalf("items = %#v", response.Summary.Items)
 	}
 	item := response.Summary.Items[0]
-	if item.ID != "tokyo3/flux#7" || item.ProjectPath != "tokyo3/flux" || item.Status != domain.StatusBlocked {
+	if item.ID != "tokyo3/flux#7" || item.ProjectPath != "tokyo3/flux" || item.Status != domain.StatusBlocked || len(item.Labels) != 2 || item.Labels[0] != "status::blocked" {
 		t.Fatalf("item = %#v", item)
 	}
 }

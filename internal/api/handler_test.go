@@ -36,6 +36,7 @@ func TestTodayAndReadiness(t *testing.T) {
 				Title:        "Build the cockpit",
 				State:        domain.IssueOpen,
 				Assignee:     "alex",
+				Labels:       []string{"priority::high", "customer"},
 				LastActivity: generatedAt,
 				MergeRequests: []domain.MergeRequest{{
 					ID:       "!7",
@@ -64,6 +65,7 @@ func TestTodayAndReadiness(t *testing.T) {
 		Items  []struct {
 			ID            string                `json:"id"`
 			ProjectPath   string                `json:"project_path"`
+			Labels        []string              `json:"labels"`
 			State         domain.IssueState     `json:"state"`
 			Assignee      string                `json:"assignee"`
 			LastActivity  time.Time             `json:"last_activity"`
@@ -83,7 +85,7 @@ func TestTodayAndReadiness(t *testing.T) {
 	if body.Total != 1 || body.Counts[string(domain.StatusInProgress)] != 1 {
 		t.Fatalf("summary = total %d counts %+v, want one in-progress item", body.Total, body.Counts)
 	}
-	if len(body.Items) != 1 || body.Items[0].ID != "team/project#12" || body.Items[0].ProjectPath != "team/project" || body.Items[0].State != domain.IssueOpen || body.Items[0].Assignee != "alex" || !body.Items[0].LastActivity.Equal(generatedAt) || body.Items[0].Status != "in progress" {
+	if len(body.Items) != 1 || body.Items[0].ID != "team/project#12" || body.Items[0].ProjectPath != "team/project" || body.Items[0].State != domain.IssueOpen || body.Items[0].Assignee != "alex" || len(body.Items[0].Labels) != 2 || body.Items[0].Labels[0] != "priority::high" || !body.Items[0].LastActivity.Equal(generatedAt) || body.Items[0].Status != "in progress" {
 		t.Fatalf("items = %+v, want enriched in-progress item", body.Items)
 	}
 	if len(body.Items[0].MergeRequests) != 1 || body.Items[0].MergeRequests[0].ID != "!7" || body.Items[0].MergeRequests[0].Pipeline != domain.PipelineSuccess {

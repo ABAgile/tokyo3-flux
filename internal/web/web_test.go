@@ -23,9 +23,13 @@ func TestNewHandlerServesCockpitAndDelegatesAPI(t *testing.T) {
 		wantBody   string
 	}{
 		{name: "cockpit", path: "/", wantStatus: http.StatusOK, wantBody: "theme-toggle"},
+		{name: "cockpit actions", path: "/", wantStatus: http.StatusOK, wantBody: "Choose an existing GitLab label"},
+		{name: "confirm starts disabled", path: "/", wantStatus: http.StatusOK, wantBody: `id="label-confirm-button" type="button" disabled`},
+		{name: "mutation status", path: "/", wantStatus: http.StatusOK, wantBody: "mutation-status"},
 		{name: "script", path: "/app.js", wantStatus: http.StatusOK, wantBody: "loadSnapshot"},
 		{name: "api", path: "/api/today", wantStatus: http.StatusTeapot, wantHeader: "/api/today"},
 		{name: "milestones", path: "/api/milestones", wantStatus: http.StatusTeapot, wantHeader: "/api/milestones"},
+		{name: "action API", path: "/api/actions/csrf", wantStatus: http.StatusTeapot, wantHeader: "/api/actions/csrf"},
 		{name: "health", path: "/healthz", wantStatus: http.StatusTeapot, wantHeader: "/healthz"},
 		{name: "webhook", path: "/webhooks/gitlab", wantStatus: http.StatusTeapot, wantHeader: "/webhooks/gitlab"},
 	}

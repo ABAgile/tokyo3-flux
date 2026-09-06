@@ -50,7 +50,7 @@ func TestSnapshot(t *testing.T) {
 					"state":      "opened",
 					"references": map[string]string{"full": "team/platform/service#12"},
 					"assignees":  []map[string]string{{"username": "alex"}},
-					"labels":     []string{"status::blocked"},
+					"labels":     []string{"status::blocked", "priority::high"},
 					"updated_at": "2026-01-12T10:30:00Z",
 				}})
 				return
@@ -108,6 +108,9 @@ func TestSnapshot(t *testing.T) {
 	}
 	if !item.Blocked {
 		t.Error("item should be blocked by its label")
+	}
+	if len(item.Labels) != 2 || item.Labels[0] != "status::blocked" || item.Labels[1] != "priority::high" {
+		t.Errorf("labels = %v, want GitLab labels", item.Labels)
 	}
 	if got, want := len(item.MergeRequests), 1; got != want {
 		t.Fatalf("merge request count = %d, want %d", got, want)
@@ -305,6 +308,97 @@ func TestGroupPathIsEscaped(t *testing.T) {
 	want := "/api/v4/groups/team%2Fplatform/issues"
 	if gotPath != want {
 		t.Fatalf("escaped request path = %q, want %q", gotPath, want)
+	}
+}
+
+func TestListProjectLabelsFiltersArchivedAndSorts(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/projects/42/labels" {
+			t.Errorf("request = %s %s, want GET project labels", r.Method, r.URL.Path)
+		}
+		if got, want := r.URL.Query().Get("include_ancestor_groups"), "true"; got != want {
+			t.Errorf("include_ancestor_groups = %q, want %q", got, want)
+		}
+		writeJSON(t, w, []map[string]any{
+			{"name": "zeta"},
+			{"name": "Archived", "archived": true},
+			{"name": "alpha"},
+			{"name": "alpha"},
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(Config{URL: server.URL, Token: "test-token"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	labels, err := client.ListProjectLabels(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("ListProjectLabels() error = %v", err)
+	}
+	if got, want := len(labels), 2; got != want || labels[0] != "alpha" || labels[1] != "zeta" {
+		t.Fatalf("labels = %v, want [alpha zeta]", labels)
+	}
+}
+
+func TestIssueReadAndLabelMutation(t *testing.T) {
+	var mutationSeen bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantToken := "read-token"
+		if r.Method == http.MethodPut {
+			wantToken = "write-token"
+		}
+		if got := r.Header.Get("PRIVATE-TOKEN"); got != wantToken {
+			t.Errorf("PRIVATE-TOKEN = %q, want %q", got, wantToken)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/projects/42/issues/12":
+			writeJSON(t, w, map[string]any{
+				"iid":        12,
+				"project_id": 42,
+				"title":      "Add the label",
+				"state":      "opened",
+				"labels":     []string{"existing"},
+				"updated_at": "2026-02-02T12:00:00Z",
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/projects/42/issues/12":
+			if got, want := r.Header.Get("Content-Type"), "application/x-www-form-urlencoded"; got != want {
+				t.Errorf("Content-Type = %q, want %q", got, want)
+			}
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("ParseForm() error = %v", err)
+			}
+			if got, want := r.PostForm.Get("add_labels"), "status::blocked"; got != want {
+				t.Errorf("add_labels = %q, want %q", got, want)
+			}
+			mutationSeen = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(Config{URL: server.URL, Token: "read-token"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	mutationClient, err := NewMutationClient(Config{URL: server.URL, Token: "write-token"})
+	if err != nil {
+		t.Fatalf("NewMutationClient() error = %v", err)
+	}
+	issue, err := client.GetIssue(context.Background(), 42, 12)
+	if err != nil {
+		t.Fatalf("GetIssue() error = %v", err)
+	}
+	if issue.IID != 12 || issue.ProjectID != 42 || issue.Title != "Add the label" || issue.State != domain.IssueOpen || len(issue.Labels) != 1 || issue.UpdatedAt.IsZero() {
+		t.Fatalf("issue = %+v, want decoded issue", issue)
+	}
+	if err := mutationClient.AddIssueLabel(context.Background(), 42, 12, "status::blocked"); err != nil {
+		t.Fatalf("AddIssueLabel() error = %v", err)
+	}
+	if !mutationSeen {
+		t.Fatal("AddIssueLabel() did not reach the GitLab update endpoint")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"abagile.com/tokyo3/flux/internal/domain"
 )
@@ -15,11 +16,13 @@ import (
 const (
 	snapshotFilename = "snapshot.json"
 	eventsFilename   = "events.jsonl"
+	auditFilename    = "audit.jsonl"
 )
 
 // FileStore is a small, single-process durable store for the first Flux
-// deployment. Snapshot replacement is atomic; webhook metadata is appended as
-// JSON Lines. It is intentionally replaceable by a database-backed Store later.
+// deployment. Snapshot replacement is atomic; webhook and mutation metadata are
+// appended as JSON Lines. It is intentionally replaceable by a database-backed
+// Store later.
 type FileStore struct {
 	mu        sync.RWMutex
 	directory string
@@ -88,28 +91,46 @@ func (s *FileStore) RecordEvent(event Event) error {
 	if strings.TrimSpace(event.Kind) == "" {
 		return errors.New("event kind is required")
 	}
-	data, err := json.Marshal(event)
+	return s.appendJSONLine(s.eventsPath(), event, "event")
+}
+
+// RecordAudit appends secret-free metadata for a GitLab action attempt.
+func (s *FileStore) RecordAudit(event AuditEvent) error {
+	if strings.TrimSpace(event.Action) == "" {
+		return errors.New("audit action is required")
+	}
+	if strings.TrimSpace(event.Outcome) == "" {
+		return errors.New("audit outcome is required")
+	}
+	if event.RecordedAt.IsZero() {
+		event.RecordedAt = time.Now().UTC()
+	}
+	return s.appendJSONLine(s.auditPath(), event, "audit")
+}
+
+func (s *FileStore) appendJSONLine(path string, value any, kind string) error {
+	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("encode event: %w", err)
+		return fmt.Errorf("encode %s: %w", kind, err)
 	}
 	data = append(data, '\n')
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	file, err := os.OpenFile(s.eventsPath(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
-		return fmt.Errorf("open event log: %w", err)
+		return fmt.Errorf("open %s log: %w", kind, err)
 	}
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("write event: %w", err)
+		return fmt.Errorf("write %s: %w", kind, err)
 	}
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
-		return fmt.Errorf("sync event log: %w", err)
+		return fmt.Errorf("sync %s: %w", kind, err)
 	}
 	if err := file.Close(); err != nil {
-		return fmt.Errorf("close event log: %w", err)
+		return fmt.Errorf("close %s: %w", kind, err)
 	}
 	return nil
 }
@@ -124,12 +145,21 @@ func (s *FileStore) EventsPath() string {
 	return s.eventsPath()
 }
 
+// AuditPath returns the append-only mutation audit log path.
+func (s *FileStore) AuditPath() string {
+	return s.auditPath()
+}
+
 func (s *FileStore) snapshotPath() string {
 	return filepath.Join(s.directory, snapshotFilename)
 }
 
 func (s *FileStore) eventsPath() string {
 	return filepath.Join(s.directory, eventsFilename)
+}
+
+func (s *FileStore) auditPath() string {
+	return filepath.Join(s.directory, auditFilename)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

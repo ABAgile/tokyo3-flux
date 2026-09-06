@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"abagile.com/tokyo3/flux/internal/action"
 	"abagile.com/tokyo3/flux/internal/api"
 	fluxauth "abagile.com/tokyo3/flux/internal/auth"
 	"abagile.com/tokyo3/flux/internal/domain"
@@ -154,6 +155,17 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configure GitLab client: %w", err)
 	}
+	var mutationClient *gitlab.MutationClient
+	if mutationToken := strings.TrimSpace(os.Getenv("FLUX_GITLAB_WRITE_TOKEN")); mutationToken != "" {
+		mutationClient, err = gitlab.NewMutationClient(gitlab.Config{
+			URL:           *gitlabURL,
+			Token:         mutationToken,
+			BlockedLabels: splitList(*blockedLabels),
+		})
+		if err != nil {
+			return fmt.Errorf("configure GitLab mutation client: %w", err)
+		}
+	}
 	store, err := state.OpenFileStore(*stateDir)
 	if err != nil {
 		return fmt.Errorf("open state store: %w", err)
@@ -217,11 +229,28 @@ func runServe(args []string, stderr io.Writer) error {
 	}
 
 	apiHandler := api.NewHandlerWithMilestones(store, webhookHandler, *staleAfter, client, target, *goal)
+	actionService, err := action.New(action.Config{
+		Snapshot: store,
+		Reader:   client,
+		Labels:   client,
+		Writer:   mutationClient,
+		Audit:    store,
+		Trigger:  reconciler.Trigger,
+		Log:      rt.Log,
+	})
+	if err != nil {
+		return fmt.Errorf("configure GitLab actions: %w", err)
+	}
+	actionHandler, err := action.NewHandler(actionService, sessions)
+	if err != nil {
+		return fmt.Errorf("configure GitLab action HTTP handler: %w", err)
+	}
 	cockpitHandler := fluxweb.NewHandler(apiHandler)
 	browserAPIHandler := sessions.Gate(apiHandler)
 	machineAPIHandler := machineToken.Gate(apiHandler, browserAPIHandler)
 	routes := http.NewServeMux()
 	routes.Handle("/auth/", authenticator.Handler())
+	routes.Handle("/api/actions/", sessions.Gate(actionHandler))
 	routes.Handle("/api/", machineAPIHandler)
 	routes.Handle("/", sessions.Gate(cockpitHandler))
 	server := &http.Server{
@@ -233,7 +262,7 @@ func runServe(args []string, stderr io.Writer) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval)
+	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "mutation_enabled", mutationClient != nil)
 
 	return baserun.Group(rt.Ctx,
 		baserun.HTTPServer(server, 10*time.Second, false),
@@ -335,6 +364,7 @@ type todayJSONItem struct {
 	Title         string                `json:"title"`
 	State         domain.IssueState     `json:"state"`
 	Assignee      string                `json:"assignee,omitempty"`
+	Labels        []string              `json:"labels,omitempty"`
 	Blocked       bool                  `json:"blocked"`
 	LastActivity  time.Time             `json:"last_activity"`
 	Status        domain.Status         `json:"status"`
@@ -374,6 +404,7 @@ func renderTodayJSON(w io.Writer, snapshot domain.Snapshot, summary domain.Summa
 			Title:         item.Item.Title,
 			State:         item.Item.State,
 			Assignee:      item.Item.Assignee,
+			Labels:        append([]string(nil), item.Item.Labels...),
 			Blocked:       item.Item.Blocked,
 			LastActivity:  item.Item.LastActivity,
 			Status:        item.Status,

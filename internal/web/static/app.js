@@ -6,6 +6,7 @@
   const ATTENTION_STATUSES = new Set(ATTENTION_ORDER);
   const MAX_WORK_ROWS = 100;
   const MAX_ATTENTION_ROWS = 8;
+  const MAX_LABELS_PER_ITEM = 5;
   const THEME_STORAGE_KEY = "flux-theme";
 
   const state = {
@@ -15,6 +16,15 @@
     currentMilestone: "",
     selectedMilestone: new URLSearchParams(window.location.search).get("milestone")?.trim() || "",
     request: 0,
+    action: {
+      csrfToken: "",
+      item: null,
+      labels: [],
+      mutationEnabled: null,
+      plan: null,
+      busy: false,
+      generation: 0,
+    },
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -261,6 +271,27 @@
     return chip;
   }
 
+  function workLabels(item) {
+    const labels = Array.isArray(item.labels) ? item.labels : [];
+    const result = [];
+    const seen = new Set();
+    for (const value of labels) {
+      const label = clean(value);
+      const key = label.toLowerCase();
+      if (!label || seen.has(key)) continue;
+      seen.add(key);
+      result.push(label);
+    }
+    return result;
+  }
+
+  function labelChip(label, more = false) {
+    const chip = element("span", more ? "label-chip label-chip--more" : "label-chip", label);
+    chip.setAttribute("role", "listitem");
+    if (!more) chip.title = label;
+    return chip;
+  }
+
   function workRow(item) {
     const status = statusOf(item);
     const row = element("article", "work-row");
@@ -282,6 +313,16 @@
     }
     main.append(titleLine, context);
 
+    const labels = workLabels(item);
+    if (labels.length > 0) {
+      const labelRow = element("div", "label-row");
+      labelRow.setAttribute("role", "list");
+      labelRow.setAttribute("aria-label", "GitLab labels");
+      for (const label of labels.slice(0, MAX_LABELS_PER_ITEM)) labelRow.appendChild(labelChip(label));
+      if (labels.length > MAX_LABELS_PER_ITEM) labelRow.appendChild(labelChip(`+${labels.length - MAX_LABELS_PER_ITEM}`, true));
+      main.appendChild(labelRow);
+    }
+
     const requests = Array.isArray(item.merge_requests) ? item.merge_requests.filter((request) => request && typeof request === "object") : [];
     if (requests.length > 0) {
       const mrRow = element("div", "mr-row");
@@ -297,6 +338,14 @@
     const updated = element("time", "updated", relativeDate(item.last_activity));
     if (clean(item.last_activity)) updated.dateTime = clean(item.last_activity);
     updated.title = formatDate(item.last_activity);
+    const canAddLabel = state.action.mutationEnabled !== false && !state.selectedMilestone && clean(item.project_path) && clean(item.id).includes("#") && clean(item.state) === "open";
+    if (canAddLabel) {
+      const actionButton = element("button", "work-action", "Add label");
+      actionButton.type = "button";
+      actionButton.setAttribute("aria-label", `Add label to ${limited(item.id, "issue", 100)}`);
+      actionButton.addEventListener("click", () => openLabelDialog(item));
+      side.append(actionButton);
+    }
     side.append(assignee, updated);
 
     row.append(main, side);
@@ -313,6 +362,298 @@
     const state = element("div", "error-state");
     state.append(element("strong", "", "Snapshot unavailable"), element("span", "", message));
     return state;
+  }
+
+  function setActionMessage(message, error = false) {
+    const node = $("#label-action-message");
+    node.textContent = message;
+    if (error) node.dataset.kind = "error";
+    else delete node.dataset.kind;
+  }
+
+  function renderMutationStatus(data) {
+    const status = $("#mutation-status");
+    const enabled = data.mutation_enabled === true;
+    state.action.mutationEnabled = enabled;
+    if (enabled) {
+      status.hidden = true;
+      status.textContent = "";
+    } else {
+      status.hidden = false;
+      status.textContent = clean(data.message) || "GitLab mutations disabled: FLUX_GITLAB_WRITE_TOKEN is not configured.";
+      if ($("#label-dialog").open) closeLabelDialog();
+    }
+    if (state.snapshot) renderWork(state.snapshot);
+  }
+
+  async function loadActionStatus() {
+    try {
+      const data = await actionRequest("/api/actions/status", { headers: { Accept: "application/json" } });
+      if (typeof data.mutation_enabled !== "boolean") throw new Error("Flux returned an invalid mutation status");
+      renderMutationStatus(data);
+    } catch (_) {
+      state.action.mutationEnabled = null;
+      $("#mutation-status").hidden = true;
+    }
+  }
+
+  function resetLabelPlan() {
+    state.action.plan = null;
+    $("#label-plan").hidden = true;
+    $("#label-plan-summary").textContent = "";
+    $("#label-plan-expiry").textContent = "";
+    $("#label-plan-button").hidden = false;
+    $("#label-plan-button").disabled = state.action.labels.length === 0;
+    $("#label-plan-button").textContent = "Preview change";
+    $("#label-confirm-button").hidden = false;
+    $("#label-confirm-button").disabled = true;
+    $("#label-confirm-button").textContent = "Confirm and add label";
+    $("#label-cancel").textContent = "Cancel";
+  }
+
+  function actionIsCurrent(item, generation) {
+    return state.action.item === item && state.action.generation === generation;
+  }
+
+  function discardLabelActionState() {
+    state.action.generation += 1;
+    state.action.item = null;
+    state.action.labels = [];
+    state.action.plan = null;
+    state.action.busy = false;
+    $("#label-plan").hidden = true;
+    $("#label-plan-summary").textContent = "";
+    $("#label-plan-expiry").textContent = "";
+    $("#label-input").disabled = true;
+    $("#label-cancel").disabled = false;
+    $("#label-dialog-close").disabled = false;
+    $("#label-plan-button").hidden = false;
+    $("#label-plan-button").disabled = true;
+    $("#label-plan-button").textContent = "Preview change";
+    $("#label-confirm-button").hidden = false;
+    $("#label-confirm-button").disabled = true;
+    $("#label-confirm-button").textContent = "Confirm and add label";
+    $("#label-cancel").textContent = "Cancel";
+    setActionMessage("");
+  }
+
+  function closeLabelDialog() {
+    const dialog = $("#label-dialog");
+    discardLabelActionState();
+    if (dialog.open) dialog.close();
+    else dialog.removeAttribute("open");
+  }
+
+  function openLabelDialog(item) {
+    if (state.selectedMilestone || state.action.mutationEnabled === false) return;
+    const dialog = $("#label-dialog");
+    const input = $("#label-input");
+    state.action.generation += 1;
+    const generation = state.action.generation;
+    state.action.item = item;
+    state.action.labels = [];
+    state.action.plan = null;
+    state.action.busy = false;
+    $("#label-dialog-context").textContent = `${limited(item.title, "Untitled work item", 180)} · ${limited(item.id, "Unknown issue", 100)}`;
+    const loading = element("option", "", "Loading available GitLab labels…");
+    loading.value = "";
+    input.replaceChildren(loading);
+    input.value = "";
+    input.disabled = true;
+    resetLabelPlan();
+    setActionMessage("Loading labels defined in GitLab…");
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    input.focus();
+    loadAvailableLabels(item, generation);
+  }
+
+  function setAvailableLabelOptions(labels) {
+    const input = $("#label-input");
+    const planButton = $("#label-plan-button");
+    state.action.labels = labels;
+    input.replaceChildren();
+    if (labels.length === 0) {
+      const option = element("option", "", "No unused GitLab labels available");
+      option.value = "";
+      option.disabled = true;
+      option.selected = true;
+      input.appendChild(option);
+      input.disabled = true;
+      planButton.disabled = true;
+      return;
+    }
+    const placeholder = element("option", "", "Choose a GitLab label…");
+    placeholder.value = "";
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    input.appendChild(placeholder);
+    for (const label of labels) {
+      const option = element("option", "", label);
+      option.value = label;
+      input.appendChild(option);
+    }
+    input.disabled = false;
+    planButton.disabled = false;
+  }
+
+  async function loadAvailableLabels(item, generation) {
+    try {
+      const data = await actionRequest(`/api/actions/labels?item_id=${encodeURIComponent(item.id)}`, { headers: { Accept: "application/json" } });
+      if (!actionIsCurrent(item, generation)) return;
+      const labels = Array.isArray(data.labels)
+        ? [...new Set(data.labels.filter((label) => typeof label === "string").map(clean).filter(Boolean))]
+        : [];
+      setAvailableLabelOptions(labels);
+      setActionMessage(labels.length > 0 ? "Choose an existing label, then preview the change." : "This issue has no unused GitLab labels available.", labels.length === 0);
+    } catch (error) {
+      if (!actionIsCurrent(item, generation)) return;
+      setAvailableLabelOptions([]);
+      setActionMessage(error instanceof Error ? error.message : "Flux could not load GitLab labels.", true);
+    }
+  }
+
+  async function actionRequest(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      cache: "no-store",
+      credentials: "same-origin",
+      redirect: "manual",
+    });
+    if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400) || response.redirected) {
+      window.location.assign(`/auth/login?return_to=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+      throw new Error("Flux login required");
+    }
+    let data = {};
+    try {
+      data = await response.json();
+    } catch (_) {
+      // The status below still gives the user a useful failure message.
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
+    if (!response.ok) throw new Error(data.error || `Flux action API returned HTTP ${response.status}`);
+    return data;
+  }
+
+  async function actionCSRFToken() {
+    if (state.action.csrfToken) return state.action.csrfToken;
+    const data = await actionRequest("/api/actions/csrf", { headers: { Accept: "application/json" } });
+    if (!clean(data.csrf_token)) throw new Error("Flux did not return an action authorization token");
+    state.action.csrfToken = data.csrf_token;
+    return state.action.csrfToken;
+  }
+
+  function setActionBusy(busy) {
+    state.action.busy = busy;
+    const input = $("#label-input");
+    const planButton = $("#label-plan-button");
+    const confirmButton = $("#label-confirm-button");
+    input.disabled = busy || state.action.labels.length === 0 || Boolean(state.action.plan);
+    planButton.disabled = busy || state.action.labels.length === 0 || Boolean(state.action.plan);
+    confirmButton.disabled = busy || !state.action.plan;
+    // A request must never make the dialog impossible to discard. Closing it
+    // invalidates the local action state; the server still enforces its plan.
+    $("#label-cancel").disabled = false;
+    $("#label-dialog-close").disabled = false;
+    if (busy && state.action.plan) {
+      confirmButton.textContent = "Applying…";
+      $("#label-cancel").textContent = "Close";
+    } else if (state.action.plan) {
+      confirmButton.textContent = "Confirm and add label";
+      $("#label-cancel").textContent = "Discard plan";
+    } else {
+      confirmButton.textContent = "Confirm and add label";
+      $("#label-cancel").textContent = "Cancel";
+    }
+    if (busy && !planButton.hidden) planButton.textContent = "Planning…";
+    else if (!planButton.hidden) planButton.textContent = "Preview change";
+  }
+
+  async function planLabel() {
+    if (state.action.mutationEnabled === false) {
+      setActionMessage("GitLab mutations disabled: FLUX_GITLAB_WRITE_TOKEN is not configured.", true);
+      return;
+    }
+    const item = state.action.item;
+    const generation = state.action.generation;
+    const input = $("#label-input");
+    const label = clean(input.value);
+    if (!item || !label) {
+      setActionMessage("Choose a label before previewing the change.", true);
+      input.focus();
+      return;
+    }
+    if (!state.action.labels.includes(label)) {
+      setActionMessage("Choose a label from the current GitLab label list.", true);
+      input.focus();
+      return;
+    }
+    resetLabelPlan();
+    setActionMessage("");
+    setActionBusy(true);
+    try {
+      const token = await actionCSRFToken();
+      if (!actionIsCurrent(item, generation)) return;
+      const data = await actionRequest("/api/actions/labels/plan", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": token,
+        },
+        body: JSON.stringify({ item_id: item.id, label }),
+      });
+      if (!actionIsCurrent(item, generation)) return;
+      if (!data.plan || !clean(data.plan.plan_id)) throw new Error("Flux did not return an action plan");
+      state.action.plan = data.plan;
+      $("#label-plan-summary").textContent = data.plan.confirmation || `Add label ${data.plan.label} to ${data.plan.item_id}`;
+      $("#label-plan-expiry").textContent = `Expires ${formatDate(data.plan.expires_at)}`;
+      $("#label-plan").hidden = false;
+      $("#label-plan-button").hidden = true;
+      $("#label-confirm-button").hidden = false;
+      $("#label-cancel").textContent = "Discard plan";
+      setActionMessage("Review the plan, then confirm only if it is correct.");
+    } catch (error) {
+      if (!actionIsCurrent(item, generation)) return;
+      setActionMessage(error instanceof Error ? error.message : "Flux could not create an action plan.", true);
+    } finally {
+      if (actionIsCurrent(item, generation)) setActionBusy(false);
+    }
+  }
+
+  async function confirmLabel() {
+    if (state.action.mutationEnabled === false) {
+      setActionMessage("GitLab mutations disabled: FLUX_GITLAB_WRITE_TOKEN is not configured.", true);
+      return;
+    }
+    const item = state.action.item;
+    const generation = state.action.generation;
+    const plan = state.action.plan;
+    if (!item || !plan) return;
+    setActionBusy(true);
+    try {
+      const token = await actionCSRFToken();
+      if (!actionIsCurrent(item, generation) || state.action.plan !== plan) return;
+      await actionRequest("/api/actions/labels/confirm", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-CSRF-Token": token,
+        },
+        body: JSON.stringify({ plan_id: plan.plan_id, confirmation: plan.confirmation }),
+      });
+      if (!actionIsCurrent(item, generation) || state.action.plan !== plan) return;
+      closeLabelDialog();
+      connection("loading", "Action applied · syncing");
+      window.setTimeout(() => {
+        if (!document.hidden && !state.selectedMilestone) loadSnapshot();
+      }, 750);
+    } catch (error) {
+      if (!actionIsCurrent(item, generation)) return;
+      setActionMessage(error instanceof Error ? error.message : "Flux could not apply the approved action.", true);
+      setActionBusy(false);
+    }
   }
 
   function renderMetrics(snapshot) {
@@ -576,8 +917,29 @@
     });
   }
 
+  $("#label-dialog").addEventListener("close", () => {
+    // Escape and other native dialog closes must clear stale request state too.
+    if (state.action.item || state.action.plan || state.action.busy) discardLabelActionState();
+  });
+  $("#label-dialog-close").addEventListener("click", closeLabelDialog);
+  $("#label-cancel").addEventListener("click", closeLabelDialog);
+  $("#label-plan-button").addEventListener("click", planLabel);
+  $("#label-confirm-button").addEventListener("click", confirmLabel);
+  $("#label-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (state.action.plan) confirmLabel();
+    else planLabel();
+  });
+  $("#label-input").addEventListener("change", () => {
+    if (state.action.plan) {
+      resetLabelPlan();
+      setActionMessage("");
+    }
+  });
+
   $("#refresh-button").addEventListener("click", loadSnapshot);
   (async function initialize() {
+    await loadActionStatus();
     await loadMilestones();
     await loadSnapshot();
   })();

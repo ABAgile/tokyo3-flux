@@ -264,6 +264,10 @@ button {
 
 .button:focus-visible,
 .filter-button:focus-visible,
+.work-action:focus-visible,
+.dialog-close:focus-visible,
+.action-field input:focus-visible,
+.action-field select:focus-visible,
 .sign-out:focus-visible,
 .brand:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
@@ -272,6 +276,24 @@ button {
 
 .button--quiet {
   padding: 0 12px;
+}
+
+.work-action {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.work-action:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel-strong));
 }
 
 .button-icon {
@@ -462,6 +484,20 @@ h1 {
   height: 4px;
   border-radius: 50%;
   background: var(--line-strong);
+}
+
+.mutation-status {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 16px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--amber) 38%, var(--line));
+  border-radius: 9px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 11px;
+  font-weight: 720;
+  overflow-wrap: anywhere;
 }
 
 .hero-summary {
@@ -756,6 +792,36 @@ h2 {
   color: var(--line-strong);
 }
 
+.label-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.label-chip {
+  display: inline-flex;
+  max-width: min(100%, 220px);
+  align-items: center;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink-faint) 8%, transparent);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.label-chip--more {
+  border-style: dashed;
+  background: transparent;
+  color: var(--ink-faint);
+}
+
 .work-side {
   display: flex;
   flex-direction: column;
@@ -927,6 +993,176 @@ h2 {
 
 .error-state strong {
   color: var(--red);
+}
+
+.action-dialog {
+  width: min(calc(100% - 32px), 520px);
+  max-width: 520px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+
+.action-dialog::backdrop {
+  background: color-mix(in srgb, var(--ink) 48%, transparent);
+}
+
+.action-dialog-card {
+  margin: 0;
+  padding: 24px;
+}
+
+.action-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.action-dialog-header h2 {
+  margin: 4px 0 0;
+  font-size: 22px;
+  letter-spacing: -0.035em;
+}
+
+.dialog-close {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.dialog-close:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.action-dialog-context {
+  margin: 18px 0 16px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.action-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.action-field input,
+.action-field select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
+.action-field select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 31px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%), linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+  cursor: pointer;
+}
+
+.action-field select:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.action-field input::placeholder {
+  color: var(--ink-faint);
+}
+
+.action-dialog-hint {
+  margin: 10px 0 0;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.action-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 9px;
+  background: var(--accent-soft);
+}
+
+.action-plan-kicker {
+  color: var(--accent-strong);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.action-plan strong {
+  color: var(--ink);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.action-plan span:last-child {
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.action-message {
+  min-height: 18px;
+  margin: 12px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.action-message[data-kind="error"] {
+  color: var(--red);
+}
+
+.action-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.button--approve {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
+  background: var(--accent);
+  color: var(--panel-strong);
+}
+
+.button--approve:hover {
+  border-color: var(--accent-strong);
+  background: var(--accent-strong);
 }
 
 .queue-live {
@@ -1139,6 +1375,9 @@ h2 {
   .work-side { flex-direction: row; min-width: 0; align-items: center; justify-content: space-between; }
   .work-title-line { gap: 8px; }
   .work-title { white-space: normal; }
+  .action-dialog-card { padding: 20px; }
+  .action-dialog-actions { justify-content: stretch; }
+  .action-dialog-actions .button { flex: 1; }
   .side-column { display: flex; align-items: stretch; }
   .footer { flex-direction: column; align-items: flex-start; gap: 7px; padding-top: 19px; }
 }

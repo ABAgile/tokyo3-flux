@@ -34,6 +34,7 @@ type WorkItem struct {
 	Title         string         `json:"title"`
 	State         IssueState     `json:"state"`
 	Assignee      string         `json:"assignee"`
+	Labels        []string       `json:"labels,omitempty"`
 	Blocked       bool           `json:"blocked"`
 	LastActivity  time.Time      `json:"last_activity"`
 	MergeRequests []MergeRequest `json:"merge_requests"`

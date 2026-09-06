@@ -32,6 +32,9 @@ services:
       # GitLab group source and background reconciliation credential.
       FLUX_GITLAB_URL: "${FLUX_GITLAB_URL:?set FLUX_GITLAB_URL}"
       FLUX_GITLAB_SERVICE_TOKEN: "${FLUX_GITLAB_SERVICE_TOKEN:?set FLUX_GITLAB_SERVICE_TOKEN}"
+      # Optional separate flux-mutation-bot credential (Reporter + api scope)
+      # used only after browser approval.
+      FLUX_GITLAB_WRITE_TOKEN: "${FLUX_GITLAB_WRITE_TOKEN:-}"
       FLUX_GITLAB_GROUP: "${FLUX_GITLAB_GROUP:?set FLUX_GITLAB_GROUP}"
       FLUX_SPRINT_GOAL: "${FLUX_SPRINT_GOAL:-}"
       FLUX_GITLAB_BLOCKED_LABELS: "${FLUX_GITLAB_BLOCKED_LABELS:-status::blocked,blocked}"

@@ -30,13 +30,29 @@ type Config struct {
 	BlockedLabels []string
 }
 
-// Client reads the GitLab REST API and converts its responses into Flux's
-// normalized domain model.
+// Client talks to GitLab's REST API and converts read responses into Flux's
+// normalized domain model. MutationClient is kept separate for approved writes.
 type Client struct {
 	baseURL       *url.URL
 	token         string
 	httpClient    *http.Client
 	blockedLabels []string
+}
+
+// MutationClient contains the separate GitLab credential used by approved
+// Flux actions. It deliberately does not expose the read client itself.
+type MutationClient struct {
+	client *Client
+}
+
+// Issue is the mutable subset of a GitLab issue used by Flux actions.
+type Issue struct {
+	IID       int
+	ProjectID int
+	Title     string
+	State     domain.IssueState
+	Labels    []string
+	UpdatedAt time.Time
 }
 
 // APIError describes a non-successful GitLab API response.
@@ -103,6 +119,120 @@ func New(cfg Config) (*Client, error) {
 		httpClient:    httpClient,
 		blockedLabels: blockedLabels,
 	}, nil
+}
+
+// NewMutationClient constructs the separate GitLab client used for approved
+// writes. Keep its token distinct from the read-only reconciliation token.
+func NewMutationClient(cfg Config) (*MutationClient, error) {
+	client, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &MutationClient{client: client}, nil
+}
+
+// GetIssue reads one issue by its project ID and issue IID.
+func (c *Client) GetIssue(ctx context.Context, projectID, issueIID int) (Issue, error) {
+	if projectID <= 0 {
+		return Issue{}, errors.New("GitLab project ID must be positive")
+	}
+	if issueIID <= 0 {
+		return Issue{}, errors.New("GitLab issue IID must be positive")
+	}
+	var response issueResponse
+	_, err := c.getJSON(ctx, fmt.Sprintf("/projects/%d/issues/%d", projectID, issueIID), nil, &response)
+	if err != nil {
+		return Issue{}, err
+	}
+	return Issue{
+		IID:       response.IID,
+		ProjectID: response.ProjectID,
+		Title:     response.Title,
+		State:     issueState(response.State),
+		Labels:    append([]string(nil), response.Labels...),
+		UpdatedAt: response.UpdatedAt,
+	}, nil
+}
+
+// ListProjectLabels returns the non-archived labels GitLab makes available to
+// a project, including labels inherited from ancestor groups.
+func (c *Client) ListProjectLabels(ctx context.Context, projectID int) ([]string, error) {
+	if projectID <= 0 {
+		return nil, errors.New("GitLab project ID must be positive")
+	}
+	query := url.Values{"include_ancestor_groups": {"true"}}
+	labels, err := list[projectLabelResponse](ctx, c, fmt.Sprintf("/projects/%d/labels", projectID), query)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, len(labels))
+	seen := make(map[string]struct{}, len(labels))
+	for _, label := range labels {
+		name := strings.TrimSpace(label.Name)
+		if label.Archived || name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left, right := strings.ToLower(result[i]), strings.ToLower(result[j])
+		if left == right {
+			return result[i] < result[j]
+		}
+		return left < right
+	})
+	return result, nil
+}
+
+// AddIssueLabel adds one label to an issue. Callers must perform approval and
+// freshness checks before invoking this mutation.
+func (c *MutationClient) AddIssueLabel(ctx context.Context, projectID, issueIID int, label string) error {
+	if projectID <= 0 {
+		return errors.New("GitLab project ID must be positive")
+	}
+	if issueIID <= 0 {
+		return errors.New("GitLab issue IID must be positive")
+	}
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return errors.New("GitLab issue label is required")
+	}
+	if strings.ContainsAny(label, ",\r\n") {
+		return errors.New("GitLab issue label must not contain commas or newlines")
+	}
+
+	values := url.Values{"add_labels": {label}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut,
+		c.client.endpoint(fmt.Sprintf("/projects/%d/issues/%d", projectID, issueIID), nil).String(),
+		strings.NewReader(values.Encode()))
+	if err != nil {
+		return fmt.Errorf("create GitLab issue update request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("PRIVATE-TOKEN", c.client.token)
+
+	response, err := c.client.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("request GitLab issue update: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 8<<10))
+		if readErr != nil {
+			return fmt.Errorf("read GitLab issue update error: %w", readErr)
+		}
+		return &APIError{
+			StatusCode: response.StatusCode,
+			Status:     response.Status,
+			Body:       strings.TrimSpace(string(body)),
+		}
+	}
+	return nil
 }
 
 // Snapshot returns the normalized status snapshot for the current GitLab
@@ -201,6 +331,7 @@ func (c *Client) snapshotForMilestone(ctx context.Context, target string, milest
 			Title:        issue.Title,
 			State:        issueState(issue.State),
 			Assignee:     firstIdentityName(issue.Assignees),
+			Labels:       append([]string(nil), issue.Labels...),
 			Blocked:      c.hasBlockedLabel(issue.Labels),
 			LastActivity: issue.UpdatedAt,
 		}
@@ -246,6 +377,11 @@ type milestoneResponse struct {
 	State       string `json:"state"`
 	StartDate   string `json:"start_date"`
 	DueDate     string `json:"due_date"`
+}
+
+type projectLabelResponse struct {
+	Name     string `json:"name"`
+	Archived bool   `json:"archived"`
 }
 
 type issueResponse struct {

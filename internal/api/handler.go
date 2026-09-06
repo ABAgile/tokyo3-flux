@@ -87,6 +87,7 @@ type itemResponse struct {
 	Title         string                `json:"title"`
 	State         domain.IssueState     `json:"state"`
 	Assignee      string                `json:"assignee,omitempty"`
+	Labels        []string              `json:"labels,omitempty"`
 	Blocked       bool                  `json:"blocked"`
 	LastActivity  time.Time             `json:"last_activity"`
 	Status        domain.Status         `json:"status"`
@@ -209,6 +210,7 @@ func (h *Handler) writeSnapshot(w http.ResponseWriter, snapshot domain.Snapshot)
 			Title:         item.Item.Title,
 			State:         item.Item.State,
 			Assignee:      item.Item.Assignee,
+			Labels:        append([]string(nil), item.Item.Labels...),
 			Blocked:       item.Item.Blocked,
 			LastActivity:  item.Item.LastActivity,
 			Status:        item.Status,
