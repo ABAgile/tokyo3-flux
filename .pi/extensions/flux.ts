@@ -197,6 +197,34 @@ type ContextParams = {
 	limit?: number;
 };
 
+type ReportKind = "standup" | "sprint_health" | "refinement" | "planning" | "backlog" | "retrospective";
+
+type ReportParams = {
+	kind: ReportKind | string;
+	from?: string;
+	to?: string;
+	milestone?: string;
+	limit?: number;
+};
+
+type ReportPayload = {
+	kind?: string;
+	report?: Record<string, unknown>;
+	[key: string]: unknown;
+};
+
+type FluxReportDetails = {
+	command: string;
+	kind: string;
+	milestone?: string;
+	itemCount: number;
+	attentionCount: number;
+	humanContextCount: number;
+	uncertaintyCount: number;
+	truncated?: boolean;
+	fullOutputPath?: string;
+};
+
 type FluxTodayDetails = {
 	command: string;
 	generatedAt?: string;
@@ -808,6 +836,178 @@ async function fetchContext(
 		return fetchContextAPI(apiURL, token, params, signal);
 	}
 	return fetchContextCLI(pi, command, params, signal);
+}
+
+const reportKinds = new Set<ReportKind>([
+	"standup",
+	"sprint_health",
+	"refinement",
+	"planning",
+	"backlog",
+	"retrospective",
+]);
+
+function normalizedReportKind(raw: string): ReportKind {
+	const kind = raw.trim().replace(/-/g, "_") as ReportKind;
+	if (!reportKinds.has(kind)) throw new Error("kind must be standup, sprint_health, refinement, planning, backlog, or retrospective");
+	return kind;
+}
+
+function reportPath(kind: string): string {
+	return normalizedReportKind(kind).replace(/_/g, "-");
+}
+
+function apiReportURL(rawURL: string, params: ReportParams): URL {
+	const endpoint = new URL(`/api/reports/${reportPath(params.kind)}`, apiBaseURL(rawURL));
+	if (params.from?.trim()) endpoint.searchParams.set("from", params.from.trim());
+	if (params.to?.trim()) endpoint.searchParams.set("to", params.to.trim());
+	if (params.milestone?.trim()) endpoint.searchParams.set("milestone", params.milestone.trim());
+	if (params.limit !== undefined) endpoint.searchParams.set("limit", String(params.limit));
+	return endpoint;
+}
+
+async function fetchReportCLI(
+	pi: ExtensionAPI,
+	command: string,
+	params: ReportParams,
+	signal: AbortSignal,
+): Promise<{ payload: ReportPayload; output: string }> {
+	const args = [reportPath(params.kind), "--json", "--limit", String(params.limit ?? 20)];
+	if (params.from?.trim()) args.push("--from", params.from.trim());
+	if (params.to?.trim()) args.push("--to", params.to.trim());
+	if (params.milestone?.trim()) args.push("--milestone", params.milestone.trim());
+	const output = await fetchJSONCLIOutput(pi, command, args, signal, `flux ${reportPath(params.kind)} report`);
+	return { payload: parseReportPayload(output), output };
+}
+
+async function fetchReportAPI(
+	apiURL: string,
+	token: string,
+	params: ReportParams,
+	signal: AbortSignal,
+): Promise<{ payload: ReportPayload; output: string }> {
+	const output = await fetchReadOnlyAPIOutput(token, apiReportURL(apiURL, params), signal, "report lookup");
+	return { payload: parseReportPayload(output), output };
+}
+
+async function fetchReport(
+	pi: ExtensionAPI,
+	command: string,
+	apiURL: string,
+	token: string,
+	params: ReportParams,
+	signal: AbortSignal,
+): Promise<{ payload: ReportPayload; output: string }> {
+	const kind = normalizedReportKind(params.kind);
+	const request = { ...params, kind };
+	if (apiURL || token) {
+		if (!apiURL || !token) throw new Error("FLUX_API_URL and FLUX_API_TOKEN must be set together");
+		return fetchReportAPI(apiURL, token, request, signal);
+	}
+	return fetchReportCLI(pi, command, request, signal);
+}
+
+function parseReportPayload(output: string): ReportPayload {
+	const value = parseObjectPayload(output, "flux report");
+	const report = value.report;
+	const candidate = report && typeof report === "object" && !Array.isArray(report) ? report : value;
+	if (typeof candidate.kind !== "string" || !reportKinds.has(candidate.kind.replace(/-/g, "_") as ReportKind)) {
+		throw new Error("flux report returned an invalid report kind");
+	}
+	return value as ReportPayload;
+}
+
+function reportValue(payload: ReportPayload): Record<string, unknown> {
+	return payload.report && typeof payload.report === "object" && !Array.isArray(payload.report) ? payload.report : payload;
+}
+
+function arrayLength(value: unknown): number {
+	return Array.isArray(value) ? value.length : 0;
+}
+
+function reportDetails(command: string, payload: ReportPayload): FluxReportDetails {
+	const report = reportValue(payload);
+	const coverage = report.coverage && typeof report.coverage === "object" && !Array.isArray(report.coverage) ? report.coverage as Record<string, unknown> : {};
+	const counts = report.counts && typeof report.counts === "object" && !Array.isArray(report.counts) ? report.counts as Record<string, unknown> : {};
+	const total = typeof report.total === "number" ? report.total : Object.values(counts).reduce((sum, value) => sum + (typeof value === "number" ? Math.max(0, Math.trunc(value)) : 0), 0);
+	const attention = arrayLength(report.attention);
+	const overlay = report.human_context_overlay && typeof report.human_context_overlay === "object" && !Array.isArray(report.human_context_overlay) ? report.human_context_overlay as Record<string, unknown> : {};
+	const uncertainties = Array.isArray(coverage.uncertainties) ? coverage.uncertainties.length : 0;
+	return {
+		command,
+		kind: String(report.kind ?? "report"),
+		milestone: typeof report.milestone === "string" ? report.milestone : undefined,
+		itemCount: total || arrayLength(report.items) || arrayLength(report.candidates) || arrayLength(report.candidate_items),
+		attentionCount: attention,
+		humanContextCount: arrayLength(overlay.entries),
+		uncertaintyCount: uncertainties,
+		truncated: report.truncated === true,
+	};
+}
+
+function registerFixedReportTool(
+	pi: ExtensionAPI,
+	command: string,
+	apiURL: string,
+	token: string,
+	source: string,
+	name: string,
+	label: string,
+	kind: ReportKind,
+): void {
+	pi.registerTool({
+		name,
+		label,
+		description: `Generate the bounded ${kind.replace(/_/g, " ")} report from Flux. It is read-only, preserves GitLab evidence and observed coverage, and labels human context as an overlay.`,
+		promptSnippet: `Generate the Flux ${kind.replace(/_/g, " ")} report`,
+		promptGuidelines: [
+			`Use this tool for the ${kind.replace(/_/g, " ")} ceremony view; use flux_report for a different report kind.`,
+			"Keep GitLab-derived evidence, Flux-observed history, and human_context_overlay separate; human context is reported input, not verified causality.",
+			"Report as-of time, coverage, provenance, truncation, and uncertainties before making completeness claims.",
+		],
+		parameters: Type.Object({
+			from: Type.Optional(Type.String({ description: "Inclusive RFC3339 report-window lower bound" })),
+			to: Type.Optional(Type.String({ description: "Exclusive RFC3339 report-window upper bound" })),
+			milestone: Type.Optional(Type.String({ description: "Milestone name; supported by the authenticated API path" })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+		}),
+
+		async execute(_toolCallId, params, signal) {
+			const request = (params || {}) as Omit<ReportParams, "kind">;
+			const { payload, output } = await fetchReport(pi, command, apiURL, token, { ...request, kind }, signal);
+			const truncation = truncateHead(output, {
+				maxLines: DEFAULT_MAX_LINES,
+				maxBytes: DEFAULT_MAX_BYTES,
+			});
+			const details = reportDetails(source, payload);
+			let text = truncation.content;
+			if (truncation.truncated) {
+				details.truncated = true;
+				details.fullOutputPath = await saveFullOutput(output, `${kind}.json`);
+				text +=
+					`\n\n[Output truncated: showing ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)} ` +
+					`and ${truncation.outputLines} of ${truncation.totalLines} lines. Full output: ${details.fullOutputPath}]`;
+			}
+			return {
+				content: [{ type: "text", text }],
+				details,
+			};
+		},
+
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold(label)), 0, 0);
+		},
+
+		renderResult(result, { isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("muted", `Generating ${kind.replace(/_/g, " ")} report…`), 0, 0);
+			const details = result.details as FluxReportDetails | undefined;
+			if (!details) return new Text(theme.fg("success", `${label} loaded`), 0, 0);
+			const uncertainty = details.uncertaintyCount > 0 ? theme.fg("warning", ` · ${details.uncertaintyCount} uncertainties`) : "";
+			const overlay = details.humanContextCount > 0 ? ` · ${details.humanContextCount} human overlay` : "";
+			const truncated = details.truncated ? theme.fg("warning", " · bounded") : "";
+			return new Text(theme.fg("success", `${label} loaded · ${details.itemCount} items · ${details.attentionCount} attention${overlay}`) + uncertainty + truncated, 0, 0);
+		},
+	});
 }
 
 function contextDetails(command: string, payload: ContextPayload): FluxContextDetails {
@@ -1444,6 +1644,75 @@ export default function fluxExtension(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
+		name: "flux_report",
+		label: "Flux Ceremony Report",
+		description:
+			"Generate a bounded evidence-based Flux ceremony report: standup, sprint health, refinement, planning, backlog, or retrospective. It combines GitLab-derived observations with a clearly labeled confirmed human-context overlay and never mutates GitLab.",
+		promptSnippet: "Generate an evidence-based Flux ceremony report",
+		promptGuidelines: [
+			"Use flux_report for standup, sprint health, refinement, planning, backlog, and retrospective views.",
+			"Treat GitLab-derived statuses, counts, milestones, and observed history as authoritative; the human_context_overlay is reported context, not source truth or verified causality.",
+			"Report the as-of time, evidence coverage, truncation, provenance, and uncertainties before making completeness claims.",
+			"Do not infer capacity, cycle time, blame, performance, medical details, or protected characteristics from a report.",
+		],
+		parameters: Type.Object({
+			kind: Type.String({ description: "standup, sprint_health, refinement, planning, backlog, or retrospective" }),
+			from: Type.Optional(Type.String({ description: "Inclusive RFC3339 report-window lower bound" })),
+			to: Type.Optional(Type.String({ description: "Exclusive RFC3339 report-window upper bound" })),
+			milestone: Type.Optional(Type.String({ description: "Milestone name; supported by the authenticated API path" })),
+			limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+		}),
+
+		async execute(_toolCallId, params, signal) {
+			const request = (params || {}) as ReportParams;
+			const kind = normalizedReportKind(request.kind || "");
+			const { payload, output } = await fetchReport(pi, command, apiURL, apiToken, { ...request, kind }, signal);
+			const truncation = truncateHead(output, {
+				maxLines: DEFAULT_MAX_LINES,
+				maxBytes: DEFAULT_MAX_BYTES,
+			});
+			const details = reportDetails(source, payload);
+			let text = truncation.content;
+			if (truncation.truncated) {
+				details.truncated = true;
+				details.fullOutputPath = await saveFullOutput(output, `${kind}.json`);
+				text +=
+					`\n\n[Output truncated: showing ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)} ` +
+					`and ${truncation.outputLines} of ${truncation.totalLines} lines. Full output: ${details.fullOutputPath}]`;
+			}
+			return {
+				content: [{ type: "text", text }],
+				details,
+			};
+		},
+
+		renderCall(args, theme) {
+			const kind = typeof args.kind === "string" ? args.kind.replace(/_/g, " ") : "ceremony";
+			return new Text(theme.fg("toolTitle", theme.bold(`Flux ${kind} report`)), 0, 0);
+		},
+
+		renderResult(result, { isPartial }, theme) {
+			if (isPartial) return new Text(theme.fg("muted", "Generating Flux report…"), 0, 0);
+			const details = result.details as FluxReportDetails | undefined;
+			if (!details) return new Text(theme.fg("success", "Flux report loaded"), 0, 0);
+			const uncertainty = details.uncertaintyCount > 0 ? theme.fg("warning", ` · ${details.uncertaintyCount} uncertainties`) : "";
+			const overlay = details.humanContextCount > 0 ? ` · ${details.humanContextCount} human overlay` : "";
+			const truncated = details.truncated ? theme.fg("warning", " · bounded") : "";
+			return new Text(theme.fg("success", `Flux ${details.kind} report loaded · ${details.itemCount} items · ${details.attentionCount} attention${overlay}`) + uncertainty + truncated, 0, 0);
+		},
+	});
+
+	for (const [name, label, kind] of [
+		["flux_sprint_health", "Flux Sprint Health", "sprint_health"],
+		["flux_refinement", "Flux Refinement", "refinement"],
+		["flux_planning", "Flux Planning", "planning"],
+		["flux_backlog", "Flux Backlog", "backlog"],
+		["flux_retrospective", "Flux Retrospective", "retrospective"],
+	] as const) {
+		registerFixedReportTool(pi, command, apiURL, apiToken, source, name, label, kind);
+	}
+
+	pi.registerTool({
 		name: "flux_sprint_status",
 		label: "Flux Sprint Status",
 		description:
@@ -1542,23 +1811,32 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		name: "flux_standup",
 		label: "Flux Standup",
 		description:
-			"Generate a concise, factual standup from the current Flux snapshot. It reports current GitLab signals and does not invent yesterday's changes or mutate GitLab.",
-		promptSnippet: "Prepare a factual Flux sprint standup",
+			"Generate the bounded evidence-based standup report from Flux. It combines current GitLab-derived signals, observed history, and a clearly labeled human-context overlay without mutating GitLab.",
+		promptSnippet: "Prepare an evidence-based Flux standup",
 		promptGuidelines: [
-			"Use flux_standup for a current status standup; do not imply historical progress that is not present in the Flux snapshot.",
-			"Use flux_today when the user needs the underlying complete work-item data.",
+			"Use flux_standup for the standup report and flux_report for other ceremony report kinds.",
+			"Distinguish current GitLab signals and observed history from the human_context_overlay; context is reported input, not verified causality.",
+			"Report coverage, as-of time, truncation, and uncertainties before making completeness claims.",
 		],
 		parameters: Type.Object({}),
 
 		async execute(_toolCallId, _params, signal) {
-			const { payload } = await fetchToday(pi, command, apiURL, apiToken, signal);
-			const standup = standupText(payload);
-			const details: FluxSprintDetails = {
-				...detailsFor(source, payload),
-				attentionCount: standup.attentionCount,
-			};
+			const { payload, output } = await fetchReport(pi, command, apiURL, apiToken, { kind: "standup", limit: 20 }, signal);
+			const truncation = truncateHead(output, {
+				maxLines: DEFAULT_MAX_LINES,
+				maxBytes: DEFAULT_MAX_BYTES,
+			});
+			const details = reportDetails(source, payload);
+			let text = truncation.content;
+			if (truncation.truncated) {
+				details.truncated = true;
+				details.fullOutputPath = await saveFullOutput(output, "standup-report.json");
+				text +=
+					`\n\n[Output truncated: showing ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)} ` +
+					`and ${truncation.outputLines} of ${truncation.totalLines} lines. Full output: ${details.fullOutputPath}]`;
+			}
 			return {
-				content: [{ type: "text", text: standup.text }],
+				content: [{ type: "text", text }],
 				details,
 			};
 		},
@@ -1568,21 +1846,11 @@ export default function fluxExtension(pi: ExtensionAPI) {
 		},
 
 		renderResult(result, { isPartial }, theme) {
-			if (isPartial) {
-				return new Text(theme.fg("muted", "Preparing standup…"), 0, 0);
-			}
-			const details = result.details as FluxSprintDetails | undefined;
-			if (!details) {
-				return new Text(theme.fg("success", "Standup loaded"), 0, 0);
-			}
-			return new Text(
-				theme.fg(
-					"success",
-					`Standup loaded${details.sprint ? ` · ${details.sprint}` : ""} · ${details.attentionCount} attention`,
-				),
-				0,
-				0,
-			);
+			if (isPartial) return new Text(theme.fg("muted", "Preparing evidence-based standup…"), 0, 0);
+			const details = result.details as FluxReportDetails | undefined;
+			if (!details) return new Text(theme.fg("success", "Standup report loaded"), 0, 0);
+			const uncertainty = details.uncertaintyCount > 0 ? theme.fg("warning", ` · ${details.uncertaintyCount} uncertainties`) : "";
+			return new Text(theme.fg("success", `Standup report loaded · ${details.attentionCount} attention · ${details.humanContextCount} human overlay`) + uncertainty, 0, 0);
 		},
 	});
 

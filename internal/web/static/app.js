@@ -43,6 +43,12 @@
       mode: "create",
       targetID: "",
     },
+    report: {
+      kind: "standup",
+      data: null,
+      request: 0,
+      busy: false,
+    },
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -1077,7 +1083,7 @@
       });
       if (!contextIsCurrent(generation) || state.context.plan !== plan) return;
       closeContextDialog();
-      await loadContext();
+      await Promise.all([loadContext(), loadReport(state.report.kind)]);
     } catch (error) {
       if (!contextIsCurrent(generation)) return;
       setContextMessage(error instanceof Error ? error.message : "Flux could not record the confirmed context.", true);
@@ -1237,6 +1243,226 @@
     if (count > entries.length) list.appendChild(element("div", "empty-state", `Showing ${entries.length} of ${count} confirmed entries.`));
   }
 
+  const REPORT_TITLES = {
+    standup: "Standup",
+    sprint_health: "Sprint health",
+    refinement: "Refinement",
+    planning: "Sprint planning",
+    backlog: "Backlog",
+    retrospective: "Retrospective",
+  };
+
+  function normalizeReport(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Flux returned an invalid report");
+    }
+    const report = raw.report && typeof raw.report === "object" && !Array.isArray(raw.report) ? raw.report : raw;
+    if (!clean(report.kind) || !REPORT_TITLES[clean(report.kind)]) throw new Error("Flux returned an unknown report kind");
+    return report;
+  }
+
+  function reportArray(report, key) {
+    return Array.isArray(report[key]) ? report[key].filter((item) => item && typeof item === "object" && !Array.isArray(item)) : [];
+  }
+
+  function reportItem(item) {
+    const article = element("article", "report-item");
+    const titleLine = element("div", "report-item-title");
+    titleLine.append(statusBadge(clean(item.status) || "unknown"), element("strong", "", limited(item.title, "Untitled work item", 180)));
+    const meta = [limited(item.id, "Unknown item", 100), clean(item.project_path), clean(item.assignee) || "unassigned"];
+    article.append(titleLine, element("div", "report-item-meta", meta.filter(Boolean).join(" · ")));
+    const signals = Array.isArray(item.signals) ? item.signals.map(clean).filter(Boolean).slice(0, 4) : [];
+    if (signals.length > 0) article.appendChild(element("div", "report-item-signals", signals.join(" · ")));
+    return article;
+  }
+
+  function reportItemSection(title, items, empty = "None observed") {
+    const section = element("section", "report-section");
+    section.appendChild(element("h3", "report-section-title", `${title} · ${items.length}`));
+    const list = element("div", "report-item-list");
+    if (items.length === 0) list.appendChild(element("div", "report-empty", empty));
+    else for (const item of items.slice(0, 20)) list.appendChild(reportItem(item));
+    section.appendChild(list);
+    return section;
+  }
+
+  function reportSignalSection(title, signals) {
+    const section = element("section", "report-section");
+    section.appendChild(element("h3", "report-section-title", title));
+    const list = element("div", "report-signal-list");
+    if (signals.length === 0) list.appendChild(element("div", "report-empty", "None observed"));
+    for (const signal of signals.slice(0, 20)) {
+      const row = element("div", "report-signal");
+      row.append(element("strong", "", `${clean(signal.name).replace(/_/g, " ")} · ${numberValue(signal.count)}`), element("span", "", limited(signal.evidence, "Observed GitLab signal", 180)));
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  function reportChangeSection(title, changes) {
+    const section = element("section", "report-section");
+    section.appendChild(element("h3", "report-section-title", `${title} · ${changes.length}`));
+    const list = element("div", "report-change-list");
+    if (changes.length === 0) list.appendChild(element("div", "report-empty", "None observed in the selected window"));
+    for (const change of changes.slice(0, 20)) {
+      const itemID = limited(change.item_id || change.entity_key, "Unknown item", 100);
+      const observed = clean(change.observed_at) ? formatDate(change.observed_at) : "time unavailable";
+      list.appendChild(element("div", "report-change", `${clean(change.kind) || "change"} · ${itemID} · observed ${observed}`));
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  function reportOverlaySection(overlay) {
+    const section = element("section", "report-section report-section--overlay");
+    section.appendChild(element("h3", "report-section-title", "Human-reported overlay · not GitLab evidence"));
+    const entries = overlay && Array.isArray(overlay.entries) ? overlay.entries.filter((entry) => entry && typeof entry === "object").slice(0, 20) : [];
+    const list = element("div", "report-overlay-list");
+    if (entries.length === 0) list.appendChild(element("div", "report-empty", overlay?.provenance ? "None in the selected reporting window" : "Unavailable; no human context was joined"));
+    for (const entry of entries) {
+      const row = element("div", "report-overlay-entry");
+      row.append(element("strong", "", `${contextKindLabel(clean(entry.kind))} · ${clean(entry.category).replace(/_/g, " ")}`), element("span", "", limited(entry.statement, "No statement", 220)));
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  function reportCoverage(report) {
+    const coverage = report.coverage && typeof report.coverage === "object" ? report.coverage : {};
+    const sourceNames = Array.isArray(coverage.sources) ? coverage.sources.filter((source) => source && source.available === true).map((source) => clean(source.name)).filter(Boolean) : [];
+    const summary = [
+      clean(report.as_of) ? `as of ${formatDate(report.as_of)}` : "as-of time unavailable",
+      clean(coverage.window_from) && clean(coverage.window_until) ? `${formatDate(coverage.window_from)} → ${formatDate(coverage.window_until)}` : "window unavailable",
+      sourceNames.length > 0 ? `${sourceNames.length} evidence sources` : "no evidence sources",
+    ];
+    if (report.truncated === true) summary.push("bounded output");
+    return { coverage, summary: summary.join(" · ") };
+  }
+
+  function reportEvidenceSection(coverage) {
+    const section = element("section", "report-evidence");
+    section.appendChild(element("h3", "report-section-title", "Evidence sources"));
+    const sources = Array.isArray(coverage.sources) ? coverage.sources.filter((source) => source && typeof source === "object").slice(0, 8) : [];
+    const list = element("div", "report-evidence-list");
+    if (sources.length === 0) list.appendChild(element("div", "report-empty", "No source provenance returned"));
+    for (const source of sources) {
+      const row = element("div", "report-evidence-row");
+      const availability = source.available === true ? "available" : "unavailable";
+      row.append(element("strong", "", `${clean(source.name) || "unknown source"} · ${availability}`), element("span", "", limited(source.provenance, "provenance unavailable", 180)));
+      list.appendChild(row);
+    }
+    section.appendChild(list);
+    return section;
+  }
+
+  function reportStats(report) {
+    const stats = [];
+    const counts = report.counts && typeof report.counts === "object" ? report.counts : {};
+    if (report.kind === "standup" || report.kind === "sprint_health" || report.kind === "backlog") {
+      stats.push(["Total", numberValue(report.total, Object.values(counts).reduce((sum, value) => sum + numberValue(value), 0))]);
+      stats.push(["Active", numberValue(counts["in progress"])]);
+      stats.push(["Attention", numberValue(report.attention?.length, numberValue(counts.blocked) + numberValue(counts["pipeline failing"]) + numberValue(counts["awaiting review"]) + numberValue(counts.stale) + numberValue(counts.todo))]);
+      stats.push(["Done", numberValue(counts.done)]);
+    } else if (report.kind === "refinement") {
+      stats.push(["Candidates", reportArray(report, "candidates").length]);
+      stats.push(["Signals", reportArray(report, "signals").length]);
+    } else if (report.kind === "planning") {
+      stats.push(["Candidates", reportArray(report, "candidate_items").length]);
+      stats.push(["In flight", reportArray(report, "in_flight_items").length]);
+      stats.push(["Risks", reportArray(report, "risk_items").length]);
+    } else if (report.kind === "retrospective") {
+      const flow = report.flow && typeof report.flow === "object" ? report.flow : {};
+      stats.push(["Observed changes", numberValue(flow.changes)]);
+      stats.push(["Started", numberValue(flow.started)]);
+      stats.push(["Completed", numberValue(flow.completed)]);
+      stats.push(["Blocked", numberValue(flow.blocked)]);
+    }
+    return stats;
+  }
+
+  function renderReport(report) {
+    const node = $("#report-content");
+    const header = $("#report-summary");
+    const { coverage, summary } = reportCoverage(report);
+    header.textContent = `${REPORT_TITLES[clean(report.kind)]} · ${limited(report.milestone, "current milestone", 120)} · ${summary}`;
+    node.replaceChildren();
+    const stats = reportStats(report);
+    if (stats.length > 0) {
+      const statGrid = element("div", "report-stat-grid");
+      for (const [label, value] of stats) {
+        const card = element("div", "report-stat");
+        card.append(element("span", "report-stat-label", label), element("strong", "", String(value)));
+        statGrid.appendChild(card);
+      }
+      node.appendChild(statGrid);
+    }
+    node.appendChild(reportEvidenceSection(coverage));
+    if (report.kind === "standup") {
+      node.append(reportItemSection("Completed", reportArray(report, "completed")), reportItemSection("In progress", reportArray(report, "in_progress")), reportItemSection("Needs attention", reportArray(report, "attention")), reportItemSection("Other", reportArray(report, "other")), reportChangeSection("Recent observed changes", reportArray(report, "recent_changes")));
+    } else if (report.kind === "sprint_health") {
+      node.append(reportSignalSection(`Signals · ${clean(report.signal_state).replace(/_/g, " ") || "unknown"}`, reportArray(report, "signals")), reportItemSection("Attention", reportArray(report, "attention")));
+      if (report.flow && typeof report.flow === "object") node.appendChild(element("div", "report-flow-note", `Observed flow: ${numberValue(report.flow.changes)} changes · ${numberValue(report.flow.started)} started · ${numberValue(report.flow.completed)} completed · ${numberValue(report.flow.blocked)} blocked`));
+    } else if (report.kind === "refinement") {
+      node.append(reportItemSection("Discussion candidates", reportArray(report, "candidates")), reportSignalSection("Observable signals", reportArray(report, "signals")));
+    } else if (report.kind === "planning") {
+      node.append(reportItemSection("Planning candidates", reportArray(report, "candidate_items")), reportItemSection("In flight", reportArray(report, "in_flight_items")), reportItemSection("Risks", reportArray(report, "risk_items")), reportChangeSection("Recent observed changes", reportArray(report, "recent_changes")));
+    } else if (report.kind === "backlog") {
+      const buckets = reportArray(report, "buckets");
+      const bucketText = buckets.map((bucket) => `${clean(bucket.status)} · ${numberValue(bucket.count)}`).join("  /  ") || "None";
+      node.appendChild(element("div", "report-bucket-note", `Status buckets: ${bucketText}`));
+      node.append(reportItemSection("Unassigned", reportArray(report, "unassigned")), reportItemSection("Attention", reportArray(report, "attention")), reportItemSection("Items", reportArray(report, "items")), reportChangeSection("Recent observed changes", reportArray(report, "recent_changes")));
+    } else if (report.kind === "retrospective") {
+      node.append(reportSignalSection("Observable signals", reportArray(report, "signals")), reportChangeSection("Observed changes", reportArray(report, "observed_changes")));
+    }
+    node.appendChild(reportOverlaySection(report.human_context_overlay));
+    const uncertainties = Array.isArray(coverage.uncertainties) ? coverage.uncertainties.map(clean).filter(Boolean).slice(0, 12) : [];
+    const limitations = Array.isArray(report.limitations) ? report.limitations.map(clean).filter(Boolean).slice(0, 8) : [];
+    if (uncertainties.length > 0 || limitations.length > 0) {
+      const notes = element("div", "report-notes");
+      if (uncertainties.length > 0) notes.append(element("strong", "", "Uncertainties"), element("span", "", uncertainties.join(" · ")));
+      if (limitations.length > 0) notes.append(element("strong", "", "Limitations"), element("span", "", limitations.join(" · ")));
+      node.appendChild(notes);
+    }
+  }
+
+  function reportErrorState(message) {
+    const node = $("#report-content");
+    const error = element("div", "error-state");
+    error.append(element("strong", "", "Report unavailable"), element("span", "", limited(message, "The report could not be loaded.", 180)));
+    node.replaceChildren(error);
+    $("#report-summary").textContent = "Report unavailable";
+  }
+
+  async function loadReport(kind = state.report.kind) {
+    const parsedKind = clean(kind).replace(/-/g, "_");
+    if (!REPORT_TITLES[parsedKind]) return;
+    state.report.kind = parsedKind;
+    const requestID = ++state.report.request;
+    state.report.busy = true;
+    const buttons = document.querySelectorAll("[data-report-kind]");
+    for (const button of buttons) button.disabled = true;
+    $("#report-content").setAttribute("aria-busy", "true");
+    try {
+      const params = new URLSearchParams({ limit: "20" });
+      if (state.selectedMilestone) params.set("milestone", state.selectedMilestone);
+      const data = await fluxRequest(`/api/reports/${parsedKind.replace(/_/g, "-")}?${params.toString()}`, { headers: { Accept: "application/json" } });
+      if (requestID !== state.report.request) return;
+      state.report.data = normalizeReport(data);
+      renderReport(state.report.data);
+    } catch (error) {
+      if (requestID !== state.report.request) return;
+      reportErrorState(error instanceof Error ? error.message : "The Flux report API could not be reached.");
+    } finally {
+      if (requestID === state.report.request) {
+        state.report.busy = false;
+        for (const button of buttons) button.disabled = false;
+        $("#report-content").setAttribute("aria-busy", "false");
+      }
+    }
+  }
+
   function render(snapshot) {
     state.snapshot = snapshot;
     const name = clean(snapshot.sprint.name) || "No active milestone";
@@ -1252,10 +1478,16 @@
     renderAttention(snapshot);
     renderQueues(snapshot);
     populateContextItems();
+    loadReport(state.report.kind);
   }
 
   function resetForError(message) {
     const text = limited(message, "The server did not return a usable snapshot.", 180);
+    state.report.request += 1;
+    state.report.busy = false;
+    for (const button of document.querySelectorAll("[data-report-kind]")) button.disabled = false;
+    reportErrorState(text);
+    $("#report-content").setAttribute("aria-busy", "false");
     state.snapshot = null;
     $("#sprint-name").textContent = "Flux is waiting for a snapshot";
     $("#sprint-goal").textContent = text;
@@ -1528,6 +1760,20 @@
     if (state.context.plan) confirmContext();
     else planContext();
   });
+
+  for (const button of document.querySelectorAll("[data-report-kind]")) {
+    button.addEventListener("click", () => {
+      const kind = clean(button.dataset.reportKind).replace(/-/g, "_");
+      if (!REPORT_TITLES[kind] || state.report.busy) return;
+      state.report.kind = kind;
+      for (const candidate of document.querySelectorAll("[data-report-kind]")) {
+        const selected = clean(candidate.dataset.reportKind).replace(/-/g, "_") === kind;
+        candidate.classList.toggle("is-selected", selected);
+        candidate.setAttribute("aria-selected", String(selected));
+      }
+      loadReport(kind);
+    });
+  }
 
   $("#reload-button").addEventListener("click", reloadView);
   $("#sync-button").addEventListener("click", syncNow);

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"abagile.com/tokyo3/flux/internal/domain"
+	fluxreport "abagile.com/tokyo3/flux/internal/report"
 	"abagile.com/tokyo3/flux/internal/state"
 )
 
@@ -154,6 +155,48 @@ func TestRunContextJSON(t *testing.T) {
 	if len(result.Entries) != 1 || result.Entries[0].ID != "ctx-1" || result.Entries[0].ScopeAction != "defer" {
 		t.Fatalf("context result = %+v", result)
 	}
+}
+
+func TestRunReportsJSON(t *testing.T) {
+	directory := t.TempDir()
+	store, err := state.OpenFileStore(directory)
+	if err != nil {
+		t.Fatalf("OpenFileStore() error = %v", err)
+	}
+	observedAt := time.Date(2026, time.June, 1, 12, 0, 0, 0, time.UTC)
+	if err := store.PutObserved(domain.Snapshot{
+		GeneratedAt: observedAt,
+		Sprint: domain.Sprint{
+			Name: "Flow 01",
+			Goal: "Ship the report layer",
+			WorkItems: []domain.WorkItem{
+				{ID: "team/project#1", ProjectID: 1, ProjectPath: "team/project", Title: "Unassigned", State: domain.IssueOpen},
+				{ID: "team/project#2", ProjectID: 1, ProjectPath: "team/project", Title: "Active", State: domain.IssueOpen, Assignee: "alex", LastActivity: observedAt},
+			},
+		},
+	}, "run-1", observedAt); err != nil {
+		t.Fatalf("PutObserved() error = %v", err)
+	}
+	for _, command := range []string{"standup", "sprint-health", "refinement", "planning", "backlog", "retrospective"} {
+		var output bytes.Buffer
+		if err := runReport([]string{"--state-dir", directory, "--json"}, fluxreport.Kind(commandKindForTest(command)), &output, &output); err != nil {
+			t.Fatalf("runReport(%s) error = %v", command, err)
+		}
+		var value map[string]any
+		if err := json.Unmarshal(output.Bytes(), &value); err != nil {
+			t.Fatalf("decode %s report: %v\n%s", command, err, output.String())
+		}
+		if value["kind"] != commandKindForTest(command) {
+			t.Fatalf("%s report kind = %v", command, value["kind"])
+		}
+	}
+}
+
+func commandKindForTest(command string) string {
+	if command == "sprint-health" {
+		return "sprint_health"
+	}
+	return command
 }
 
 func TestRenderTodayJSON(t *testing.T) {

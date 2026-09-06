@@ -16,7 +16,9 @@ func TestFileStoreContextRoundTripAndFilters(t *testing.T) {
 		t.Fatalf("OpenFileStore() error = %v", err)
 	}
 	first := contextTestEntry("ctx-1", 1, domain.ContextStatusConfirmed, time.Date(2026, time.February, 2, 12, 0, 0, 0, time.UTC))
+	first.Milestone = "Flow 01"
 	second := contextTestEntry("ctx-2", 1, domain.ContextStatusConfirmed, time.Date(2026, time.February, 3, 12, 0, 0, 0, time.UTC))
+	second.Milestone = "Flow 02"
 	second.ItemIDs = []string{"team/project#22"}
 	if err := store.RecordContext(first); err != nil {
 		t.Fatalf("RecordContext(first) error = %v", err)
@@ -25,6 +27,7 @@ func TestFileStoreContextRoundTripAndFilters(t *testing.T) {
 		t.Fatalf("RecordContext(second) error = %v", err)
 	}
 	correction := contextTestEntry("ctx-1", 2, domain.ContextStatusConfirmed, first.UpdatedAt.Add(time.Hour))
+	correction.Milestone = first.Milestone
 	correction.SupersedesID = first.ID
 	if err := store.RecordContext(correction); err != nil {
 		t.Fatalf("RecordContext(correction) error = %v", err)
@@ -36,6 +39,13 @@ func TestFileStoreContextRoundTripAndFilters(t *testing.T) {
 	}
 	if len(result.Entries) != 1 || result.Entries[0].ID != second.ID {
 		t.Fatalf("filtered context = %+v, want ctx-2", result.Entries)
+	}
+	result, err = store.ListContext(ContextQuery{Milestone: "Flow 01", Limit: 10})
+	if err != nil {
+		t.Fatalf("milestone ListContext() error = %v", err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].ID != first.ID {
+		t.Fatalf("milestone context = %+v, want ctx-1", result.Entries)
 	}
 	if result.Coverage.Records != 2 || result.Coverage.Revisions != 3 {
 		t.Fatalf("coverage = %+v, want two current records and three revisions", result.Coverage)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"abagile.com/tokyo3/flux/internal/domain"
+	fluxreport "abagile.com/tokyo3/flux/internal/report"
 	"abagile.com/tokyo3/flux/internal/state"
 )
 
@@ -24,6 +25,7 @@ type Handler struct {
 	syncSource      SyncStatusSource
 	historySource   state.HistoryReader
 	contextSource   state.ContextReader
+	reportService   *fluxreport.Service
 	target          string
 	goal            string
 }
@@ -60,8 +62,20 @@ func NewHandlerWithSync(store state.Reader, webhook http.Handler, staleAfter tim
 }
 
 // NewHandlerWithMilestonesAndHistory constructs the read API with optional
-// milestone, sync-status, and historical change views.
+// milestone, sync-status, historical change, and evidence-based report views.
 func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler, staleAfter time.Duration, source MilestoneSource, target, goal string, syncSource SyncStatusSource, historySource state.HistoryReader) http.Handler {
+	if historySource == nil {
+		historySource, _ = store.(state.HistoryReader)
+	}
+	contextSource := contextReader(store)
+	flowSource, _ := store.(state.FlowReader)
+	reportService, _ := fluxreport.New(fluxreport.Config{
+		Snapshot:   store,
+		History:    historySource,
+		Flow:       flowSource,
+		Context:    contextSource,
+		StaleAfter: staleAfter,
+	})
 	h := &Handler{
 		store:           store,
 		webhook:         webhook,
@@ -69,7 +83,8 @@ func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler
 		milestoneSource: source,
 		syncSource:      syncSource,
 		historySource:   historySource,
-		contextSource:   contextReader(store),
+		contextSource:   contextSource,
+		reportService:   reportService,
 		target:          strings.TrimSpace(target),
 		goal:            goal,
 	}
@@ -82,6 +97,8 @@ func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler
 	mux.HandleFunc("GET /api/items/", h.itemHistory)
 	mux.HandleFunc("GET /api/snapshots/", h.snapshotAt)
 	mux.HandleFunc("GET /api/flow", h.flow)
+	mux.HandleFunc("GET /api/reports", h.reportIndex)
+	mux.HandleFunc("GET /api/reports/", h.reportView)
 	mux.HandleFunc("GET /api/context", h.context)
 	mux.HandleFunc("GET /api/context/", h.contextHistory)
 	mux.HandleFunc("GET /api/today", h.today)
@@ -166,6 +183,28 @@ type contextResponse struct {
 type contextHistoryResponse struct {
 	Status string `json:"status"`
 	state.ContextHistoryResult
+}
+
+type reportResponse struct {
+	Status string `json:"status"`
+	Report any    `json:"report"`
+}
+
+type reportIndexEntry struct {
+	Kind string `json:"kind"`
+	Path string `json:"path"`
+}
+
+type reportIndexResponse struct {
+	Status  string             `json:"status"`
+	Reports []reportIndexEntry `json:"reports"`
+}
+
+type reportQuery struct {
+	From      time.Time
+	Until     time.Time
+	Limit     int
+	Milestone string
 }
 
 type todayResponse struct {
@@ -269,6 +308,117 @@ func (h *Handler) itemHistory(w http.ResponseWriter, r *http.Request) {
 		Changes:          result.Changes,
 		Coverage:         result.Coverage,
 	})
+}
+
+func (h *Handler) reportIndex(w http.ResponseWriter, _ *http.Request) {
+	if h.reportService == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"status": "unavailable",
+			"error":  "reports are not configured",
+		})
+		return
+	}
+	entries := make([]reportIndexEntry, 0, len(fluxreport.Kinds()))
+	for _, kind := range fluxreport.Kinds() {
+		entries = append(entries, reportIndexEntry{Kind: string(kind), Path: "/api/reports/" + kind.PathName()})
+	}
+	writeJSON(w, http.StatusOK, reportIndexResponse{Status: "ok", Reports: entries})
+}
+
+func (h *Handler) reportView(w http.ResponseWriter, r *http.Request) {
+	if h.reportService == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"status": "unavailable",
+			"error":  "reports are not configured",
+		})
+		return
+	}
+	rawKind, err := pathValue(r, "/api/reports/", "")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
+		return
+	}
+	kind, err := fluxreport.ParseKind(rawKind)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
+		return
+	}
+	query, err := parseReportQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
+		return
+	}
+	var snapshot domain.Snapshot
+	if query.Milestone != "" {
+		if h.milestoneSource == nil || h.target == "" {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{
+				"status": "unavailable",
+				"error":  "milestone selection is not configured",
+			})
+			return
+		}
+		snapshot, err = h.milestoneSource.SnapshotForMilestone(r.Context(), h.target, query.Milestone, h.goal)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"status": "unavailable",
+				"error":  "GitLab milestone snapshot failed",
+			})
+			return
+		}
+	} else {
+		var ok bool
+		snapshot, ok = h.store.Get()
+		if !ok {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "syncing"})
+			return
+		}
+	}
+	value, err := h.reportService.GenerateSnapshot(snapshot, kind, fluxreport.Query{
+		From:  query.From,
+		Until: query.Until,
+		Limit: query.Limit,
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, fluxreport.ErrSnapshotUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSON(w, status, map[string]string{"status": "unavailable", "error": "report generation failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, reportResponse{Status: "ok", Report: value})
+}
+
+func parseReportQuery(r *http.Request) (reportQuery, error) {
+	values := r.URL.Query()
+	from, err := parseQueryTime(values.Get("from"), "from")
+	if err != nil {
+		return reportQuery{}, err
+	}
+	until, err := parseQueryTime(values.Get("to"), "to")
+	if err != nil {
+		return reportQuery{}, err
+	}
+	if !from.IsZero() && !until.IsZero() && !until.After(from) {
+		return reportQuery{}, errors.New("to must be after from")
+	}
+	limit := 0
+	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+		limit, err = strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > fluxreport.MaxLimit {
+			return reportQuery{}, fmt.Errorf("limit must be between 1 and %d", fluxreport.MaxLimit)
+		}
+	}
+	milestone := strings.TrimSpace(values.Get("milestone"))
+	if len([]rune(milestone)) > 200 {
+		return reportQuery{}, errors.New("milestone must be at most 200 characters")
+	}
+	return reportQuery{
+		From:      from,
+		Until:     until,
+		Limit:     limit,
+		Milestone: milestone,
+	}, nil
 }
 
 func (h *Handler) context(w http.ResponseWriter, r *http.Request) {

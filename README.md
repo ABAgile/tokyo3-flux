@@ -26,6 +26,9 @@ The current scope is:
   provenance, retention, and bounded time-window analysis.
 - A browser-approved human context overlay for delay explanations and scope
   changes, with corrections, redaction, retention, and audit metadata.
+- Bounded evidence-based standup, sprint-health, refinement, planning, backlog,
+  and retrospective reports that keep GitLab evidence separate from human
+  context.
 - Optional, human-approved addition of one existing GitLab label to an open
   issue in the current rolling view.
 
@@ -138,7 +141,7 @@ milestone changes, and bulk actions are not currently implemented.
 
 ## Pi integration
 
-The project-local extension is `.pi/extensions/flux.ts`. It registers eleven
+The project-local extension is `.pi/extensions/flux.ts`. It registers seventeen
 bounded, read-only tools:
 
 - `flux_today` — complete machine-readable current status.
@@ -149,26 +152,32 @@ bounded, read-only tools:
 - `flux_context` — confirmed human-reported delay and scope context; explicitly
   labeled as an overlay rather than GitLab evidence.
 - `flux_sprint_status` — compact sprint health and risks.
+- `flux_report` — bounded standup, sprint-health, refinement, planning, backlog,
+  or retrospective report with coverage and a human-context overlay.
+- `flux_sprint_health`, `flux_refinement`, `flux_planning`, `flux_backlog`, and
+  `flux_retrospective` — focused report tools with the same evidence boundary.
 - `flux_triage` — items needing attention and suggested next checks.
-- `flux_standup` — factual current-status standup.
+- `flux_standup` — evidence-based standup report.
 - `flux_review_queue` — open merge requests needing review.
 - `flux_pipeline_failures` — open merge requests with failed pipelines.
 
 Pi uses the authenticated Flux API when both `FLUX_API_URL` and
-`FLUX_API_TOKEN` are set. Otherwise it falls back to `flux today --json` via
-`FLUX_CLI` or the `flux` executable on `PATH`. Pi should receive only Flux API
+`FLUX_API_TOKEN` are set. Otherwise it falls back to the Flux CLI via `FLUX_CLI`
+or the `flux` executable on `PATH` (`flux today --json` for current status and
+`flux <report-kind> --json` for reports). Pi should receive only Flux API
 credentials, never the server's GitLab service or write token. History is
 bounded to observations Flux has recorded; it does not backfill GitLab's
 unavailable event history. Flow metrics cap their calculation at the 1000 most
 recent matching changes and mark the result when capped.
 
-The current standup and agent views describe current GitLab signals. The
-`flux_changes`, `flux_item_history`, `flux_snapshot`, and `flux_flow` views
-expose observations made after Flux history starts. `flux_context` exposes only
-confirmed human-reported context and its coverage; it is not independently
-verified cause evidence. Exact pre-bootstrap history, changes between missed
-pulls, cycle-time/capacity conclusions, and AI-generated backlog decisions still
-require additional history and human input.
+The report views combine current GitLab signals with observations made after
+Flux history starts and only confirmed human-reported context. The
+`human_context_overlay` is not independently verified cause evidence and never
+changes GitLab-derived status or counts. Reports expose their as-of time,
+window, provenance, coverage, truncation, and uncertainties. Exact
+pre-bootstrap history, changes between missed pulls, cycle-time/capacity
+conclusions, and AI-generated backlog decisions still require additional
+history and human input.
 
 The intended AI control model is:
 
@@ -228,6 +237,10 @@ Read and health routes include:
 - `GET /api/snapshots/<RFC3339>`
 - `GET /api/flow?from=<RFC3339>&to=<RFC3339>&item_id=<id>`
   (also supports `milestone`)
+- `GET /api/reports` — report kinds and paths.
+- `GET /api/reports/<standup|sprint-health|refinement|planning|backlog|retrospective>?from=<RFC3339>&to=<RFC3339>&milestone=<name>&limit=<n>`
+  — bounded evidence-based reports; the response keeps GitLab evidence and
+  `human_context_overlay` separate.
 - `GET /api/context?from=<RFC3339>&to=<RFC3339>&item_id=<id>&kind=<kind>`
   (also supports `limit`)
 - `GET /api/context/<id>` — retained context revisions and secret-free audit metadata.
@@ -260,6 +273,12 @@ make build
 ./bin/flux snapshot --at 2026-01-01T00:00:00Z --json
 ./bin/flux flow --from 2026-01-01T00:00:00Z --json
 ./bin/flux context --kind delay_explanation --json
+./bin/flux standup --json
+./bin/flux sprint-health --json
+./bin/flux refinement --json
+./bin/flux planning --json
+./bin/flux backlog --json
+./bin/flux retrospective --json
 ```
 
 For an offline browser/API/Pi cockpit, run the explicit loopback-only fixture

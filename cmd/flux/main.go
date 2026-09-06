@@ -21,6 +21,7 @@ import (
 	"abagile.com/tokyo3/flux/internal/fixture"
 	"abagile.com/tokyo3/flux/internal/gitlab"
 	"abagile.com/tokyo3/flux/internal/reconcile"
+	fluxreport "abagile.com/tokyo3/flux/internal/report"
 	"abagile.com/tokyo3/flux/internal/state"
 	fluxweb "abagile.com/tokyo3/flux/internal/web"
 	"abagile.com/tokyo3/flux/internal/webhook"
@@ -66,6 +67,18 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runFlow(args[1:], stdout, stderr)
 	case "context":
 		return runContext(args[1:], stdout, stderr)
+	case "standup":
+		return runReport(args[1:], fluxreport.KindStandup, stdout, stderr)
+	case "sprint-health":
+		return runReport(args[1:], fluxreport.KindSprintHealth, stdout, stderr)
+	case "refinement":
+		return runReport(args[1:], fluxreport.KindRefinement, stdout, stderr)
+	case "planning":
+		return runReport(args[1:], fluxreport.KindPlanning, stdout, stderr)
+	case "backlog":
+		return runReport(args[1:], fluxreport.KindBacklog, stdout, stderr)
+	case "retrospective":
+		return runReport(args[1:], fluxreport.KindRetrospective, stdout, stderr)
 	case "version":
 		_, err := fmt.Fprintf(stdout, "%s %s\n", appName, baseversion.Resolve(Version))
 		return err
@@ -663,6 +676,74 @@ func renderContextJSON(w io.Writer, result state.ContextResult) error {
 	return encoder.Encode(result)
 }
 
+func runReport(args []string, kind fluxreport.Kind, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet(kind.PathName(), flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory containing the Flux read model")
+	fromRaw := flags.String("from", "", "inclusive RFC3339 report-window lower bound")
+	toRaw := flags.String("to", "", "exclusive RFC3339 report-window upper bound")
+	milestone := flags.String("milestone", "", "milestone name; must match the locally cached snapshot")
+	limit := flags.Int("limit", fluxreport.DefaultLimit, "maximum number of records in report lists")
+	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("%s accepts flags only", kind.PathName())
+	}
+	if *limit < 1 || *limit > fluxreport.MaxLimit {
+		return fmt.Errorf("limit must be between 1 and %d", fluxreport.MaxLimit)
+	}
+	if *staleAfter <= 0 {
+		return errors.New("stale-after must be positive")
+	}
+	from, err := parseTimeFlag(*fromRaw, "from")
+	if err != nil {
+		return err
+	}
+	to, err := parseTimeFlag(*toRaw, "to")
+	if err != nil {
+		return err
+	}
+	if !from.IsZero() && !to.IsZero() && !to.After(from) {
+		return errors.New("to must be after from")
+	}
+	store, err := state.OpenFileStoreWithStaleAfter(*stateDir, *staleAfter)
+	if err != nil {
+		return fmt.Errorf("open state store: %w", err)
+	}
+	if strings.TrimSpace(*milestone) != "" {
+		snapshot, ok := store.Get()
+		if !ok {
+			return errors.New("cannot select a milestone before the local snapshot is available")
+		}
+		if strings.TrimSpace(snapshot.Sprint.Name) != strings.TrimSpace(*milestone) {
+			return fmt.Errorf("milestone %q is not in the locally cached snapshot", strings.TrimSpace(*milestone))
+		}
+	}
+	reports, err := fluxreport.New(fluxreport.Config{
+		Snapshot:   store,
+		History:    store,
+		Flow:       store,
+		Context:    store,
+		StaleAfter: *staleAfter,
+	})
+	if err != nil {
+		return fmt.Errorf("configure reports: %w", err)
+	}
+	value, err := reports.Generate(kind, fluxreport.Query{From: from, Until: to, Limit: *limit})
+	if err != nil {
+		return fmt.Errorf("generate %s report: %w", kind.PathName(), err)
+	}
+	if *jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(value)
+	}
+	return fluxreport.RenderText(stdout, value)
+}
+
 func renderContext(w io.Writer, result state.ContextResult) error {
 	if _, err := fmt.Fprintf(w, "Human context: %d confirmed records\n", len(result.Entries)); err != nil {
 		return err
@@ -1033,6 +1114,12 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  flux snapshot --at 2026-01-01T00:00:00Z --json")
 	fmt.Fprintln(w, "  flux flow --from 2026-01-01T00:00:00Z --json")
 	fmt.Fprintln(w, "  flux context --kind delay_explanation --json")
+	fmt.Fprintln(w, "  flux standup --json")
+	fmt.Fprintln(w, "  flux sprint-health --json")
+	fmt.Fprintln(w, "  flux refinement --json")
+	fmt.Fprintln(w, "  flux planning --json")
+	fmt.Fprintln(w, "  flux backlog --json")
+	fmt.Fprintln(w, "  flux retrospective --from 2026-01-01T00:00:00Z --json")
 	fmt.Fprintln(w, "  flux version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "GitLab scope is configured with FLUX_GITLAB_GROUP.")
@@ -1041,4 +1128,5 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Use --fixture or FLUX_FIXTURE_FILE for a loopback-only offline cockpit server.")
 	fmt.Fprintln(w, "Use flux changes, history, snapshot, and flow to inspect the derived historical read model.")
 	fmt.Fprintln(w, "Use flux context to inspect confirmed human-reported delivery context; it does not alter derived state.")
+	fmt.Fprintln(w, "Use standup, sprint-health, refinement, planning, backlog, and retrospective for evidence-based ceremony views.")
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"abagile.com/tokyo3/flux/internal/domain"
+	fluxreport "abagile.com/tokyo3/flux/internal/report"
 	"abagile.com/tokyo3/flux/internal/state"
 )
 
@@ -420,6 +421,118 @@ func TestHumanContextReadRoutes(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid context query status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReportRoutes(t *testing.T) {
+	directory := t.TempDir()
+	store, err := state.OpenFileStore(directory)
+	if err != nil {
+		t.Fatalf("OpenFileStore() error = %v", err)
+	}
+	observedAt := time.Date(2026, time.March, 4, 12, 0, 0, 0, time.UTC)
+	if err := store.PutObserved(domain.Snapshot{
+		GeneratedAt: observedAt,
+		Sprint: domain.Sprint{
+			Name: "Flow 04",
+			Goal: "Ship evidence",
+			WorkItems: []domain.WorkItem{{
+				ID:           "team/project#12",
+				ProjectID:    42,
+				ProjectPath:  "team/project",
+				Title:        "Report delivery",
+				State:        domain.IssueOpen,
+				Assignee:     "alex",
+				LastActivity: observedAt,
+			}},
+		},
+	}, "run-1", observedAt); err != nil {
+		t.Fatalf("PutObserved() error = %v", err)
+	}
+	handler := NewHandlerWithMilestonesAndHistory(store, http.NotFoundHandler(), time.Hour, nil, "", "", nil, store)
+
+	request := httptest.NewRequest(http.MethodGet, "/api/reports", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("report index status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var index struct {
+		Status  string `json:"status"`
+		Reports []struct {
+			Kind string `json:"kind"`
+			Path string `json:"path"`
+		} `json:"reports"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&index); err != nil {
+		t.Fatalf("decode report index: %v", err)
+	}
+	if index.Status != "ok" || len(index.Reports) != len(fluxreport.Kinds()) {
+		t.Fatalf("report index = %+v", index)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/reports/standup?from=2026-03-03T00:00:00Z&to=2026-03-05T00:00:00Z&limit=10", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("standup report status = %d: %s", response.Code, response.Body.String())
+	}
+	var standup struct {
+		Status string `json:"status"`
+		Report struct {
+			Kind      string         `json:"kind"`
+			Milestone string         `json:"milestone"`
+			Counts    map[string]int `json:"counts"`
+			Coverage  struct {
+				Sources []struct {
+					Name string `json:"name"`
+				} `json:"sources"`
+			} `json:"coverage"`
+			HumanContext struct {
+				Entries []domain.HumanContext `json:"entries"`
+			} `json:"human_context_overlay"`
+		} `json:"report"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&standup); err != nil {
+		t.Fatalf("decode standup report: %v", err)
+	}
+	if standup.Status != "ok" || standup.Report.Kind != "standup" || standup.Report.Milestone != "Flow 04" || standup.Report.Counts[string(domain.StatusInProgress)] != 1 || len(standup.Report.Coverage.Sources) != 3 {
+		t.Fatalf("standup report = %+v", standup)
+	}
+
+	selectedSource := &fakeMilestoneSource{snapshots: map[string]domain.Snapshot{
+		"Flow 05": {GeneratedAt: observedAt.Add(time.Hour), Sprint: domain.Sprint{Name: "Flow 05", Goal: "Alternate scope"}},
+	}}
+	selectedHandler := NewHandlerWithMilestonesAndHistory(store, http.NotFoundHandler(), time.Hour, selectedSource, "tokyo3", "", nil, store)
+	request = httptest.NewRequest(http.MethodGet, "/api/reports/backlog?milestone=Flow%2005", nil)
+	response = httptest.NewRecorder()
+	selectedHandler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("selected backlog report status = %d: %s", response.Code, response.Body.String())
+	}
+	var selected struct {
+		Report struct {
+			Milestone string `json:"milestone"`
+		} `json:"report"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&selected); err != nil {
+		t.Fatalf("decode selected report: %v", err)
+	}
+	if selected.Report.Milestone != "Flow 05" || selectedSource.target != "tokyo3" || selectedSource.name != "Flow 05" {
+		t.Fatalf("selected report = %+v, source = %+v", selected, selectedSource)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/reports/not-a-report", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid report status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/reports/standup?limit=0", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid report limit status = %d, want %d", response.Code, http.StatusBadRequest)
 	}
 }
 

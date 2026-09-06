@@ -114,8 +114,16 @@ cannot invoke a write route.
 
 ## Reporting use
 
-Join context into standup, planning, refinement, or retrospective output only
-as an explicitly labeled **human-reported overlay**. Keep GitLab-derived status,
-counts, timestamps, and Flux-observed changes separate. A confirmed statement
-is not independently verified cause evidence; reports must preserve coverage,
-provenance, and uncertainties and must not infer blame or performance.
+`GET /api/reports/<kind>` and the matching read-only CLI/Pi report views join
+confirmed context into standup, sprint-health, planning, refinement, backlog,
+or retrospective output only as an explicitly labeled **human-reported
+overlay**. Keep GitLab-derived status, counts, timestamps, and Flux-observed
+changes separate. A confirmed statement is not independently verified cause
+evidence; reports must preserve the as-of time, window, coverage, provenance,
+truncation, and uncertainties and must not infer blame or performance.
+
+The report kinds are `standup`, `sprint-health`, `refinement`, `planning`,
+`backlog`, and `retrospective`. Report windows use an inclusive `from` and
+exclusive `to`; an omitted window is bounded relative to the current snapshot.
+The CLI reads its locally reconciled snapshot, while the authenticated API can
+fetch a selected milestone view on demand without changing the cached snapshot.

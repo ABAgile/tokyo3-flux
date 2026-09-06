@@ -36,7 +36,10 @@ type ContextQuery struct {
 	Until  time.Time
 	ItemID string
 	Kind   string
-	Limit  int
+	// Milestone filters explicitly scoped entries; entries without a
+	// milestone remain eligible as broader-scope context.
+	Milestone string
+	Limit     int
 }
 
 // ContextCoverage describes the boundary and provenance of human-provided
@@ -429,6 +432,7 @@ func (s *FileStore) ListContext(query ContextQuery) (ContextResult, error) {
 	}
 	query.ItemID = strings.TrimSpace(query.ItemID)
 	query.Kind = strings.TrimSpace(query.Kind)
+	query.Milestone = strings.TrimSpace(query.Milestone)
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -463,6 +467,9 @@ func contextMatches(entry domain.HumanContext, query ContextQuery) bool {
 		return false
 	}
 	if query.ItemID != "" && !slices.Contains(entry.ItemIDs, query.ItemID) {
+		return false
+	}
+	if query.Milestone != "" && entry.Milestone != "" && strings.TrimSpace(entry.Milestone) != query.Milestone {
 		return false
 	}
 	return query.Kind == "" || string(entry.Kind) == query.Kind

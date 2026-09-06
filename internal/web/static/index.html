@@ -189,6 +189,28 @@
           <div class="loading-stack"><span class="loading-bar loading-bar--wide"></span><span class="loading-bar loading-bar--medium"></span></div>
         </div>
       </section>
+
+      <section class="panel report-panel" aria-labelledby="reports-heading">
+        <header class="panel-header">
+          <div>
+            <p class="panel-kicker">Evidence workspace</p>
+            <h2 id="reports-heading">Ceremony reports</h2>
+          </div>
+          <span class="report-source-note">GitLab signals + human overlay</span>
+        </header>
+        <div class="report-tabs" role="tablist" aria-label="Ceremony reports">
+          <button class="report-tab is-selected" type="button" role="tab" aria-selected="true" aria-controls="report-content" data-report-kind="standup">Standup</button>
+          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="sprint_health">Sprint health</button>
+          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="refinement">Refinement</button>
+          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="planning">Planning</button>
+          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="backlog">Backlog</button>
+          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="retrospective">Retrospective</button>
+        </div>
+        <div class="panel-subline" id="report-summary">Loading evidence-based report…</div>
+        <div class="report-content" id="report-content" role="tabpanel" aria-live="polite" aria-busy="true">
+          <div class="loading-stack"><span class="loading-bar loading-bar--wide"></span><span class="loading-bar loading-bar--medium"></span></div>
+        </div>
+      </section>
     </main>
 
     <dialog class="action-dialog context-dialog" id="context-dialog" aria-labelledby="context-dialog-title" aria-describedby="context-dialog-context">
