@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"abagile.com/tokyo3/flux/internal/api"
 	fluxauth "abagile.com/tokyo3/flux/internal/auth"
 	"abagile.com/tokyo3/flux/internal/domain"
+	"abagile.com/tokyo3/flux/internal/fixture"
 	"abagile.com/tokyo3/flux/internal/gitlab"
 	"abagile.com/tokyo3/flux/internal/reconcile"
 	"abagile.com/tokyo3/flux/internal/state"
@@ -120,6 +122,7 @@ func runServe(args []string, stderr io.Writer) error {
 	goal := flags.String("goal", os.Getenv("FLUX_SPRINT_GOAL"), "optional sprint goal override; otherwise use the milestone description")
 	blockedLabels := flags.String("blocked-labels", envOrDefault("FLUX_GITLAB_BLOCKED_LABELS", "status::blocked,blocked"), "comma-separated labels treated as blocked")
 	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory for the cached snapshot and webhook event log")
+	fixturePath := flags.String("fixture", os.Getenv("FLUX_FIXTURE_FILE"), "normalized snapshot file for local fixture mode")
 	oauthClientID := flags.String("gitlab-oauth-client-id", os.Getenv("FLUX_GITLAB_OAUTH_CLIENT_ID"), "GitLab OAuth application client ID")
 	oauthRedirectURL := flags.String("gitlab-oauth-redirect-url", os.Getenv("FLUX_GITLAB_OAUTH_REDIRECT_URL"), "absolute GitLab OAuth callback URL")
 	interval := flags.Duration("reconcile-interval", intervalDefault, "periodic GitLab reconciliation interval")
@@ -134,12 +137,20 @@ func runServe(args []string, stderr io.Writer) error {
 		return errors.New("reconcile interval must be positive")
 	}
 
+	fixtureMode := strings.TrimSpace(*fixturePath) != ""
 	target := strings.TrimSpace(*gitlabGroup)
-	if target == "" {
+	if fixtureMode {
+		if !isLoopbackAddress(*addr) {
+			return errors.New("fixture mode requires a loopback listen address, for example 127.0.0.1:8080")
+		}
+		if target == "" {
+			target = "fixture"
+		}
+	} else if target == "" {
 		return errors.New("GitLab group is required")
 	}
 
-	sessionKey, err := basecrypto.ParseKEK(strings.TrimSpace(os.Getenv("FLUX_SESSION_KEY")))
+	sessionKey, err := serveSessionKey(os.Getenv("FLUX_SESSION_KEY"), fixtureMode)
 	if err != nil {
 		return fmt.Errorf("parse FLUX_SESSION_KEY: %w", err)
 	}
@@ -147,23 +158,44 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configure FLUX_API_TOKEN: %w", err)
 	}
-	client, err := gitlab.New(gitlab.Config{
-		URL:           *gitlabURL,
-		Token:         envFirst("FLUX_GITLAB_SERVICE_TOKEN", "FLUX_GITLAB_TOKEN"),
-		BlockedLabels: splitList(*blockedLabels),
-	})
-	if err != nil {
-		return fmt.Errorf("configure GitLab client: %w", err)
-	}
-	var mutationClient *gitlab.MutationClient
-	if mutationToken := strings.TrimSpace(os.Getenv("FLUX_GITLAB_WRITE_TOKEN")); mutationToken != "" {
-		mutationClient, err = gitlab.NewMutationClient(gitlab.Config{
+	var (
+		source          reconcile.Source
+		milestoneSource api.MilestoneSource
+		actionReader    action.IssueReader
+		actionLabels    action.LabelReader
+		mutationClient  *gitlab.MutationClient
+	)
+	if fixtureMode {
+		fixtureSource, fixtureErr := fixture.New(*fixturePath)
+		if fixtureErr != nil {
+			return fmt.Errorf("configure fixture source: %w", fixtureErr)
+		}
+		source = fixtureSource
+		milestoneSource = fixtureSource
+		actionReader = fixtureSource
+		actionLabels = fixtureSource
+	} else {
+		client, clientErr := gitlab.New(gitlab.Config{
 			URL:           *gitlabURL,
-			Token:         mutationToken,
+			Token:         envFirst("FLUX_GITLAB_SERVICE_TOKEN", "FLUX_GITLAB_TOKEN"),
 			BlockedLabels: splitList(*blockedLabels),
 		})
-		if err != nil {
-			return fmt.Errorf("configure GitLab mutation client: %w", err)
+		if clientErr != nil {
+			return fmt.Errorf("configure GitLab client: %w", clientErr)
+		}
+		source = client
+		milestoneSource = client
+		actionReader = client
+		actionLabels = client
+		if mutationToken := strings.TrimSpace(os.Getenv("FLUX_GITLAB_WRITE_TOKEN")); mutationToken != "" {
+			mutationClient, clientErr = gitlab.NewMutationClient(gitlab.Config{
+				URL:           *gitlabURL,
+				Token:         mutationToken,
+				BlockedLabels: splitList(*blockedLabels),
+			})
+			if clientErr != nil {
+				return fmt.Errorf("configure GitLab mutation client: %w", clientErr)
+			}
 		}
 	}
 	store, err := state.OpenFileStore(*stateDir)
@@ -174,37 +206,48 @@ func runServe(args []string, stderr io.Writer) error {
 	rt := basecli.App{Name: "flux", EnvPrefix: "FLUX"}.Setup(context.Background())
 	defer rt.Shutdown()
 	reconciler, err := reconcile.New(reconcile.Config{
-		Source:   client,
+		Source:   source,
 		Store:    store,
 		Target:   target,
 		Goal:     *goal,
 		Interval: *interval,
 		OnError: func(err error) {
-			rt.Log.Error("GitLab reconciliation failed", "error", err)
+			rt.Log.Error("pull reconciliation failed", "error", err)
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("configure reconciler: %w", err)
 	}
-	webhookConfig := webhook.Config{
-		Secret:        os.Getenv("FLUX_GITLAB_WEBHOOK_SECRET"),
-		ExpectedGroup: target,
-		Trigger:       reconciler.Trigger,
-		OnEvent: func(event webhook.Event) error {
-			return store.RecordEvent(state.Event{
-				Kind:        event.Kind,
-				DeliveryID:  event.DeliveryID,
-				ProjectID:   event.ProjectID,
-				ProjectPath: event.ProjectPath,
-				GroupID:     event.GroupID,
-				GroupPath:   event.GroupPath,
-				ReceivedAt:  event.ReceivedAt,
-			})
-		},
-	}
-	webhookHandler, err := webhook.New(webhookConfig)
-	if err != nil {
-		return fmt.Errorf("configure webhook handler: %w", err)
+	var (
+		webhookHandler http.Handler
+		webhookEnabled bool
+	)
+	if fixtureMode {
+		webhookHandler = disabledWebhookHandler("webhooks are disabled in fixture mode")
+	} else if secret := strings.TrimSpace(os.Getenv("FLUX_GITLAB_WEBHOOK_SECRET")); secret == "" {
+		webhookHandler = disabledWebhookHandler("webhooks are not configured")
+	} else {
+		webhookConfig := webhook.Config{
+			Secret:        secret,
+			ExpectedGroup: target,
+			Trigger:       reconciler.Trigger,
+			OnEvent: func(event webhook.Event) error {
+				return store.RecordEvent(state.Event{
+					Kind:        event.Kind,
+					DeliveryID:  event.DeliveryID,
+					ProjectID:   event.ProjectID,
+					ProjectPath: event.ProjectPath,
+					GroupID:     event.GroupID,
+					GroupPath:   event.GroupPath,
+					ReceivedAt:  event.ReceivedAt,
+				})
+			},
+		}
+		webhookHandler, err = webhook.New(webhookConfig)
+		if err != nil {
+			return fmt.Errorf("configure webhook handler: %w", err)
+		}
+		webhookEnabled = true
 	}
 
 	sessions, err := basesession.New(basesession.Config{
@@ -217,22 +260,31 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configure sessions: %w", err)
 	}
-	authenticator, err := fluxauth.NewGitLab(fluxauth.Config{
-		GitLabURL:    *gitlabURL,
-		ClientID:     *oauthClientID,
-		ClientSecret: os.Getenv("FLUX_GITLAB_OAUTH_CLIENT_SECRET"),
-		RedirectURL:  *oauthRedirectURL,
-		Log:          rt.Log,
-	}, sessions)
-	if err != nil {
-		return fmt.Errorf("configure GitLab OAuth: %w", err)
+	var authHandler http.Handler
+	if fixtureMode {
+		authHandler, err = fluxauth.NewFixture(sessions)
+		if err != nil {
+			return fmt.Errorf("configure fixture auth: %w", err)
+		}
+	} else {
+		authenticator, authErr := fluxauth.NewGitLab(fluxauth.Config{
+			GitLabURL:    *gitlabURL,
+			ClientID:     *oauthClientID,
+			ClientSecret: os.Getenv("FLUX_GITLAB_OAUTH_CLIENT_SECRET"),
+			RedirectURL:  *oauthRedirectURL,
+			Log:          rt.Log,
+		}, sessions)
+		if authErr != nil {
+			return fmt.Errorf("configure GitLab OAuth: %w", authErr)
+		}
+		authHandler = authenticator.Handler()
 	}
 
-	apiHandler := api.NewHandlerWithMilestones(store, webhookHandler, *staleAfter, client, target, *goal)
+	apiHandler := api.NewHandlerWithSync(store, webhookHandler, *staleAfter, milestoneSource, target, *goal, reconciler)
 	actionService, err := action.New(action.Config{
 		Snapshot: store,
-		Reader:   client,
-		Labels:   client,
+		Reader:   actionReader,
+		Labels:   actionLabels,
 		Writer:   mutationClient,
 		Audit:    store,
 		Trigger:  reconciler.Trigger,
@@ -245,11 +297,19 @@ func runServe(args []string, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configure GitLab action HTTP handler: %w", err)
 	}
+	syncHandler, err := api.NewSyncHandler(reconciler, sessions)
+	if err != nil {
+		return fmt.Errorf("configure manual sync handler: %w", err)
+	}
 	cockpitHandler := fluxweb.NewHandler(apiHandler)
 	browserAPIHandler := sessions.Gate(apiHandler)
 	machineAPIHandler := machineToken.Gate(apiHandler, browserAPIHandler)
+	syncRoute := machineToken.Gate(syncHandler, sessions.Gate(syncHandler))
 	routes := http.NewServeMux()
-	routes.Handle("/auth/", authenticator.Handler())
+	routes.Handle("/auth/", authHandler)
+	routes.Handle("/api/sync/status", machineAPIHandler)
+	routes.Handle("/api/sync/csrf", syncRoute)
+	routes.Handle("/api/sync", syncRoute)
 	routes.Handle("/api/actions/", sessions.Gate(actionHandler))
 	routes.Handle("/api/", machineAPIHandler)
 	routes.Handle("/", sessions.Gate(cockpitHandler))
@@ -262,7 +322,11 @@ func runServe(args []string, stderr io.Writer) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "mutation_enabled", mutationClient != nil)
+	mode := "live"
+	if fixtureMode {
+		mode = "fixture"
+	}
+	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "mutation_enabled", mutationClient != nil, "webhook_enabled", webhookEnabled, "mode", mode, "fixture", strings.TrimSpace(*fixturePath))
 
 	return baserun.Group(rt.Ctx,
 		baserun.HTTPServer(server, 10*time.Second, false),
@@ -280,6 +344,32 @@ func durationFromEnv(name string, fallback time.Duration) (time.Duration, error)
 		return 0, fmt.Errorf("%s: %w", name, err)
 	}
 	return duration, nil
+}
+
+func serveSessionKey(raw string, fixtureMode bool) ([]byte, error) {
+	if strings.TrimSpace(raw) == "" && fixtureMode {
+		return basecrypto.RandomBytes(32)
+	}
+	return basecrypto.ParseKEK(strings.TrimSpace(raw))
+}
+
+func isLoopbackAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func disabledWebhookHandler(message string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, message, http.StatusNotFound)
+	})
 }
 
 func loadSnapshot(inputPath string, cfg gitlab.Config, target, goal string) (domain.Snapshot, error) {
@@ -448,9 +538,11 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  flux today --input snapshot.json [--stale-after 168h] [--json]")
 	fmt.Fprintln(w, "  flux today --gitlab-url URL --gitlab-group GROUP [--json]")
 	fmt.Fprintln(w, "  flux serve --addr 127.0.0.1:8080")
+	fmt.Fprintln(w, "  flux serve --fixture examples/today.json --addr 127.0.0.1:8080")
 	fmt.Fprintln(w, "  flux version")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "GitLab scope is configured with FLUX_GITLAB_GROUP.")
 	fmt.Fprintln(w, "GitLab credentials are read from FLUX_GITLAB_SERVICE_TOKEN or FLUX_GITLAB_TOKEN.")
-	fmt.Fprintln(w, "The server also requires FLUX_GITLAB_WEBHOOK_SECRET, FLUX_SESSION_KEY, and GitLab OAuth settings.")
+	fmt.Fprintln(w, "Live server also requires FLUX_SESSION_KEY and GitLab OAuth settings; webhook setup is optional.")
+	fmt.Fprintln(w, "Use --fixture or FLUX_FIXTURE_FILE for a loopback-only offline cockpit server.")
 }

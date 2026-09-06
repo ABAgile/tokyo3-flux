@@ -43,9 +43,13 @@
           <span class="theme-icon" aria-hidden="true">☾</span>
           <span class="theme-toggle-label">Dark mode</span>
         </button>
-        <button class="button button--quiet" id="refresh-button" type="button">
+        <button class="button button--quiet" id="reload-button" type="button" aria-label="Reload cached view" title="Reload cached view">
           <svg class="button-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.25 5.75A5.5 5.5 0 1 0 13.5 9"/><path d="M13.25 2.75v3h-3"/></svg>
-          <span>Refresh</span>
+          <span>Reload view</span>
+        </button>
+        <button class="button button--quiet" id="sync-button" type="button" aria-label="Pull latest source state" title="Pull latest source state">
+          <svg class="button-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.25h8.5"/><path d="m9.25 2.5 2.75 2.75-2.75 2.75"/><path d="M13 10.75H4.5"/><path d="m6.75 8-2.75 2.75 2.75 2.75"/></svg>
+          <span>Sync now</span>
         </button>
         <a class="sign-out" href="/auth/logout">Sign out</a>
       </div>
@@ -58,9 +62,14 @@
           <h1 id="sprint-name">Loading delivery picture<span class="title-mark">.</span></h1>
           <p class="hero-goal" id="sprint-goal">Fetching the latest GitLab signals…</p>
           <div class="meta-row">
-            <span id="generated-at">Last sync —</span>
+            <span id="generated-at">Last reconciled —</span>
             <span class="meta-divider" aria-hidden="true"></span>
             <span>GitLab-derived read model</span>
+          </div>
+          <div class="sync-status" id="sync-status" data-state="idle" role="status" aria-live="polite">
+            <span class="sync-status-dot" aria-hidden="true"></span>
+            <span class="sync-status-label">Pull status</span>
+            <span id="sync-status-text">Waiting for first pull</span>
           </div>
           <div class="mutation-status" id="mutation-status" role="status" aria-live="polite" hidden></div>
           <div class="milestone-picker-row">

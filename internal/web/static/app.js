@@ -16,6 +16,16 @@
     currentMilestone: "",
     selectedMilestone: new URLSearchParams(window.location.search).get("milestone")?.trim() || "",
     request: 0,
+    sync: {
+      csrfToken: "",
+      state: "idle",
+      lastStartedAt: "",
+      lastCompletedAt: "",
+      lastDurationMS: 0,
+      lastError: "",
+      snapshotGeneratedAt: "",
+      busy: false,
+    },
     action: {
       csrfToken: "",
       item: null,
@@ -167,6 +177,51 @@
   function milestoneOptionText(milestone) {
     const range = milestoneRange(milestone);
     return range ? `${milestone.name} · ${range}` : milestone.name;
+  }
+
+  function normalizeSyncStatus(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Flux returned an invalid sync status");
+    }
+    const stateName = clean(raw.state) || "idle";
+    return {
+      state: stateName,
+      lastStartedAt: clean(raw.last_started_at),
+      lastCompletedAt: clean(raw.last_completed_at),
+      lastDurationMS: numberValue(raw.last_duration_ms),
+      lastError: clean(raw.last_error),
+      snapshotGeneratedAt: clean(raw.snapshot_generated_at),
+    };
+  }
+
+  function durationText(milliseconds) {
+    const value = numberValue(milliseconds);
+    if (value < 1000) return `${value}ms`;
+    if (value < 60000) return `${(value / 1000).toFixed(value < 10000 ? 1 : 0)}s`;
+    return `${Math.floor(value / 60000)}m ${Math.floor((value % 60000) / 1000)}s`;
+  }
+
+  function syncStatusText(status) {
+    if (status.state === "queued") return "Pull queued";
+    if (status.state === "syncing") return "Pulling latest source…";
+    if (status.state === "error") {
+      const when = status.lastCompletedAt ? ` ${formatDate(status.lastCompletedAt)}` : "";
+      const duration = status.lastCompletedAt ? ` · ${durationText(status.lastDurationMS)}` : "";
+      return `Pull failed${when}${duration} · ${limited(status.lastError, "unknown error", 160)}`;
+    }
+    if (status.state === "ready" && status.lastCompletedAt) {
+      return `Last pull ${formatDate(status.lastCompletedAt)} · ${durationText(status.lastDurationMS)}`;
+    }
+    return "Waiting for first pull";
+  }
+
+  function renderSyncStatus(raw) {
+    const status = normalizeSyncStatus(raw);
+    Object.assign(state.sync, status);
+    const node = $("#sync-status");
+    node.dataset.state = status.state;
+    $("#sync-status-text").textContent = syncStatusText(status);
+    updateSyncButton();
   }
 
   function statusOf(item) {
@@ -513,7 +568,7 @@
     }
   }
 
-  async function actionRequest(path, options = {}) {
+  async function fluxRequest(path, options = {}) {
     const response = await fetch(path, {
       ...options,
       cache: "no-store",
@@ -531,8 +586,32 @@
       // The status below still gives the user a useful failure message.
     }
     if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
-    if (!response.ok) throw new Error(data.error || `Flux action API returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error(data.error || `Flux request returned HTTP ${response.status}`);
     return data;
+  }
+
+  async function actionRequest(path, options = {}) {
+    return fluxRequest(path, options);
+  }
+
+  async function syncCSRFToken() {
+    if (state.sync.csrfToken) return state.sync.csrfToken;
+    const data = await fluxRequest("/api/sync/csrf", { headers: { Accept: "application/json" } });
+    if (!clean(data.csrf_token)) throw new Error("Flux did not return a sync authorization token");
+    state.sync.csrfToken = data.csrf_token;
+    return state.sync.csrfToken;
+  }
+
+  async function loadSyncStatus() {
+    try {
+      const data = await fluxRequest("/api/sync/status", { headers: { Accept: "application/json" } });
+      renderSyncStatus(data);
+      return state.sync;
+    } catch (_) {
+      $("#sync-status").dataset.state = "error";
+      $("#sync-status-text").textContent = "Pull status unavailable";
+      return null;
+    }
   }
 
   async function actionCSRFToken() {
@@ -645,9 +724,9 @@
       });
       if (!actionIsCurrent(item, generation) || state.action.plan !== plan) return;
       closeLabelDialog();
-      connection("loading", "Action applied · syncing");
+      connection("loading", "Action applied · pull queued");
       window.setTimeout(() => {
-        if (!document.hidden && !state.selectedMilestone) loadSnapshot();
+        if (!document.hidden && !state.selectedMilestone) reloadView();
       }, 750);
     } catch (error) {
       if (!actionIsCurrent(item, generation)) return;
@@ -749,7 +828,9 @@
     $("#sprint-name").textContent = name;
     const goal = clean(snapshot.sprint.goal);
     $("#sprint-goal").textContent = goal || "No sprint goal recorded in the milestone description.";
-    $("#generated-at").textContent = snapshot.generatedAt ? `Last sync ${formatDate(snapshot.generatedAt)}` : "Last sync unavailable";
+    $("#generated-at").textContent = snapshot.generatedAt
+      ? state.selectedMilestone ? `Read on demand ${formatDate(snapshot.generatedAt)}` : `Last reconciled ${formatDate(snapshot.generatedAt)}`
+      : "Last reconciliation unavailable";
     document.title = `Flux · ${name}`;
     renderMetrics(snapshot);
     renderWork(snapshot);
@@ -762,7 +843,7 @@
     state.snapshot = null;
     $("#sprint-name").textContent = "Flux is waiting for a snapshot";
     $("#sprint-goal").textContent = text;
-    $("#generated-at").textContent = "Last sync unavailable";
+    $("#generated-at").textContent = "Last reconciliation unavailable";
     $("#hero-total").textContent = "—";
     for (const id of ["metric-total", "metric-active", "metric-blocked", "metric-review", "metric-pipeline"]) $("#" + id).textContent = "—";
     $("#work-summary").textContent = "No current read model available";
@@ -771,10 +852,10 @@
     workList.setAttribute("aria-busy", "false");
     $("#attention-count").textContent = "—";
     const attentionList = $("#attention-list");
-    attentionList.replaceChildren(errorState("Refresh to try the latest GitLab snapshot."));
+    attentionList.replaceChildren(errorState("Reload the view to try the latest cached snapshot."));
     attentionList.setAttribute("aria-busy", "false");
     const queues = $("#queue-list");
-    queues.replaceChildren(errorState("Refresh to restore delivery queues."));
+    queues.replaceChildren(errorState("Reload the view to restore delivery queues."));
     queues.setAttribute("aria-busy", "false");
   }
 
@@ -785,10 +866,23 @@
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
+  function updateSyncButton() {
+    const button = $("#sync-button");
+    if (!button) return;
+    const selected = Boolean(state.selectedMilestone);
+    button.disabled = selected || state.sync.busy;
+    button.setAttribute("aria-busy", String(state.sync.busy));
+    button.title = selected ? "Sync is available for the rolling view only" : "Pull latest source state";
+    button.setAttribute("aria-label", selected ? "Sync unavailable for selected milestone view" : "Pull latest source state");
+    const label = button.querySelector("span");
+    if (label) label.textContent = state.sync.busy ? "Syncing…" : "Sync now";
+  }
+
   function updateMilestoneNote() {
     const selected = Boolean(state.selectedMilestone);
     $("#milestone-note").textContent = selected ? "Selected milestone · read-only view" : "Rolling current milestone";
     $("#footer-version").textContent = selected ? "selected view read on demand" : "last reconciled snapshot";
+    updateSyncButton();
   }
 
   function renderMilestones(data) {
@@ -814,6 +908,7 @@
       select.appendChild(element("option", "", "No active milestones available"));
       select.disabled = true;
       $("#milestone-note").textContent = "No active milestones available";
+      updateSyncButton();
       return;
     }
     select.value = selected;
@@ -842,6 +937,7 @@
       select.replaceChildren(element("option", "", "Milestones unavailable"));
       select.disabled = true;
       $("#milestone-note").textContent = "Milestone list unavailable";
+      updateSyncButton();
     }
   }
 
@@ -852,19 +948,20 @@
     status.replaceChildren(dot, element("span", "", text));
   }
 
-  async function loadSnapshot() {
+  async function reloadView() {
     const requestID = ++state.request;
-    const refresh = $("#refresh-button");
-    const label = refresh.querySelector("span");
+    const reload = $("#reload-button");
+    const label = reload.querySelector("span");
     const picker = $("#milestone-select");
-    refresh.disabled = true;
+    const selected = Boolean(state.selectedMilestone);
+    reload.disabled = true;
     if (state.milestones.length > 0) picker.disabled = true;
-    refresh.setAttribute("aria-busy", "true");
-    if (label) label.textContent = "Refreshing";
-    connection("loading", "Syncing");
+    reload.setAttribute("aria-busy", "true");
+    if (label) label.textContent = "Reloading";
+    connection("loading", selected ? "Loading milestone view" : "Reloading cached view");
 
     try {
-      const query = state.selectedMilestone ? `?milestone=${encodeURIComponent(state.selectedMilestone)}` : "";
+      const query = selected ? `?milestone=${encodeURIComponent(state.selectedMilestone)}` : "";
       const response = await fetch(`/api/today${query}`, {
         headers: { Accept: "application/json" },
         cache: "no-store",
@@ -878,19 +975,65 @@
       if (!response.ok) throw new Error(`Flux API returned HTTP ${response.status}`);
       const snapshot = normalize(await response.json());
       render(snapshot);
-      connection("ok", `Synced ${formatDate(snapshot.generatedAt)}`);
+      connection("ok", selected ? `Milestone view loaded ${formatDate(snapshot.generatedAt)}` : `Cached view loaded ${formatDate(snapshot.generatedAt)}`);
     } catch (error) {
       if (requestID !== state.request) return;
       const message = error instanceof Error ? error.message : "The Flux API could not be reached.";
       resetForError(message);
-      connection("error", "Sync unavailable");
+      connection("error", "View reload unavailable");
     } finally {
       if (requestID === state.request) {
-        refresh.disabled = false;
-        refresh.removeAttribute("aria-busy");
+        reload.disabled = false;
+        reload.removeAttribute("aria-busy");
         if (state.milestones.length > 0) picker.disabled = false;
-        if (label) label.textContent = "Refresh";
+        if (label) label.textContent = "Reload view";
       }
+    }
+  }
+
+  function wait(milliseconds) {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  }
+
+  async function waitForPull() {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const status = await loadSyncStatus();
+      if (status && status.state !== "queued" && status.state !== "syncing") return status;
+      await wait(400);
+    }
+    return null;
+  }
+
+  async function syncNow() {
+    if (state.selectedMilestone || state.sync.busy) return;
+    state.sync.busy = true;
+    updateSyncButton();
+    connection("loading", "Pulling latest source state");
+    try {
+      const token = await syncCSRFToken();
+      await fluxRequest("/api/sync", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "X-CSRF-Token": token,
+        },
+      });
+      connection("loading", "Pull queued");
+      const status = await waitForPull();
+      if (!status) {
+        connection("error", "Pull still running");
+        return;
+      }
+      await reloadView();
+      if (status.state === "error") connection("error", "Pull failed · cached view unchanged");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Flux could not start a pull.";
+      connection("error", message);
+      await loadSyncStatus();
+    } finally {
+      state.sync.busy = false;
+      updateSyncButton();
     }
   }
 
@@ -902,7 +1045,7 @@
     state.selectedMilestone = selected === state.currentMilestone ? "" : selected;
     syncMilestoneURL();
     updateMilestoneNote();
-    loadSnapshot();
+    reloadView();
   });
 
   for (const button of document.querySelectorAll("[data-filter]")) {
@@ -937,15 +1080,18 @@
     }
   });
 
-  $("#refresh-button").addEventListener("click", loadSnapshot);
+  $("#reload-button").addEventListener("click", reloadView);
+  $("#sync-button").addEventListener("click", syncNow);
+  updateSyncButton();
   (async function initialize() {
-    await loadActionStatus();
+    await Promise.all([loadActionStatus(), loadSyncStatus()]);
     await loadMilestones();
-    await loadSnapshot();
+    await reloadView();
   })();
   window.setInterval(() => {
-    // The rolling view reads the reconciled cache. A picked milestone is
+    // The rolling view reloads the reconciled cache. A picked milestone is
     // fetched on demand to avoid repeatedly fan-out querying GitLab.
-    if (!document.hidden && !$("#refresh-button").disabled && !state.selectedMilestone) loadSnapshot();
+    if (!document.hidden && !$("#reload-button").disabled && !state.selectedMilestone) reloadView();
+    if (!document.hidden && !state.sync.busy) loadSyncStatus();
   }, 60_000);
 })();

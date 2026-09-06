@@ -52,6 +52,9 @@ The embedded responsive cockpit provides:
 - Active milestone selection with URL-persisted alternate read-only views.
 - System-aware dark mode with a persisted manual preference.
 - Freshness timestamps and links/metadata for delivery context.
+- `Reload view` to reread the cached snapshot without contacting GitLab.
+- `Sync now` to queue one pull reconciliation, with pull state, duration, and
+  last-error feedback.
 - A label action dialog that follows a dry-run-then-confirm workflow.
 
 Alternate milestone views are fetched on demand and never change the shared
@@ -91,12 +94,16 @@ milestone changes, and bulk actions are not currently implemented.
 
 ### Reconciliation and persistence
 
-- Background reconciliation defaults to every five minutes.
-- Validated GitLab webhook events can trigger an earlier refresh.
+- Background pull reconciliation defaults to every five minutes.
+- A browser-session and CSRF-protected `Sync now` request can queue one
+  immediate pull; machine credentials cannot invoke it.
 - The default durable state directory is `/var/lib/flux`.
 - Snapshot, webhook-event, and action-audit data are stored locally as small
   atomic/append-only files.
-- A failed refresh does not replace the last valid snapshot.
+- A failed pull does not replace the last valid snapshot; status retains its
+  duration and bounded error text.
+- The webhook endpoint is optional and deferred; pull reconciliation is the
+  authoritative freshness mechanism.
 - HTTP proxy environment variables are honored by Go's default transport.
 
 ## Pi integration
@@ -173,9 +180,14 @@ Read and health routes include:
 - `GET /api/today`
 - `GET /api/today?milestone=<name>`
 - `GET /api/milestones`
+- `GET /api/sync/status`
 - `GET /healthz`
 - `GET /readyz`
-- `POST /webhooks/gitlab`
+- `POST /webhooks/gitlab` (optional)
+
+Browser-only pull control routes include `GET /api/sync/csrf` and
+`POST /api/sync`. The POST queues reconciliation and is not available through
+the read-only machine credential.
 
 Browser-only action routes include `/api/actions/status`,
 `/api/actions/labels`, `/api/actions/labels/plan`, and
@@ -189,7 +201,22 @@ make build
 ./bin/flux today --input examples/today.json --json
 ```
 
-Run the server locally after configuring the required environment variables:
+For an offline browser/API/Pi cockpit, run the explicit loopback-only fixture
+server. It reloads the fixture file on every pull, uses a synthetic local
+session, disables GitLab mutations, and does not require GitLab or OAuth settings:
+
+```sh
+./bin/flux serve \
+  --fixture examples/today.json \
+  --addr 127.0.0.1:8080 \
+  --state-dir .flux-fixture-state
+```
+
+Open `http://127.0.0.1:8080/`; the fixture login establishes a local test
+session. Set `FLUX_API_TOKEN` separately if testing the read-only machine API
+from Pi. Fixture mode must bind to a loopback address.
+
+Run the live server after configuring the required environment variables:
 
 ```sh
 set -a; . ./.env; set +a
@@ -200,13 +227,16 @@ For the container deployment:
 
 ```sh
 cp .env.example .env
-# Fill in the GitLab, OAuth, session, and webhook settings.
+# Fill in the live GitLab, OAuth, and session settings; webhooks are optional.
 docker compose -f compose.yml up --build -d
 ```
 
-The server requires the group, read-only GitLab token, webhook secret, session
-key, and OAuth settings. The write token and Flux machine API credentials are
-optional. TLS should be terminated by a reverse proxy in production.
+Live mode requires the group, read-only GitLab token, session key, and OAuth
+settings. The webhook secret, write token, and Flux machine API credentials
+are optional. Fixture mode requires only the fixture file and a loopback
+address; GitLab credentials are ignored and it generates an ephemeral session
+key when one is not supplied. TLS should be terminated by a reverse proxy in
+production.
 
 ## Development checks
 

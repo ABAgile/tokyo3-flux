@@ -17,6 +17,7 @@ type Handler struct {
 	webhook         http.Handler
 	staleAfter      time.Duration
 	milestoneSource MilestoneSource
+	syncSource      SyncStatusSource
 	target          string
 	goal            string
 }
@@ -29,6 +30,11 @@ type MilestoneSource interface {
 	SnapshotForMilestone(context.Context, string, string, string) (domain.Snapshot, error)
 }
 
+// SyncStatusSource supplies operational metadata for the pull reconciler.
+type SyncStatusSource interface {
+	SyncStatus() domain.SyncStatus
+}
+
 // NewHandler constructs the HTTP routes for Flux using the reconciled snapshot
 // for the default view.
 func NewHandler(store state.Reader, webhook http.Handler, staleAfter time.Duration) http.Handler {
@@ -38,11 +44,18 @@ func NewHandler(store state.Reader, webhook http.Handler, staleAfter time.Durati
 // NewHandlerWithMilestones constructs the HTTP routes with active milestone
 // listing and per-request milestone selection enabled.
 func NewHandlerWithMilestones(store state.Reader, webhook http.Handler, staleAfter time.Duration, source MilestoneSource, target, goal string) http.Handler {
+	return NewHandlerWithSync(store, webhook, staleAfter, source, target, goal, nil)
+}
+
+// NewHandlerWithSync constructs the HTTP routes with milestone selection and
+// pull reconciliation status enabled.
+func NewHandlerWithSync(store state.Reader, webhook http.Handler, staleAfter time.Duration, source MilestoneSource, target, goal string, syncSource SyncStatusSource) http.Handler {
 	h := &Handler{
 		store:           store,
 		webhook:         webhook,
 		staleAfter:      staleAfter,
 		milestoneSource: source,
+		syncSource:      syncSource,
 		target:          strings.TrimSpace(target),
 		goal:            goal,
 	}
@@ -50,6 +63,7 @@ func NewHandlerWithMilestones(store state.Reader, webhook http.Handler, staleAft
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /readyz", h.ready)
 	mux.HandleFunc("GET /api/milestones", h.milestones)
+	mux.HandleFunc("GET /api/sync/status", h.syncStatus)
 	mux.HandleFunc("GET /api/today", h.today)
 	mux.Handle("POST /webhooks/gitlab", webhook)
 	return mux
@@ -65,6 +79,44 @@ func (h *Handler) ready(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func (h *Handler) syncStatus(w http.ResponseWriter, _ *http.Request) {
+	if h.syncSource == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"status": "unavailable",
+			"error":  "sync status is not configured",
+		})
+		return
+	}
+	status := h.syncSource.SyncStatus()
+	response := syncStatusResponse{
+		State:          string(status.State),
+		LastDurationMS: status.LastDuration.Milliseconds(),
+		LastError:      status.LastError,
+	}
+	if !status.LastStartedAt.IsZero() {
+		value := status.LastStartedAt
+		response.LastStartedAt = &value
+	}
+	if !status.LastCompletedAt.IsZero() {
+		value := status.LastCompletedAt
+		response.LastCompletedAt = &value
+	}
+	if snapshot, ok := h.store.Get(); ok && !snapshot.GeneratedAt.IsZero() {
+		value := snapshot.GeneratedAt
+		response.SnapshotGeneratedAt = &value
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+type syncStatusResponse struct {
+	State               string     `json:"state"`
+	LastStartedAt       *time.Time `json:"last_started_at,omitempty"`
+	LastCompletedAt     *time.Time `json:"last_completed_at,omitempty"`
+	LastDurationMS      int64      `json:"last_duration_ms"`
+	LastError           string     `json:"last_error,omitempty"`
+	SnapshotGeneratedAt *time.Time `json:"snapshot_generated_at,omitempty"`
 }
 
 type todayResponse struct {
@@ -221,6 +273,7 @@ func (h *Handler) writeSnapshot(w http.ResponseWriter, snapshot domain.Snapshot)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)

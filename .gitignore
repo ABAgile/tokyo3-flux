@@ -3,3 +3,4 @@
 
 bin/
 .flux-state/
+.flux-fixture-state/

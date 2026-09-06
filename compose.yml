@@ -3,11 +3,11 @@
 # Copy .env.example to .env, fill in the required values, then run:
 #   docker compose -f compose.yml up --build -d
 #
-# Configure the GitLab group webhook to POST to:
+# Webhooks are optional. If enabled later, configure GitLab to POST to:
 #   http(s)://<flux-host>/webhooks/gitlab
 # using FLUX_GITLAB_WEBHOOK_SECRET as its secret token. Enable issue,
-# merge-request, pipeline, push, and deployment events as appropriate.
-# If group webhooks are unavailable, configure the same hook on each project.
+# merge-request, and pipeline events as appropriate. If group webhooks are
+# unavailable, configure the same hook on each project.
 
 name: ${COMPOSE_PROJECT_NAME:-flux}
 
@@ -38,7 +38,8 @@ services:
       FLUX_GITLAB_GROUP: "${FLUX_GITLAB_GROUP:?set FLUX_GITLAB_GROUP}"
       FLUX_SPRINT_GOAL: "${FLUX_SPRINT_GOAL:-}"
       FLUX_GITLAB_BLOCKED_LABELS: "${FLUX_GITLAB_BLOCKED_LABELS:-status::blocked,blocked}"
-      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:?set FLUX_GITLAB_WEBHOOK_SECRET}"
+      # Optional event trigger; periodic pull reconciliation works without it.
+      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:-}"
 
       # Optional read-only machine credential for API-backed Pi tools.
       FLUX_API_TOKEN: "${FLUX_API_TOKEN:-}"

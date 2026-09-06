@@ -10,6 +10,27 @@ type Snapshot struct {
 	Sprint      Sprint    `json:"sprint"`
 }
 
+// SyncState describes the state of a pull reconciliation attempt.
+type SyncState string
+
+const (
+	SyncStateIdle    SyncState = "idle"
+	SyncStateQueued  SyncState = "queued"
+	SyncStateSyncing SyncState = "syncing"
+	SyncStateReady   SyncState = "ready"
+	SyncStateError   SyncState = "error"
+)
+
+// SyncStatus is operational metadata for the pull reconciler. It describes
+// attempts, not the source of truth; the snapshot remains the useful state.
+type SyncStatus struct {
+	State           SyncState
+	LastStartedAt   time.Time
+	LastCompletedAt time.Time
+	LastDuration    time.Duration
+	LastError       string
+}
+
 // Sprint contains the work currently being coordinated.
 type Sprint struct {
 	Name      string     `json:"name"`

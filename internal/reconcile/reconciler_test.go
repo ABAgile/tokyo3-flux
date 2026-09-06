@@ -30,6 +30,32 @@ func (f *fakeSource) callCount() int {
 	return f.calls
 }
 
+type blockingSource struct {
+	mu       sync.Mutex
+	calls    int
+	snapshot domain.Snapshot
+	started  chan struct{}
+	release  chan struct{}
+}
+
+func (b *blockingSource) Snapshot(context.Context, string, string) (domain.Snapshot, error) {
+	b.mu.Lock()
+	b.calls++
+	call := b.calls
+	b.mu.Unlock()
+	if call == 1 {
+		close(b.started)
+		<-b.release
+	}
+	return b.snapshot, nil
+}
+
+func (b *blockingSource) callCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls
+}
+
 type fakeStore struct {
 	mu       sync.Mutex
 	snapshot domain.Snapshot
@@ -71,8 +97,43 @@ func TestRunInitialAndTriggeredSync(t *testing.T) {
 	if got := store.putCount(); got != 1 {
 		t.Fatalf("initial puts = %d, want 1", got)
 	}
+	waitFor(t, func() bool { return reconciler.SyncStatus().State == domain.SyncStateReady })
+	initialStatus := reconciler.SyncStatus()
+	if initialStatus.LastStartedAt.IsZero() || initialStatus.LastCompletedAt.IsZero() || initialStatus.LastDuration < 0 || initialStatus.LastError != "" {
+		t.Fatalf("initial sync status = %+v", initialStatus)
+	}
 
 	reconciler.Trigger()
+	waitFor(t, func() bool { return source.callCount() == 2 })
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestTriggerDuringSyncIsNotLost(t *testing.T) {
+	source := &blockingSource{
+		snapshot: domain.Snapshot{Sprint: domain.Sprint{Name: "Flow 01"}},
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	reconciler, err := New(Config{
+		Source:   source,
+		Store:    &fakeStore{},
+		Target:   "tokyo3",
+		Interval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- reconciler.Run(ctx) }()
+	<-source.started
+	reconciler.Trigger()
+	close(source.release)
 	waitFor(t, func() bool { return source.callCount() == 2 })
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -105,6 +166,11 @@ func TestRunReportsSourceErrors(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("source error was not reported")
+	}
+	waitFor(t, func() bool { return reconciler.SyncStatus().State == domain.SyncStateError })
+	status := reconciler.SyncStatus()
+	if status.LastCompletedAt.IsZero() || status.LastDuration < 0 || status.LastError != "GitLab unavailable" {
+		t.Fatalf("error sync status = %+v", status)
 	}
 	cancel()
 	<-done

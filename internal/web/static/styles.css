@@ -215,6 +215,62 @@ button {
   white-space: nowrap;
 }
 
+.sync-status {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin-top: 11px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.sync-status-label {
+  color: var(--ink-faint);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.sync-status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ink-faint) 12%, transparent);
+}
+
+.sync-status[data-state="queued"] .sync-status-dot,
+.sync-status[data-state="syncing"] .sync-status-dot {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 14%, transparent);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.sync-status[data-state="ready"] .sync-status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.sync-status[data-state="error"] {
+  color: var(--red);
+}
+
+.sync-status[data-state="error"] .sync-status-dot {
+  background: var(--red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--red) 14%, transparent);
+}
+
+#sync-status-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .status-dot,
 .live-dot,
 .footer-mark {

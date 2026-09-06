@@ -174,6 +174,59 @@ func TestMilestonePickerAPI(t *testing.T) {
 	}
 }
 
+type fakeSyncStatusSource struct {
+	status domain.SyncStatus
+}
+
+func (f fakeSyncStatusSource) SyncStatus() domain.SyncStatus {
+	return f.status
+}
+
+func TestSyncStatus(t *testing.T) {
+	generatedAt := time.Date(2026, time.February, 2, 12, 0, 0, 0, time.UTC)
+	startedAt := generatedAt.Add(-time.Second)
+	completedAt := generatedAt
+	store := state.NewMemoryStore()
+	if err := store.Put(domain.Snapshot{GeneratedAt: generatedAt}); err != nil {
+		t.Fatalf("store.Put() error = %v", err)
+	}
+	handler := NewHandlerWithSync(
+		store,
+		http.NotFoundHandler(),
+		time.Hour,
+		nil,
+		"",
+		"",
+		fakeSyncStatusSource{status: domain.SyncStatus{
+			State:           domain.SyncStateError,
+			LastStartedAt:   startedAt,
+			LastCompletedAt: completedAt,
+			LastDuration:    1500 * time.Millisecond,
+			LastError:       "GitLab unavailable",
+		}},
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/sync/status", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("sync status = %d, want %d", response.Code, http.StatusOK)
+	}
+	var body struct {
+		State               string    `json:"state"`
+		LastStartedAt       time.Time `json:"last_started_at"`
+		LastCompletedAt     time.Time `json:"last_completed_at"`
+		LastDurationMS      int64     `json:"last_duration_ms"`
+		LastError           string    `json:"last_error"`
+		SnapshotGeneratedAt time.Time `json:"snapshot_generated_at"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode sync status: %v", err)
+	}
+	if body.State != string(domain.SyncStateError) || !body.LastStartedAt.Equal(startedAt) || !body.LastCompletedAt.Equal(completedAt) || body.LastDurationMS != 1500 || body.LastError != "GitLab unavailable" || !body.SnapshotGeneratedAt.Equal(generatedAt) {
+		t.Fatalf("sync status = %+v", body)
+	}
+}
+
 func TestHealth(t *testing.T) {
 	handler := NewHandler(state.NewMemoryStore(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), time.Hour)
 	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
