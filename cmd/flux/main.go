@@ -72,6 +72,7 @@ func runToday(args []string, stdout, stderr io.Writer) error {
 	goal := flags.String("goal", os.Getenv("FLUX_SPRINT_GOAL"), "optional sprint goal override; otherwise use the milestone description")
 	blockedLabels := flags.String("blocked-labels", envOrDefault("FLUX_GITLAB_BLOCKED_LABELS", "status::blocked,blocked"), "comma-separated labels treated as blocked")
 	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -97,6 +98,9 @@ func runToday(args []string, stdout, stderr io.Writer) error {
 		now = time.Now().UTC()
 	}
 	summary := domain.Summarize(snapshot.Sprint, now, *staleAfter)
+	if *jsonOutput {
+		return renderTodayJSON(stdout, snapshot, summary)
+	}
 	return renderToday(stdout, snapshot, summary)
 }
 
@@ -298,6 +302,78 @@ func splitList(value string) []string {
 	return result
 }
 
+type todayJSONResponse struct {
+	GeneratedAt time.Time        `json:"generated_at"`
+	Sprint      todayJSONSprint  `json:"sprint"`
+	Summary     todayJSONSummary `json:"summary"`
+}
+
+type todayJSONSprint struct {
+	Name string `json:"name"`
+	Goal string `json:"goal,omitempty"`
+}
+
+type todayJSONSummary struct {
+	Total  int             `json:"total"`
+	Counts map[string]int  `json:"counts"`
+	Items  []todayJSONItem `json:"items"`
+}
+
+type todayJSONItem struct {
+	ID            string                `json:"id"`
+	ProjectID     int                   `json:"project_id,omitempty"`
+	ProjectPath   string                `json:"project_path,omitempty"`
+	Title         string                `json:"title"`
+	State         domain.IssueState     `json:"state"`
+	Assignee      string                `json:"assignee,omitempty"`
+	Blocked       bool                  `json:"blocked"`
+	LastActivity  time.Time             `json:"last_activity"`
+	Status        domain.Status         `json:"status"`
+	MergeRequests []domain.MergeRequest `json:"merge_requests,omitempty"`
+}
+
+func renderTodayJSON(w io.Writer, snapshot domain.Snapshot, summary domain.Summary) error {
+	counts := make(map[string]int)
+	for _, status := range []domain.Status{
+		domain.StatusTodo,
+		domain.StatusInProgress,
+		domain.StatusAwaitingReview,
+		domain.StatusPipelineFailed,
+		domain.StatusBlocked,
+		domain.StatusStale,
+		domain.StatusDone,
+	} {
+		counts[string(status)] = summary.Count(status)
+	}
+	response := todayJSONResponse{
+		GeneratedAt: snapshot.GeneratedAt,
+		Sprint: todayJSONSprint{
+			Name: snapshot.Sprint.Name,
+			Goal: snapshot.Sprint.Goal,
+		},
+		Summary: todayJSONSummary{
+			Total:  summary.Total(),
+			Counts: counts,
+			Items:  make([]todayJSONItem, 0, len(summary.Items)),
+		},
+	}
+	for _, item := range summary.Items {
+		response.Summary.Items = append(response.Summary.Items, todayJSONItem{
+			ID:            item.Item.ID,
+			ProjectID:     item.Item.ProjectID,
+			ProjectPath:   item.Item.ProjectPath,
+			Title:         item.Item.Title,
+			State:         item.Item.State,
+			Assignee:      item.Item.Assignee,
+			Blocked:       item.Item.Blocked,
+			LastActivity:  item.Item.LastActivity,
+			Status:        item.Status,
+			MergeRequests: item.Item.MergeRequests,
+		})
+	}
+	return json.NewEncoder(w).Encode(response)
+}
+
 func renderToday(w io.Writer, snapshot domain.Snapshot, summary domain.Summary) error {
 	if _, err := fmt.Fprintf(w, "Sprint: %s\n", snapshot.Sprint.Name); err != nil {
 		return err
@@ -329,8 +405,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "flux - a minimal, fluid SDLC cockpit")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  flux today --input snapshot.json [--stale-after 168h]")
-	fmt.Fprintln(w, "  flux today --gitlab-url URL --gitlab-group GROUP")
+	fmt.Fprintln(w, "  flux today --input snapshot.json [--stale-after 168h] [--json]")
+	fmt.Fprintln(w, "  flux today --gitlab-url URL --gitlab-group GROUP [--json]")
 	fmt.Fprintln(w, "  flux serve --addr 127.0.0.1:8080")
 	fmt.Fprintln(w, "  flux version")
 	fmt.Fprintln(w, "")
