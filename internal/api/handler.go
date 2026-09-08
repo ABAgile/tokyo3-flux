@@ -3,16 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	"abagile.com/tokyo3/flux/internal/domain"
-	fluxreport "abagile.com/tokyo3/flux/internal/report"
 	"abagile.com/tokyo3/flux/internal/state"
 )
 
@@ -23,9 +18,6 @@ type Handler struct {
 	staleAfter      time.Duration
 	milestoneSource MilestoneSource
 	syncSource      SyncStatusSource
-	historySource   state.HistoryReader
-	contextSource   state.ContextReader
-	reportService   *fluxreport.Service
 	target          string
 	goal            string
 }
@@ -46,45 +38,24 @@ type SyncStatusSource interface {
 // NewHandler constructs the HTTP routes for Flux using the reconciled snapshot
 // for the default view.
 func NewHandler(store state.Reader, webhook http.Handler, staleAfter time.Duration) http.Handler {
-	return NewHandlerWithMilestonesAndHistory(store, webhook, staleAfter, nil, "", "", nil, nil)
+	return NewHandlerWithMilestones(store, webhook, staleAfter, nil, "", "")
 }
 
 // NewHandlerWithMilestones constructs the HTTP routes with active milestone
 // listing and per-request milestone selection enabled.
 func NewHandlerWithMilestones(store state.Reader, webhook http.Handler, staleAfter time.Duration, source MilestoneSource, target, goal string) http.Handler {
-	return NewHandlerWithMilestonesAndHistory(store, webhook, staleAfter, source, target, goal, nil, nil)
+	return NewHandlerWithSync(store, webhook, staleAfter, source, target, goal, nil)
 }
 
 // NewHandlerWithSync constructs the HTTP routes with milestone selection and
 // pull reconciliation status enabled.
 func NewHandlerWithSync(store state.Reader, webhook http.Handler, staleAfter time.Duration, source MilestoneSource, target, goal string, syncSource SyncStatusSource) http.Handler {
-	return NewHandlerWithMilestonesAndHistory(store, webhook, staleAfter, source, target, goal, syncSource, nil)
-}
-
-// NewHandlerWithMilestonesAndHistory constructs the read API with optional
-// milestone, sync-status, historical change, and evidence-based report views.
-func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler, staleAfter time.Duration, source MilestoneSource, target, goal string, syncSource SyncStatusSource, historySource state.HistoryReader) http.Handler {
-	if historySource == nil {
-		historySource, _ = store.(state.HistoryReader)
-	}
-	contextSource := contextReader(store)
-	flowSource, _ := store.(state.FlowReader)
-	reportService, _ := fluxreport.New(fluxreport.Config{
-		Snapshot:   store,
-		History:    historySource,
-		Flow:       flowSource,
-		Context:    contextSource,
-		StaleAfter: staleAfter,
-	})
 	h := &Handler{
 		store:           store,
 		webhook:         webhook,
 		staleAfter:      staleAfter,
 		milestoneSource: source,
 		syncSource:      syncSource,
-		historySource:   historySource,
-		contextSource:   contextSource,
-		reportService:   reportService,
 		target:          strings.TrimSpace(target),
 		goal:            goal,
 	}
@@ -93,14 +64,6 @@ func NewHandlerWithMilestonesAndHistory(store state.Reader, webhook http.Handler
 	mux.HandleFunc("GET /readyz", h.ready)
 	mux.HandleFunc("GET /api/milestones", h.milestones)
 	mux.HandleFunc("GET /api/sync/status", h.syncStatus)
-	mux.HandleFunc("GET /api/changes", h.changes)
-	mux.HandleFunc("GET /api/items/", h.itemHistory)
-	mux.HandleFunc("GET /api/snapshots/", h.snapshotAt)
-	mux.HandleFunc("GET /api/flow", h.flow)
-	mux.HandleFunc("GET /api/reports", h.reportIndex)
-	mux.HandleFunc("GET /api/reports/", h.reportView)
-	mux.HandleFunc("GET /api/context", h.context)
-	mux.HandleFunc("GET /api/context/", h.contextHistory)
 	mux.HandleFunc("GET /api/today", h.today)
 	mux.Handle("POST /webhooks/gitlab", webhook)
 	return mux
@@ -156,57 +119,6 @@ type syncStatusResponse struct {
 	SnapshotGeneratedAt *time.Time `json:"snapshot_generated_at,omitempty"`
 }
 
-type changesResponse struct {
-	Status           string                `json:"status"`
-	HistoryStartedAt *time.Time            `json:"history_started_at,omitempty"`
-	LastObservedAt   *time.Time            `json:"last_observed_at,omitempty"`
-	Observations     int                   `json:"observations"`
-	Changes          []state.Change        `json:"changes"`
-	Coverage         state.HistoryCoverage `json:"coverage"`
-}
-
-type snapshotResponse struct {
-	Status string `json:"status"`
-	state.SnapshotResult
-}
-
-type flowResponse struct {
-	Status string `json:"status"`
-	state.FlowResult
-}
-
-type contextResponse struct {
-	Status string `json:"status"`
-	state.ContextResult
-}
-
-type contextHistoryResponse struct {
-	Status string `json:"status"`
-	state.ContextHistoryResult
-}
-
-type reportResponse struct {
-	Status string `json:"status"`
-	Report any    `json:"report"`
-}
-
-type reportIndexEntry struct {
-	Kind string `json:"kind"`
-	Path string `json:"path"`
-}
-
-type reportIndexResponse struct {
-	Status  string             `json:"status"`
-	Reports []reportIndexEntry `json:"reports"`
-}
-
-type reportQuery struct {
-	From      time.Time
-	Until     time.Time
-	Limit     int
-	Milestone string
-}
-
 type todayResponse struct {
 	GeneratedAt time.Time      `json:"generated_at"`
 	Sprint      sprintResponse `json:"sprint"`
@@ -232,412 +144,6 @@ type itemResponse struct {
 	LastActivity  time.Time             `json:"last_activity"`
 	Status        domain.Status         `json:"status"`
 	MergeRequests []domain.MergeRequest `json:"merge_requests,omitempty"`
-}
-
-func contextReader(store state.Reader) state.ContextReader {
-	reader, _ := store.(state.ContextReader)
-	return reader
-}
-
-func (h *Handler) changes(w http.ResponseWriter, r *http.Request) {
-	if h.historySource == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "history is not configured",
-		})
-		return
-	}
-	query, err := parseChangeQuery(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{
-			"status": "invalid",
-			"error":  err.Error(),
-		})
-		return
-	}
-	result, err := h.historySource.Changes(query)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"status": "unavailable",
-			"error":  "history lookup failed",
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, changesResponse{
-		Status:           "ok",
-		HistoryStartedAt: result.HistoryStartedAt,
-		LastObservedAt:   result.LastObservedAt,
-		Observations:     result.Observations,
-		Changes:          result.Changes,
-		Coverage:         result.Coverage,
-	})
-}
-
-func (h *Handler) itemHistory(w http.ResponseWriter, r *http.Request) {
-	if h.historySource == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "history is not configured",
-		})
-		return
-	}
-	itemID, err := pathValue(r, "/api/items/", "/history")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	query, err := parseChangeQuery(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	if _, supplied := r.URL.Query()["include_baseline"]; !supplied {
-		query.IncludeBaseline = true
-	}
-	query.ItemID = itemID
-	result, err := h.historySource.Changes(query)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "unavailable", "error": "history lookup failed"})
-		return
-	}
-	writeJSON(w, http.StatusOK, changesResponse{
-		Status:           "ok",
-		HistoryStartedAt: result.HistoryStartedAt,
-		LastObservedAt:   result.LastObservedAt,
-		Observations:     result.Observations,
-		Changes:          result.Changes,
-		Coverage:         result.Coverage,
-	})
-}
-
-func (h *Handler) reportIndex(w http.ResponseWriter, _ *http.Request) {
-	if h.reportService == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "reports are not configured",
-		})
-		return
-	}
-	entries := make([]reportIndexEntry, 0, len(fluxreport.Kinds()))
-	for _, kind := range fluxreport.Kinds() {
-		entries = append(entries, reportIndexEntry{Kind: string(kind), Path: "/api/reports/" + kind.PathName()})
-	}
-	writeJSON(w, http.StatusOK, reportIndexResponse{Status: "ok", Reports: entries})
-}
-
-func (h *Handler) reportView(w http.ResponseWriter, r *http.Request) {
-	if h.reportService == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "reports are not configured",
-		})
-		return
-	}
-	rawKind, err := pathValue(r, "/api/reports/", "")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	kind, err := fluxreport.ParseKind(rawKind)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	query, err := parseReportQuery(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	var snapshot domain.Snapshot
-	if query.Milestone != "" {
-		if h.milestoneSource == nil || h.target == "" {
-			writeJSON(w, http.StatusNotImplemented, map[string]string{
-				"status": "unavailable",
-				"error":  "milestone selection is not configured",
-			})
-			return
-		}
-		snapshot, err = h.milestoneSource.SnapshotForMilestone(r.Context(), h.target, query.Milestone, h.goal)
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]string{
-				"status": "unavailable",
-				"error":  "GitLab milestone snapshot failed",
-			})
-			return
-		}
-	} else {
-		var ok bool
-		snapshot, ok = h.store.Get()
-		if !ok {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "syncing"})
-			return
-		}
-	}
-	value, err := h.reportService.GenerateSnapshot(snapshot, kind, fluxreport.Query{
-		From:  query.From,
-		Until: query.Until,
-		Limit: query.Limit,
-	})
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, fluxreport.ErrSnapshotUnavailable) {
-			status = http.StatusServiceUnavailable
-		}
-		writeJSON(w, status, map[string]string{"status": "unavailable", "error": "report generation failed"})
-		return
-	}
-	writeJSON(w, http.StatusOK, reportResponse{Status: "ok", Report: value})
-}
-
-func parseReportQuery(r *http.Request) (reportQuery, error) {
-	values := r.URL.Query()
-	from, err := parseQueryTime(values.Get("from"), "from")
-	if err != nil {
-		return reportQuery{}, err
-	}
-	until, err := parseQueryTime(values.Get("to"), "to")
-	if err != nil {
-		return reportQuery{}, err
-	}
-	if !from.IsZero() && !until.IsZero() && !until.After(from) {
-		return reportQuery{}, errors.New("to must be after from")
-	}
-	limit := 0
-	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > fluxreport.MaxLimit {
-			return reportQuery{}, fmt.Errorf("limit must be between 1 and %d", fluxreport.MaxLimit)
-		}
-	}
-	milestone := strings.TrimSpace(values.Get("milestone"))
-	if len([]rune(milestone)) > 200 {
-		return reportQuery{}, errors.New("milestone must be at most 200 characters")
-	}
-	return reportQuery{
-		From:      from,
-		Until:     until,
-		Limit:     limit,
-		Milestone: milestone,
-	}, nil
-}
-
-func (h *Handler) context(w http.ResponseWriter, r *http.Request) {
-	if h.contextSource == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "human context is not configured",
-		})
-		return
-	}
-	query, err := parseContextQuery(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	result, err := h.contextSource.ListContext(query)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "unavailable", "error": "human context lookup failed"})
-		return
-	}
-	writeJSON(w, http.StatusOK, contextResponse{Status: "ok", ContextResult: result})
-}
-
-func (h *Handler) contextHistory(w http.ResponseWriter, r *http.Request) {
-	if h.contextSource == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "human context is not configured",
-		})
-		return
-	}
-	id, err := pathValue(r, "/api/context/", "")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	result, err := h.contextSource.ContextHistory(id)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, state.ErrContextNotFound) {
-			status = http.StatusNotFound
-		}
-		writeJSON(w, status, map[string]string{"status": "unavailable", "error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, contextHistoryResponse{Status: "ok", ContextHistoryResult: result})
-}
-
-func parseContextQuery(r *http.Request) (state.ContextQuery, error) {
-	values := r.URL.Query()
-	since, err := parseQueryTime(values.Get("from"), "from")
-	if err != nil {
-		return state.ContextQuery{}, err
-	}
-	until, err := parseQueryTime(values.Get("to"), "to")
-	if err != nil {
-		return state.ContextQuery{}, err
-	}
-	if !since.IsZero() && !until.IsZero() && !until.After(since) {
-		return state.ContextQuery{}, errors.New("to must be after from")
-	}
-	limit := 0
-	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > state.MaxContextLimit {
-			return state.ContextQuery{}, fmt.Errorf("limit must be between 1 and %d", state.MaxContextLimit)
-		}
-	}
-	return state.ContextQuery{
-		Since:  since,
-		Until:  until,
-		ItemID: strings.TrimSpace(values.Get("item_id")),
-		Kind:   strings.TrimSpace(values.Get("kind")),
-		Limit:  limit,
-	}, nil
-}
-
-func (h *Handler) snapshotAt(w http.ResponseWriter, r *http.Request) {
-	reader, ok := h.historySource.(state.SnapshotReader)
-	if !ok {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "historical snapshots are not configured",
-		})
-		return
-	}
-	rawTimestamp, err := pathValue(r, "/api/snapshots/", "")
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	at, err := time.Parse(time.RFC3339Nano, rawTimestamp)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": "snapshot timestamp must be RFC3339"})
-		return
-	}
-	result, err := reader.SnapshotAt(at)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if strings.HasPrefix(err.Error(), "no historical observation") {
-			status = http.StatusNotFound
-		}
-		writeJSON(w, status, map[string]string{"status": "unavailable", "error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, snapshotResponse{Status: "ok", SnapshotResult: result})
-}
-
-func (h *Handler) flow(w http.ResponseWriter, r *http.Request) {
-	reader, ok := h.historySource.(state.FlowReader)
-	if !ok {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{
-			"status": "unavailable",
-			"error":  "flow history is not configured",
-		})
-		return
-	}
-	query, err := parseFlowQuery(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"status": "invalid", "error": err.Error()})
-		return
-	}
-	result, err := reader.Flow(query)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"status": "unavailable", "error": "flow lookup failed"})
-		return
-	}
-	writeJSON(w, http.StatusOK, flowResponse{Status: "ok", FlowResult: result})
-}
-
-func pathValue(r *http.Request, prefix, suffix string) (string, error) {
-	path := r.URL.EscapedPath()
-	if !strings.HasPrefix(path, prefix) || (suffix != "" && !strings.HasSuffix(path, suffix)) {
-		return "", errors.New("invalid resource path")
-	}
-	value := strings.TrimPrefix(path, prefix)
-	if suffix != "" {
-		value = strings.TrimSuffix(value, suffix)
-	}
-	if value == "" || strings.Contains(value, "/") && suffix == "" {
-		// A slash in a timestamp is never valid. Encoded slashes remain
-		// escaped until PathUnescape below for item IDs.
-		return "", errors.New("resource identifier is required")
-	}
-	decoded, err := url.PathUnescape(value)
-	if err != nil || strings.TrimSpace(decoded) == "" {
-		return "", errors.New("resource identifier must be URL-encoded")
-	}
-	return strings.TrimSpace(decoded), nil
-}
-
-func parseFlowQuery(r *http.Request) (state.FlowQuery, error) {
-	values := r.URL.Query()
-	from, err := parseQueryTime(values.Get("from"), "from")
-	if err != nil {
-		return state.FlowQuery{}, err
-	}
-	until, err := parseQueryTime(values.Get("to"), "to")
-	if err != nil {
-		return state.FlowQuery{}, err
-	}
-	if !from.IsZero() && !until.IsZero() && !until.After(from) {
-		return state.FlowQuery{}, errors.New("to must be after from")
-	}
-	return state.FlowQuery{
-		From:      from,
-		Until:     until,
-		ItemID:    strings.TrimSpace(values.Get("item_id")),
-		Milestone: strings.TrimSpace(values.Get("milestone")),
-	}, nil
-}
-
-func parseChangeQuery(r *http.Request) (state.ChangeQuery, error) {
-	values := r.URL.Query()
-	since, err := parseQueryTime(values.Get("since"), "since")
-	if err != nil {
-		return state.ChangeQuery{}, err
-	}
-	until, err := parseQueryTime(values.Get("until"), "until")
-	if err != nil {
-		return state.ChangeQuery{}, err
-	}
-	if !since.IsZero() && !until.IsZero() && !until.After(since) {
-		return state.ChangeQuery{}, errors.New("until must be after since")
-	}
-	limit := 0
-	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > state.MaxHistoryLimit {
-			return state.ChangeQuery{}, fmt.Errorf("limit must be between 1 and %d", state.MaxHistoryLimit)
-		}
-	}
-	includeBaseline := false
-	if raw := strings.TrimSpace(values.Get("include_baseline")); raw != "" {
-		includeBaseline, err = strconv.ParseBool(raw)
-		if err != nil {
-			return state.ChangeQuery{}, errors.New("include_baseline must be true or false")
-		}
-	}
-	return state.ChangeQuery{
-		Since:           since,
-		Until:           until,
-		ItemID:          strings.TrimSpace(values.Get("item_id")),
-		Milestone:       strings.TrimSpace(values.Get("milestone")),
-		Limit:           limit,
-		IncludeBaseline: includeBaseline,
-	}, nil
-}
-
-func parseQueryTime(raw, name string) (time.Time, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return time.Time{}, nil
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("%s must be RFC3339", name)
-	}
-	return parsed, nil
 }
 
 func (h *Handler) milestones(w http.ResponseWriter, r *http.Request) {

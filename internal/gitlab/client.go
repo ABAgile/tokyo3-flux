@@ -312,78 +312,52 @@ func (c *Client) SnapshotForMilestone(ctx context.Context, target, name, goal st
 	return c.snapshotForMilestone(ctx, target, selected, goal)
 }
 
-// SnapshotSince returns a complete best-effort normalized view by merging
-// issues changed after after into the previous view. A periodic full scan is
-// still required because an updated issue that leaves the milestone is not
-// returned by GitLab's milestone-filtered incremental query.
-func (c *Client) SnapshotSince(ctx context.Context, target, goal string, after time.Time, previous domain.Snapshot) (domain.Snapshot, error) {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return domain.Snapshot{}, errors.New("GitLab group is required")
-	}
-	milestones, err := c.listMilestones(ctx, target)
-	if err != nil {
-		return domain.Snapshot{}, err
-	}
-	milestone, err := selectCurrentMilestone(milestones, time.Now().UTC())
-	if err != nil {
-		return domain.Snapshot{}, err
-	}
-	if strings.TrimSpace(previous.Sprint.Name) != milestone.Title {
-		return c.snapshotForMilestone(ctx, target, milestone, goal)
-	}
-	issues, err := c.listIssuesSince(ctx, target, milestone.Title, after)
-	if err != nil {
-		return domain.Snapshot{}, err
-	}
-	items := make(map[string]domain.WorkItem, len(previous.Sprint.WorkItems)+len(issues))
-	for _, item := range previous.Sprint.WorkItems {
-		items[workItemKey(item.ProjectID, issueIIDFromIdentifier(item.ID))] = cloneWorkItem(item)
-	}
-	for _, issue := range issues {
-		item, err := c.workItem(ctx, issue)
-		if err != nil {
-			return domain.Snapshot{}, err
-		}
-		items[workItemKey(issue.ProjectID, issue.IID)] = item
-	}
-	workItems := make([]domain.WorkItem, 0, len(items))
-	for _, item := range items {
-		workItems = append(workItems, item)
-	}
-	sort.SliceStable(workItems, func(i, j int) bool {
-		return workItemKey(workItems[i].ProjectID, issueIIDFromIdentifier(workItems[i].ID)) < workItemKey(workItems[j].ProjectID, issueIIDFromIdentifier(workItems[j].ID))
-	})
-	if strings.TrimSpace(goal) == "" {
-		goal = milestone.Description
-	}
-	return domain.Snapshot{
-		GeneratedAt: time.Now().UTC(),
-		Sprint: domain.Sprint{
-			Name:      milestone.Title,
-			Goal:      goal,
-			WorkItems: workItems,
-		},
-	}, nil
-}
-
 func (c *Client) snapshotForMilestone(ctx context.Context, target string, milestone milestoneResponse, goal string) (domain.Snapshot, error) {
 	issues, err := c.listIssues(ctx, target, milestone.Title)
 	if err != nil {
 		return domain.Snapshot{}, err
 	}
-	return c.snapshotForIssues(ctx, milestone, goal, issues)
-}
 
-func (c *Client) snapshotForIssues(ctx context.Context, milestone milestoneResponse, goal string, issues []issueResponse) (domain.Snapshot, error) {
 	workItems := make([]domain.WorkItem, 0, len(issues))
 	for _, issue := range issues {
-		item, err := c.workItem(ctx, issue)
+		if issue.ProjectID <= 0 {
+			return domain.Snapshot{}, fmt.Errorf("group issue #%d has no project ID", issue.IID)
+		}
+		projectTarget := strconv.Itoa(issue.ProjectID)
+		item := domain.WorkItem{
+			ID:           issueIdentifier(issue),
+			ProjectID:    issue.ProjectID,
+			ProjectPath:  issueProjectPath(issue),
+			Title:        issue.Title,
+			State:        issueState(issue.State),
+			Assignee:     firstIdentityName(issue.Assignees),
+			Labels:       append([]string(nil), issue.Labels...),
+			Blocked:      c.hasBlockedLabel(issue.Labels),
+			LastActivity: issue.UpdatedAt,
+		}
+
+		mergeRequests, err := c.listRelatedMergeRequests(ctx, projectTarget, issue.IID)
 		if err != nil {
-			return domain.Snapshot{}, err
+			return domain.Snapshot{}, fmt.Errorf("issue #%d: %w", issue.IID, err)
+		}
+		item.MergeRequests = make([]domain.MergeRequest, 0, len(mergeRequests))
+		for _, request := range mergeRequests {
+			detail, err := c.getMergeRequest(ctx, projectTarget, request.IID)
+			if err != nil {
+				return domain.Snapshot{}, fmt.Errorf("merge request !%d: %w", request.IID, err)
+			}
+			item.MergeRequests = append(item.MergeRequests, domain.MergeRequest{
+				ID:              fmt.Sprintf("!%d", detail.IID),
+				Title:           detail.Title,
+				State:           mergeRequestState(detail.State),
+				Draft:           detail.Draft || detail.WorkInProgress,
+				ReviewRequested: len(detail.Reviewers) > 0,
+				Pipeline:        pipelineStatus(detail.HeadPipeline),
+			})
 		}
 		workItems = append(workItems, item)
 	}
+
 	if strings.TrimSpace(goal) == "" {
 		goal = milestone.Description
 	}
@@ -395,67 +369,6 @@ func (c *Client) snapshotForIssues(ctx context.Context, milestone milestoneRespo
 			WorkItems: workItems,
 		},
 	}, nil
-}
-
-func (c *Client) workItem(ctx context.Context, issue issueResponse) (domain.WorkItem, error) {
-	if issue.ProjectID <= 0 {
-		return domain.WorkItem{}, fmt.Errorf("group issue #%d has no project ID", issue.IID)
-	}
-	projectTarget := strconv.Itoa(issue.ProjectID)
-	item := domain.WorkItem{
-		ID:           issueIdentifier(issue),
-		ProjectID:    issue.ProjectID,
-		ProjectPath:  issueProjectPath(issue),
-		Title:        issue.Title,
-		State:        issueState(issue.State),
-		Assignee:     firstIdentityName(issue.Assignees),
-		Labels:       append([]string(nil), issue.Labels...),
-		Blocked:      c.hasBlockedLabel(issue.Labels),
-		LastActivity: issue.UpdatedAt,
-	}
-	mergeRequests, err := c.listRelatedMergeRequests(ctx, projectTarget, issue.IID)
-	if err != nil {
-		return domain.WorkItem{}, fmt.Errorf("issue #%d: %w", issue.IID, err)
-	}
-	item.MergeRequests = make([]domain.MergeRequest, 0, len(mergeRequests))
-	for _, request := range mergeRequests {
-		detail, err := c.getMergeRequest(ctx, projectTarget, request.IID)
-		if err != nil {
-			return domain.WorkItem{}, fmt.Errorf("merge request !%d: %w", request.IID, err)
-		}
-		item.MergeRequests = append(item.MergeRequests, domain.MergeRequest{
-			ID:              fmt.Sprintf("!%d", detail.IID),
-			Title:           detail.Title,
-			State:           mergeRequestState(detail.State),
-			Draft:           detail.Draft || detail.WorkInProgress,
-			ReviewRequested: len(detail.Reviewers) > 0,
-			Pipeline:        pipelineStatus(detail.HeadPipeline),
-		})
-	}
-	return item, nil
-}
-
-func cloneWorkItem(item domain.WorkItem) domain.WorkItem {
-	item.Labels = append([]string(nil), item.Labels...)
-	item.MergeRequests = append([]domain.MergeRequest(nil), item.MergeRequests...)
-	return item
-}
-
-func workItemKey(projectID, iid int) string {
-	return fmt.Sprintf("project/%d#%d", projectID, iid)
-}
-
-func issueIIDFromIdentifier(id string) int {
-	id = strings.TrimSpace(id)
-	separator := strings.LastIndexByte(id, '#')
-	if separator < 0 || separator == len(id)-1 {
-		return 0
-	}
-	iid, err := strconv.Atoi(id[separator+1:])
-	if err != nil {
-		return 0
-	}
-	return iid
 }
 
 type milestoneResponse struct {
@@ -636,14 +549,6 @@ func earliestMilestone(candidates []milestoneCandidate) milestoneCandidate {
 }
 
 func (c *Client) listIssues(ctx context.Context, target, milestone string) ([]issueResponse, error) {
-	return c.listIssuesQuery(ctx, target, milestone, "")
-}
-
-func (c *Client) listIssuesSince(ctx context.Context, target, milestone string, after time.Time) ([]issueResponse, error) {
-	return c.listIssuesQuery(ctx, target, milestone, after.UTC().Format(time.RFC3339Nano))
-}
-
-func (c *Client) listIssuesQuery(ctx context.Context, target, milestone, updatedAfter string) ([]issueResponse, error) {
 	path := "/groups/" + url.PathEscape(target) + "/issues"
 	query := url.Values{
 		"milestone": {milestone},
@@ -652,9 +557,6 @@ func (c *Client) listIssuesQuery(ctx context.Context, target, milestone, updated
 		"state":     {"all"},
 	}
 	query.Set("include_subgroups", "true")
-	if strings.TrimSpace(updatedAfter) != "" {
-		query.Set("updated_after", updatedAfter)
-	}
 	return list[issueResponse](ctx, c, path, query)
 }
 

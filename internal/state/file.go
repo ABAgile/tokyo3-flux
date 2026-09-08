@@ -14,169 +14,64 @@ import (
 )
 
 const (
-	snapshotFilename     = "snapshot.json"
-	eventsFilename       = "events.jsonl"
-	auditFilename        = "audit.jsonl"
-	historyFilename      = "history.jsonl"
-	syncRunsFilename     = "sync_runs.jsonl"
-	contextFilename      = "context.jsonl"
-	contextAuditFilename = "context_audit.jsonl"
+	snapshotFilename = "snapshot.json"
+	eventsFilename   = "events.jsonl"
+	auditFilename    = "audit.jsonl"
 )
 
-const defaultHistoryStaleAfter = 7 * 24 * time.Hour
-
-// FileStoreOptions controls the durable file-backed read model.
-type FileStoreOptions struct {
-	StaleAfter       time.Duration
-	HistoryRetention time.Duration
-	ContextRetention time.Duration
-}
-
 // FileStore is a small, single-process durable store for the first Flux
-// deployment. Snapshot replacement is atomic; derived history, webhook,
-// mutation, and human-context metadata are persisted as JSON Lines. It is
-// intentionally replaceable by a database-backed Store later.
+// deployment. Snapshot replacement is atomic; webhook and mutation metadata are
+// appended as JSON Lines. It is intentionally replaceable by a database-backed
+// Store later.
 type FileStore struct {
-	mu               sync.RWMutex
-	directory        string
-	staleAfter       time.Duration
-	snapshot         domain.Snapshot
-	populated        bool
-	latest           map[string]historyVersion
-	historyStartedAt time.Time
-	lastObservedAt   time.Time
-	observationCount int
-	historyRetention time.Duration
-	contextRetention time.Duration
-	syncRuns         []domain.SyncRun
-	sourceWatermark  time.Time
-	lastFullSyncAt   time.Time
-	contextEntries   map[string][]domain.HumanContext
-	contextAudits    map[string][]ContextAuditEvent
-	contextStartedAt time.Time
-	lastContextAt    time.Time
+	mu        sync.RWMutex
+	directory string
+	snapshot  domain.Snapshot
+	populated bool
 }
 
 // OpenFileStore creates or opens a store rooted at directory. An existing
 // snapshot is loaded into memory so the status API can serve cached data while
 // GitLab is temporarily unavailable.
 func OpenFileStore(directory string) (*FileStore, error) {
-	return OpenFileStoreWithOptions(directory, FileStoreOptions{StaleAfter: defaultHistoryStaleAfter})
-}
-
-// OpenFileStoreWithStaleAfter opens a durable store and uses staleAfter when
-// recording derived status changes in historical work-item revisions.
-func OpenFileStoreWithStaleAfter(directory string, staleAfter time.Duration) (*FileStore, error) {
-	return OpenFileStoreWithOptions(directory, FileStoreOptions{StaleAfter: staleAfter})
-}
-
-// OpenFileStoreWithOptions opens a durable file-backed read model.
-func OpenFileStoreWithOptions(directory string, options FileStoreOptions) (*FileStore, error) {
 	directory = strings.TrimSpace(directory)
 	if directory == "" {
 		return nil, errors.New("state directory is required")
-	}
-	if options.HistoryRetention < 0 {
-		return nil, errors.New("history retention must not be negative")
-	}
-	if options.ContextRetention < 0 {
-		return nil, errors.New("context retention must not be negative")
 	}
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("create state directory: %w", err)
 	}
 
-	store := &FileStore{
-		directory:        directory,
-		staleAfter:       options.StaleAfter,
-		historyRetention: options.HistoryRetention,
-		contextRetention: options.ContextRetention,
-		latest:           make(map[string]historyVersion),
-		contextEntries:   make(map[string][]domain.HumanContext),
-		contextAudits:    make(map[string][]ContextAuditEvent),
-	}
+	store := &FileStore{directory: directory}
 	data, err := os.ReadFile(store.snapshotPath())
-	if err == nil {
-		if err := json.Unmarshal(data, &store.snapshot); err != nil {
-			return nil, fmt.Errorf("decode snapshot: %w", err)
-		}
-		store.snapshot = cloneSnapshot(store.snapshot)
-		store.populated = true
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) {
+		return store, nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("read snapshot: %w", err)
 	}
-	if err := store.loadSyncRuns(); err != nil {
-		return nil, fmt.Errorf("read sync runs: %w", err)
+	if err := json.Unmarshal(data, &store.snapshot); err != nil {
+		return nil, fmt.Errorf("decode snapshot: %w", err)
 	}
-	if err := store.loadHistory(); err != nil {
-		return nil, fmt.Errorf("read history: %w", err)
-	}
-	if err := store.loadContext(); err != nil {
-		return nil, fmt.Errorf("read context: %w", err)
-	}
-	if err := store.loadContextAudits(); err != nil {
-		return nil, fmt.Errorf("read context audit: %w", err)
-	}
-	if store.historyRetention > 0 {
-		now := time.Now().UTC()
-		if err := store.pruneHistoryLocked(now); err != nil {
-			return nil, fmt.Errorf("prune history: %w", err)
-		}
-		if err := store.pruneSyncRunsLocked(now); err != nil {
-			return nil, fmt.Errorf("prune sync runs: %w", err)
-		}
-	}
-	if store.contextRetention > 0 {
-		if err := store.pruneContextLocked(time.Now().UTC()); err != nil {
-			return nil, fmt.Errorf("prune context: %w", err)
-		}
-	}
+	store.snapshot = cloneSnapshot(store.snapshot)
+	store.populated = true
 	return store, nil
 }
 
-// Put atomically replaces the durable and in-memory snapshot, then records the
-// derived historical observation.
+// Put atomically replaces the durable and in-memory snapshot.
 func (s *FileStore) Put(snapshot domain.Snapshot) error {
-	return s.PutObserved(snapshot, "", time.Now().UTC())
-}
-
-// PutObserved stores a snapshot with the reconciliation provenance attached to
-// its history records.
-func (s *FileStore) PutObserved(snapshot domain.Snapshot, syncRunID string, observedAt time.Time) error {
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode snapshot: %w", err)
 	}
-	if observedAt.IsZero() {
-		observedAt = time.Now().UTC()
-	}
-	observedAt = observedAt.UTC()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	records, nextLatest := s.historyRecordsLocked(snapshot, observedAt, strings.TrimSpace(syncRunID))
 	if err := writeAtomic(s.snapshotPath(), data, 0o600); err != nil {
 		return fmt.Errorf("write snapshot: %w", err)
 	}
 	s.snapshot = cloneSnapshot(snapshot)
 	s.populated = true
-	if err := appendHistoryRecordsLocked(s.historyPath(), records); err != nil {
-		return err
-	}
-	s.latest = nextLatest
-	s.observationCount++
-	if s.historyStartedAt.IsZero() {
-		s.historyStartedAt = observedAt
-	}
-	s.lastObservedAt = observedAt
-	if watermark := maxSourceUpdatedAt(snapshot); watermark.After(s.sourceWatermark) {
-		s.sourceWatermark = watermark
-	}
-	if s.historyRetention > 0 {
-		if err := s.pruneHistoryLocked(observedAt); err != nil {
-			return fmt.Errorf("prune history: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -213,59 +108,6 @@ func (s *FileStore) RecordAudit(event AuditEvent) error {
 	return s.appendJSONLine(s.auditPath(), event, "audit")
 }
 
-// RecordSyncRun appends pull provenance and updates the in-memory coverage
-// watermark only after the record is durable.
-func (s *FileStore) RecordSyncRun(run domain.SyncRun) error {
-	if strings.TrimSpace(run.ID) == "" {
-		return errors.New("sync run ID is required")
-	}
-	if strings.TrimSpace(run.Status) == "" {
-		return errors.New("sync run status is required")
-	}
-	data, err := json.Marshal(run)
-	if err != nil {
-		return fmt.Errorf("encode sync run: %w", err)
-	}
-	data = append(data, '\n')
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := appendBytesLocked(s.syncRunsPath(), data, "sync run"); err != nil {
-		return err
-	}
-	s.syncRuns = append(s.syncRuns, run)
-	if run.Status == "success" {
-		if run.SourceWatermark != nil && run.SourceWatermark.After(s.sourceWatermark) {
-			s.sourceWatermark = *run.SourceWatermark
-		}
-		if run.FullScan && run.CompletedAt.After(s.lastFullSyncAt) {
-			s.lastFullSyncAt = run.CompletedAt
-		}
-	}
-	if s.historyRetention > 0 {
-		if err := s.pruneSyncRunsLocked(run.CompletedAt); err != nil {
-			return fmt.Errorf("prune sync runs: %w", err)
-		}
-	}
-	return nil
-}
-
-// SourceWatermark returns the greatest source-side activity timestamp observed
-// in a successful snapshot.
-func (s *FileStore) SourceWatermark() time.Time {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sourceWatermark
-}
-
-// LastFullSyncAt returns the completion time of the latest successful full
-// reconciliation.
-func (s *FileStore) LastFullSyncAt() time.Time {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastFullSyncAt
-}
-
 func (s *FileStore) appendJSONLine(path string, value any, kind string) error {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -275,10 +117,6 @@ func (s *FileStore) appendJSONLine(path string, value any, kind string) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return appendBytesLocked(path, data, kind)
-}
-
-func appendBytesLocked(path string, data []byte, kind string) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %s log: %w", kind, err)
@@ -312,26 +150,6 @@ func (s *FileStore) AuditPath() string {
 	return s.auditPath()
 }
 
-// HistoryPath returns the append-only derived change log path.
-func (s *FileStore) HistoryPath() string {
-	return s.historyPath()
-}
-
-// SyncRunsPath returns the append-only pull provenance log path.
-func (s *FileStore) SyncRunsPath() string {
-	return s.syncRunsPath()
-}
-
-// ContextPath returns the append-only human context log path.
-func (s *FileStore) ContextPath() string {
-	return s.contextPath()
-}
-
-// ContextAuditPath returns the secret-free human context audit log path.
-func (s *FileStore) ContextAuditPath() string {
-	return s.contextAuditPath()
-}
-
 func (s *FileStore) snapshotPath() string {
 	return filepath.Join(s.directory, snapshotFilename)
 }
@@ -342,22 +160,6 @@ func (s *FileStore) eventsPath() string {
 
 func (s *FileStore) auditPath() string {
 	return filepath.Join(s.directory, auditFilename)
-}
-
-func (s *FileStore) historyPath() string {
-	return filepath.Join(s.directory, historyFilename)
-}
-
-func (s *FileStore) syncRunsPath() string {
-	return filepath.Join(s.directory, syncRunsFilename)
-}
-
-func (s *FileStore) contextPath() string {
-	return filepath.Join(s.directory, contextFilename)
-}
-
-func (s *FileStore) contextAuditPath() string {
-	return filepath.Join(s.directory, contextAuditFilename)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

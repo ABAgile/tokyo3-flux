@@ -43,10 +43,6 @@
           <span class="theme-icon" aria-hidden="true">☾</span>
           <span class="theme-toggle-label">Dark mode</span>
         </button>
-        <button class="button button--quiet" id="context-open-button" type="button" aria-label="Record human delivery context" title="Record human delivery context">
-          <span class="context-button-mark" aria-hidden="true">＋</span>
-          <span>Context</span>
-        </button>
         <button class="button button--quiet" id="reload-button" type="button" aria-label="Reload cached view" title="Reload cached view">
           <svg class="button-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.25 5.75A5.5 5.5 0 1 0 13.5 9"/><path d="M13.25 2.75v3h-3"/></svg>
           <span>Reload view</span>
@@ -175,133 +171,7 @@
           </section>
         </aside>
       </div>
-
-      <section class="panel context-panel" aria-labelledby="context-heading">
-        <header class="panel-header">
-          <div>
-            <p class="panel-kicker">Human input</p>
-            <h2 id="context-heading">Delivery context</h2>
-          </div>
-          <button class="button button--quiet" id="context-panel-open-button" type="button">Record context</button>
-        </header>
-        <div class="panel-subline" id="context-summary">Loading confirmed human context…</div>
-        <div class="context-list" id="context-list" aria-live="polite" aria-busy="true">
-          <div class="loading-stack"><span class="loading-bar loading-bar--wide"></span><span class="loading-bar loading-bar--medium"></span></div>
-        </div>
-      </section>
-
-      <section class="panel report-panel" aria-labelledby="reports-heading">
-        <header class="panel-header">
-          <div>
-            <p class="panel-kicker">Evidence workspace</p>
-            <h2 id="reports-heading">Ceremony reports</h2>
-          </div>
-          <span class="report-source-note">GitLab signals + human overlay</span>
-        </header>
-        <div class="report-tabs" role="tablist" aria-label="Ceremony reports">
-          <button class="report-tab is-selected" type="button" role="tab" aria-selected="true" aria-controls="report-content" data-report-kind="standup">Standup</button>
-          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="sprint_health">Sprint health</button>
-          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="refinement">Refinement</button>
-          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="planning">Planning</button>
-          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="backlog">Backlog</button>
-          <button class="report-tab" type="button" role="tab" aria-selected="false" aria-controls="report-content" data-report-kind="retrospective">Retrospective</button>
-        </div>
-        <div class="panel-subline" id="report-summary">Loading evidence-based report…</div>
-        <div class="report-content" id="report-content" role="tabpanel" aria-live="polite" aria-busy="true">
-          <div class="loading-stack"><span class="loading-bar loading-bar--wide"></span><span class="loading-bar loading-bar--medium"></span></div>
-        </div>
-      </section>
     </main>
-
-    <dialog class="action-dialog context-dialog" id="context-dialog" aria-labelledby="context-dialog-title" aria-describedby="context-dialog-context">
-      <form class="action-dialog-card context-dialog-card" id="context-form" method="dialog">
-        <header class="action-dialog-header">
-          <div>
-            <p class="panel-kicker">Human confirmation</p>
-            <h2 id="context-dialog-title">Record delivery context</h2>
-          </div>
-          <button class="dialog-close" id="context-dialog-close" type="button" aria-label="Close context dialog">×</button>
-        </header>
-        <p class="action-dialog-context" id="context-dialog-context">This note is an audited, human-reported overlay. It does not change GitLab status, counts, milestones, or historical revisions.</p>
-        <div class="context-form-grid" id="context-form-fields">
-          <label class="action-field">
-            <span>Context type</span>
-            <select id="context-kind" name="kind" required>
-              <option value="delay_explanation">Explain a delay</option>
-              <option value="scope_change">Record a scope change</option>
-            </select>
-          </label>
-          <label class="action-field">
-            <span>Category</span>
-            <select id="context-category" name="category" required>
-              <option value="dependency">Dependency</option>
-              <option value="review">Review</option>
-              <option value="environment">Environment</option>
-              <option value="scope">Scope</option>
-              <option value="external_decision">External decision</option>
-              <option value="other">Other</option>
-            </select>
-          </label>
-          <label class="action-field">
-            <span>Reporting starts</span>
-            <input id="context-reporting-from" name="reporting_from" type="date" required>
-          </label>
-          <label class="action-field">
-            <span>Reporting ends</span>
-            <input id="context-reporting-until" name="reporting_until" type="date" required>
-          </label>
-          <label class="action-field context-field-wide">
-            <span>Milestone (optional)</span>
-            <input id="context-milestone" name="milestone" type="text" maxlength="200" placeholder="Current milestone or broader scope">
-          </label>
-          <label class="action-field context-field-wide">
-            <span>Related work item (optional)</span>
-            <select id="context-item" name="item_id">
-              <option value="">No specific item</option>
-            </select>
-          </label>
-          <label class="action-field context-field-wide">
-            <span>What should the team know?</span>
-            <textarea id="context-statement" name="statement" maxlength="2000" rows="4" required placeholder="State only the observable delivery context or decision."></textarea>
-          </label>
-          <div class="context-scope-fields context-field-wide" id="context-scope-fields" hidden>
-            <label class="action-field">
-              <span>Scope action</span>
-              <select id="context-scope-action" name="scope_action">
-                <option value="add">Add work</option>
-                <option value="remove">Remove work</option>
-                <option value="defer">Defer work</option>
-              </select>
-            </label>
-            <label class="action-field">
-              <span>Effective date</span>
-              <input id="context-effective-at" name="effective_at" type="date">
-            </label>
-            <label class="action-field context-field-wide">
-              <span>Decision owner (optional)</span>
-              <input id="context-decision-owner" name="decision_owner" type="text" maxlength="200" placeholder="Person or group who confirmed the scope">
-            </label>
-          </div>
-          <label class="action-field context-field-wide">
-            <span>Evidence link (optional)</span>
-            <input id="context-source-url" name="source_url" type="url" maxlength="500" placeholder="https://…">
-          </label>
-        </div>
-        <p class="action-dialog-hint">Do not include medical details, protected characteristics, performance ratings, blame, or speculative causes.</p>
-        <div class="action-plan" id="context-plan" hidden>
-          <span class="action-plan-kicker">Exact plan</span>
-          <strong id="context-plan-summary"></strong>
-          <span id="context-plan-detail"></span>
-          <span id="context-plan-expiry"></span>
-        </div>
-        <p class="action-message" id="context-message" role="status" aria-live="polite"></p>
-        <div class="action-dialog-actions">
-          <button class="button button--quiet" id="context-cancel" type="button">Cancel</button>
-          <button class="button" id="context-plan-button" type="button">Preview context</button>
-          <button class="button button--approve" id="context-confirm-button" type="button" disabled>Confirm and record</button>
-        </div>
-      </form>
-    </dialog>
 
     <dialog class="action-dialog" id="label-dialog" aria-labelledby="label-dialog-title">
       <form class="action-dialog-card" id="label-form" method="dialog">
