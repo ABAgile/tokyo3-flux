@@ -56,10 +56,10 @@ async (page) => {
  check(await card(first.id).getAttribute('draggable')==='true','card body is not draggable');
  check(await column(doing.id).locator('.column-head').getAttribute('draggable')==='true','column header is not draggable');
  // Project filtering changes visibility, never project classification or order.
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('none');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await drag(handle(first.id),card(second.id),{x:16,y:8}); await saved();
- check((await board()).items.every(i=>i.project_id===''),'project filter drop changed classification');
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
+ check((await board()).items.every(i=>i.project_id===''),'project selection drop changed classification');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  // A drop begun against stale data must conflict, not overwrite another tab.
  const other=await page.context().newPage(); await other.goto(page.url());
  await other.getByRole('button',{name:'Drag first',exact:true}).click();

@@ -242,21 +242,22 @@ func seedPlanning(ctx context.Context, db *store.Store, wid, pid, subject string
 		return err
 	}
 	samples := []struct {
-		title, description, priority, label string
-		column                              int
-		sprint                              bool
+		title, description string
+		labels             []string
+		column             int
+		sprint             bool
 	}{
-		{"Define the team's acceptance criteria", "Agree what ready and done mean. Record the checklist in each work item's description.", "high", "planning", 0, true},
-		{"Review the first sprint's scope", "Keep the goal achievable. Move lower-priority work to the backlog before starting new cards.", "normal", "planning", 0, true},
-		{"Try the native Kanban workflow", "Drag this card from its body, or use the column selector in the editor. Reordering and WIP checks are saved transactionally.", "high", "product", 1, true},
-		{"Validate sprint carry-over decisions", "Close a sprint with a rationale and explicitly choose backlog or the next planned sprint.", "normal", "product", 1, true},
-		{"Review workspace permissions", "Viewer access is read-only. Members can plan; all changes have native history.", "high", "security", 2, true},
-		{"Create a durable planning home", "Native work items live in PostgreSQL, independently of GitLab issues and milestones.", "normal", "platform", 3, true},
-		{"Link GitLab merge requests to cards", "Attach approved MR or pinned-pipeline coordinates using GitLab links. Observations never move cards.", "high", "integration", 0, false},
-		{"Draft agent-assisted planning proposals", "Use native Pi reads to prepare evidence-backed suggestions. Import a draft through Proposals, review the exact diff, then explicitly approve it.", "low", "agent", 0, false},
+		{"Define the team's acceptance criteria", "Agree what ready and done mean. Record the checklist in each work item's description.", []string{"priority::high", "type::planning"}, 0, true},
+		{"Review the first sprint's scope", "Keep the goal achievable. Move lower-priority work to the backlog before starting new cards.", []string{"priority::normal", "type::planning"}, 0, true},
+		{"Try the native Kanban workflow", "Drag this card from its body, or use the column selector in the editor. Reordering and WIP checks are saved transactionally.", []string{"priority::high", "type::product"}, 1, true},
+		{"Validate sprint carry-over decisions", "Close a sprint with a rationale and explicitly choose backlog or the next planned sprint.", []string{"priority::normal", "type::product"}, 1, true},
+		{"Review workspace permissions", "Viewer access is read-only. Members can plan; all changes have native history.", []string{"priority::high", "type::security"}, 2, true},
+		{"Create a durable planning home", "Native work items live in PostgreSQL, independently of GitLab issues and milestones.", []string{"priority::normal", "type::platform"}, 3, true},
+		{"Link GitLab merge requests to cards", "Attach approved MR or pinned-pipeline coordinates using GitLab links. Observations never move cards.", []string{"priority::high", "type::integration"}, 0, false},
+		{"Draft agent-assisted planning proposals", "Use native Pi reads to prepare evidence-backed suggestions. Import a draft through Proposals, review the exact diff, then explicitly approve it.", []string{"priority::low", "type::agent"}, 0, false},
 	}
 	for _, sample := range samples {
-		it := planning.Item{Title: sample.title, Description: sample.description, ColumnID: b.Columns[sample.column].ID, Priority: sample.priority, Assignee: subject, Labels: []string{sample.label}}
+		it := planning.Item{Title: sample.title, Description: sample.description, ColumnID: b.Columns[sample.column].ID, Assignee: subject, Labels: sample.labels}
 		if sample.sprint {
 			it.SprintIDs = []string{sid}
 			it.ProjectID = pid

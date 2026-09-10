@@ -106,7 +106,7 @@ func TestImportRequiresExplicitUnambiguousMappings(t *testing.T) {
 	if report.Document != nil || len(report.Unresolved) != 1 {
 		t.Fatal(report)
 	}
-	mapping := ImportMapping{Instance: "https://gitlab.example", Records: []RecordMapping{{SnapshotID: "#7", GitLabProjectID: 42, IssueIID: 7, Item: Item{ColumnID: "ready", Priority: "normal"}}}}
+	mapping := ImportMapping{Instance: "https://gitlab.example", Records: []RecordMapping{{SnapshotID: "#7", GitLabProjectID: 42, IssueIID: 7, Item: Item{ColumnID: "ready"}}}}
 	report = CompileImport(snapshot, mapping, "w", 1)
 	if report.Document == nil || report.Matched != 1 {
 		t.Fatal(report)

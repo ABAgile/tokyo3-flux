@@ -16,8 +16,8 @@ func TestLabelsAndNamesPersist(t *testing.T) {
 	it := newItem(b, "Labeled item")
 	apply(t, s, &b, p.Command{Kind: "item.create", Item: &it})
 	apply(t, s, &b, p.Command{Kind: "item.archive", Target: b.Items[0].ID})
-	apply(t, s, &b, p.Command{Kind: "label.save", Target: "native", Name: "planning"})
-	if !slices.Equal(b.Labels, []string{"planning"}) || !slices.Equal(b.Items[0].Labels, b.Labels) {
+	apply(t, s, &b, p.Command{Kind: "label.save", Target: "native", Name: "type::planning", Color: "#ffcc00"})
+	if len(b.Labels) != 1 || b.Labels[0].Name != "type::planning" || b.Labels[0].Color != "#ffcc00" || !slices.Equal(b.Items[0].Labels, []string{"type::planning"}) {
 		t.Fatal(b)
 	}
 	apply(t, s, &b, p.Command{Kind: "member.name", Target: "alice", Name: "Alice Example"})
@@ -30,7 +30,7 @@ func TestLabelsAndNamesPersist(t *testing.T) {
 	if _, err := s.Change(ctx, b.Workspace.ID, "bob", p.NewID(), p.Command{Kind: "member.name", Target: "alice", Name: "Spoof", Revision: b.Workspace.Revision}); !errors.Is(err, p.ErrForbidden) {
 		t.Fatal(err)
 	}
-	apply(t, s, &b, p.Command{Kind: "label.delete", Target: "planning"})
+	apply(t, s, &b, p.Command{Kind: "label.delete", Target: "type::planning"})
 	if len(b.Labels) != 0 || len(b.Items[0].Labels) != 0 {
 		t.Fatal(b)
 	}
@@ -50,7 +50,7 @@ func TestLabelsMigrationFromSchema2(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := getBoard(t, s, "w")
-	if !slices.Equal(b.Labels, []string{"archived label", "native"}) || len(b.Items) != 3 || b.Workspace.Revision != 9 {
+	if len(b.Labels) != 5 || b.Labels[0].Name != "archived label" || b.Labels[1].Name != "native" || b.Labels[2].Name != "priority::high" || b.Labels[3].Name != "priority::low" || b.Labels[4].Name != "priority::normal" || b.Labels[0].Color != p.DefaultLabelColor || b.Labels[1].Color != p.DefaultLabelColor || len(b.Items) != 3 || b.Workspace.Revision != 9 {
 		t.Fatal(b)
 	}
 	if _, err := s.pool.Exec(ctx, `INSERT INTO item_labels(workspace_id,item_id,label) VALUES('w','a','unknown')`); err == nil {

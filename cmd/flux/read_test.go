@@ -36,7 +36,7 @@ func TestNativeCLIReadsAndDryRun(t *testing.T) {
 	if err := os.WriteFile(snapshot, []byte(`{"sprint":{"work_items":[{"id":"#7","project_id":42,"title":"Imported"}]}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(mapping, []byte(`{"instance":"https://gitlab.example","records":[{"snapshot_id":"#7","gitlab_project_id":42,"issue_iid":7,"item":{"column_id":"ready","priority":"normal"}}]}`), 0600); err != nil {
+	if err := os.WriteFile(mapping, []byte(`{"instance":"https://gitlab.example","records":[{"snapshot_id":"#7","gitlab_project_id":42,"issue_iid":7,"item":{"column_id":"ready"}}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()

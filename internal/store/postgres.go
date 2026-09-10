@@ -41,6 +41,9 @@ var refreshMigration string
 //go:embed 006_proposals.sql
 var proposalsMigration string
 
+//go:embed 007_labels_priority.sql
+var labelsPriorityMigration string
+
 type Store struct {
 	refreshInterval time.Duration
 	pool            *pgxpool.Pool
@@ -87,7 +90,7 @@ func (s *Store) Close() { s.pool.Close() }
 func (s *Store) Ready(ctx context.Context) error {
 	var version int
 	err := s.pool.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version)
-	if err != nil || version != 6 {
+	if err != nil || version != 7 {
 		return errors.New("native schema unavailable: run flux plan migrate")
 	}
 	return nil
@@ -112,7 +115,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 6 {
+		if version < 1 || version > 7 {
 			return errors.New("unsupported native schema version")
 		}
 	} else if _, err = tx.Exec(ctx, schema); err != nil {
@@ -140,6 +143,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if version < 6 {
 		if _, err = tx.Exec(ctx, proposalsMigration); err != nil {
+			return err
+		}
+	}
+	if version < 7 {
+		if _, err = tx.Exec(ctx, labelsPriorityMigration); err != nil {
 			return err
 		}
 	}
@@ -283,7 +291,7 @@ func (s *Store) enrichMembers(ctx context.Context, b *p.Board) {
 }
 
 func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) {
-	b := p.Board{Labels: []string{}, Projects: []p.Project{}, Columns: []p.Column{}, Items: []p.Item{}, Sprints: []p.Sprint{}, Members: []p.Member{}, ClosedScope: []p.Scope{}}
+	b := p.Board{Labels: []p.Label{}, Projects: []p.Project{}, Columns: []p.Column{}, Items: []p.Item{}, Sprints: []p.Sprint{}, Members: []p.Member{}, ClosedScope: []p.Scope{}}
 	r, err := role(ctx, tx, wid, subject)
 	if err != nil {
 		return b, err
@@ -328,7 +336,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 	if err = rows.Err(); err != nil {
 		return b, err
 	}
-	rows, err = tx.Query(ctx, `SELECT i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.priority,i.rank,i.revision,i.archived,
+	rows, err = tx.Query(ctx, `SELECT i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.rank,i.revision,i.archived,
  ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
  ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
  ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id)
@@ -338,7 +346,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 	}
 	for rows.Next() {
 		var v p.Item
-		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Priority, &v.Rank, &v.Revision, &v.Archived, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
+		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
 			rows.Close()
 			return b, err
 		}
@@ -367,17 +375,17 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 	if err = rows.Err(); err != nil {
 		return b, err
 	}
-	rows, err = tx.Query(ctx, "SELECT name FROM workspace_labels WHERE workspace_id=$1 ORDER BY name", wid)
+	rows, err = tx.Query(ctx, "SELECT name,color FROM workspace_labels WHERE workspace_id=$1 ORDER BY name", wid)
 	if err != nil {
 		return b, err
 	}
 	for rows.Next() {
-		var name string
-		if err = rows.Scan(&name); err != nil {
+		var label p.Label
+		if err = rows.Scan(&label.Name, &label.Color); err != nil {
 			rows.Close()
 			return b, err
 		}
-		b.Labels = append(b.Labels, name)
+		b.Labels = append(b.Labels, label)
 	}
 	rows.Close()
 	if err = rows.Err(); err != nil {
@@ -576,7 +584,7 @@ func save(ctx context.Context, tx pgx.Tx, b p.Board) error {
 		}
 	}
 	for _, it := range b.Items {
-		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,priority,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,$11) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,priority=excluded.priority,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, it.ProjectID, it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Priority, it.Rank, it.Revision, it.Archived); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, it.ProjectID, it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
 			return err
 		}
 	}
@@ -586,8 +594,8 @@ func save(ctx context.Context, tx pgx.Tx, b p.Board) error {
 	if _, err := tx.Exec(ctx, "DELETE FROM workspace_labels WHERE workspace_id=$1", wid); err != nil {
 		return err
 	}
-	for _, name := range b.Labels {
-		if _, err := tx.Exec(ctx, "INSERT INTO workspace_labels(workspace_id,name) VALUES($1,$2)", wid, name); err != nil {
+	for _, label := range b.Labels {
+		if _, err := tx.Exec(ctx, "INSERT INTO workspace_labels(workspace_id,name,color) VALUES($1,$2,$3)", wid, label.Name, label.Color); err != nil {
 			return err
 		}
 	}

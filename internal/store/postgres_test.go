@@ -99,7 +99,7 @@ func apply(t *testing.T, s *Store, b *p.Board, c p.Command) {
 	*b = getBoard(t, s, b.Workspace.ID)
 }
 func newItem(b p.Board, title string) p.Item {
-	return p.Item{Title: title, ColumnID: b.Columns[0].ID, Priority: "normal", Assignee: "alice", Labels: []string{"native"}}
+	return p.Item{Title: title, ColumnID: b.Columns[0].ID, Assignee: "alice", Labels: []string{"native"}}
 }
 func execSQL(t *testing.T, s *Store, sql string) {
 	t.Helper()
@@ -413,13 +413,17 @@ func TestMigrateWorkspacePreservesLegacyData(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := getBoard(t, s, "w")
+	var hasPriority bool
+	if err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='work_items' AND column_name='priority')").Scan(&hasPriority); err != nil || hasPriority {
+		t.Fatalf("priority column retained: %v", err)
+	}
 	if len(b.Projects) != 2 || len(b.Items) != 3 || len(b.Columns) != 2 || len(b.Sprints) != 3 || len(b.ClosedScope) != 1 || b.Workspace.Revision != 9 {
 		t.Fatalf("lost legacy data: %+v", b)
 	}
 	for _, it := range b.Items {
 		switch it.ID {
 		case "a":
-			if it.ProjectID != "p1" || !slices.Equal(it.SprintIDs, []string{"s1"}) || !slices.Equal(it.Labels, []string{"native"}) || !slices.Equal(it.Dependencies, []string{"c"}) {
+			if it.ProjectID != "p1" || !slices.Equal(it.SprintIDs, []string{"s1"}) || !slices.Equal(it.Labels, []string{"native", "priority::normal"}) || !slices.Equal(it.Dependencies, []string{"c"}) {
 				t.Fatal(it)
 			}
 		case "c":

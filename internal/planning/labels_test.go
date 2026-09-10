@@ -16,17 +16,20 @@ func TestLabelManagement(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	apply(Command{Kind: "label.save", Name: "bug"})
-	b.Items[0].Labels = []string{"bug"}
-	b.Items[1].Labels = []string{"bug"}
+	apply(Command{Kind: "label.save", Name: "type::bug", Color: "#ffcc00"})
+	b.Items[0].Labels = []string{"type::bug"}
+	b.Items[1].Labels = []string{"type::bug"}
 	b.Items[1].Archived = true
-	apply(Command{Kind: "label.save", Target: "bug", Name: "defect"})
+	apply(Command{Kind: "label.save", Target: "type::bug", Name: "type::defect"})
 	for _, it := range b.Items {
-		if !slices.Equal(it.Labels, []string{"defect"}) || it.Revision != 2 {
+		if !slices.Equal(it.Labels, []string{"type::defect"}) || it.Revision != 2 {
 			t.Fatal(it)
 		}
 	}
-	apply(Command{Kind: "label.delete", Target: "defect"})
+	if b.Labels[0].Color != "#ffcc00" {
+		t.Fatal(b.Labels)
+	}
+	apply(Command{Kind: "label.delete", Target: "type::defect"})
 	if len(b.Labels) != 0 {
 		t.Fatal(b.Labels)
 	}
@@ -38,9 +41,9 @@ func TestLabelManagement(t *testing.T) {
 }
 
 func TestLabelValidation(t *testing.T) {
-	for _, c := range []Command{{Kind: "label.save", Name: " "}, {Kind: "label.save", Name: strings.Repeat("x", 61)}, {Kind: "label.save", Name: "bug"}, {Kind: "label.save", Target: "missing", Name: "new"}, {Kind: "label.delete", Target: "missing"}} {
+	for _, c := range []Command{{Kind: "label.save", Name: " "}, {Kind: "label.save", Name: strings.Repeat("x", 61)}, {Kind: "label.save", Name: "bug"}, {Kind: "label.save", Name: "type::"}, {Kind: "label.save", Name: "::bug"}, {Kind: "label.save", Name: "color", Color: "red"}, {Kind: "label.save", Target: "missing", Name: "new"}, {Kind: "label.delete", Target: "missing"}} {
 		b := testBoard()
-		b.Labels = []string{"bug"}
+		b.Labels = []Label{{Name: "bug", Color: DefaultLabelColor}}
 		c.Revision = b.Workspace.Revision
 		if err := Apply(&b, c); err == nil {
 			t.Fatalf("accepted %+v", c)

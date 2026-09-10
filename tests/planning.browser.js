@@ -12,22 +12,32 @@ async (page) => {
  await page.getByRole('button',{name:'＋ New project',exact:true}).click();
  await page.getByLabel('Project name').fill('Cross-project stream');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
- for (const label of ['review', 'acceptance']) {
+ for (const [label, color] of [['type::review', '#ffcc00'], ['priority::high', '#145a42']]) {
   await page.getByRole('button',{name:'Labels',exact:true}).click();
   await page.getByRole('button',{name:'＋ New label',exact:true}).click();
   await page.getByLabel('Label name',{exact:true}).fill(label);
+  check(await page.getByRole('radio').count()===64,'label palette does not have 64 colors');
+  await page.getByRole('radio',{name:color,exact:true}).check();
   await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  }
  await page.getByRole('button',{name:'＋ New item',exact:true}).click();
- check(await page.getByRole('combobox',{name:'Project',exact:true}).inputValue() === '', 'new item required a project');
+ check(await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).inputValue() === '', 'new item required a project');
  await page.getByLabel('Title',{exact:true}).fill(title);
- await page.getByLabel('Description & acceptance criteria').fill('One item across projects and sprints. <script>alert("never HTML")</script>');
- await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).selectOption(['review', 'acceptance']);
+ await page.getByLabel('Description',{exact:true}).fill('One item across projects and sprints. <script>alert("never HTML")</script>');
+ await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).selectOption(['type::review', 'priority::high']);
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('none');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:title,exact:true}).waitFor();
  check(await page.getByRole('heading',{name:/No project ·/}).count()===0, 'project grouping should be removed');
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
+ await page.getByRole('combobox',{name:'Label',exact:true}).selectOption('type::review');
+ check(await page.getByRole('button',{name:title,exact:true}).count()===1,'label filtering hides or duplicates card');
+ check(await page.locator('.card .card-top .card-title').filter({hasText:title}).count()===1,'title is not the card header');
+ check(await page.locator('.card .card-description').count()===0,'description is displayed on card');
+ check(await page.locator('.card .label-badge').filter({hasText:'type::review'}).first().evaluate(e => e.style.backgroundColor !== ''),'label color is not displayed');
+ check(await page.locator('.card .card-id').count()===0,'native card ID is displayed');
+ check(await page.getByLabel('Priority',{exact:true}).count()===0,'priority field is still displayed');
+ await page.getByRole('combobox',{name:'Label',exact:true}).selectOption('all');
  // The item editor keeps keyboard-accessible column movement, and WIP counts all projects together.
  await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'}); await save();
@@ -42,16 +52,16 @@ async (page) => {
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
  // A single card can belong to both sprints without duplication.
  await nav('Backlog'); await page.getByRole('button',{name:title,exact:true}).click();
- await page.getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
+ await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
  await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).selectOption([{label:'Sprint 1 · Planning foundations (active)'},{label:'Sprint 2 · Delivery signals (planned)'}]);
- await page.getByLabel('Planning decision / rationale (optional)').fill('Work spans both sprints');
+ await page.getByLabel('Decision note (optional)',{exact:true}).fill('Work spans both sprints');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  check(await page.getByRole('button',{name:title,exact:true}).count()===0,'scheduled item remained in backlog');
  await nav('Kanban board');
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption({label:'Cross-project stream'});
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
  check(await page.getByRole('button',{name:title,exact:true}).count()===1,'project filtering duplicates or hides card');
  await page.getByText('1 shown · 3/3 WIP',{exact:true}).waitFor();
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  await page.getByRole('button',{name:title,exact:true}).click();
  check((await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).locator('option:checked').allTextContents()).length===2,'multi-sprint membership not persisted');
  await page.getByLabel('Title',{exact:true}).fill('Retained stale draft');
@@ -81,9 +91,9 @@ async (page) => {
  await page.getByText('Closed sprint history (read-only): Sprint 1 · Planning foundations',{exact:true}).waitFor();
  check((await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).locator('option:checked').allTextContents()).length===1,'remaining sprint lost/duplicated');
  // Clearing project classification does not change sprint membership or history.
- await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('');
+ await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption('');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
- await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('none');
+ await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).click();
  await page.getByRole('button',{name:'Archive item',exact:true}).click();
  await page.getByRole('heading',{name:'Archive work item',exact:true}).waitFor();
@@ -91,7 +101,7 @@ async (page) => {
  await nav('Archive'); await page.getByRole('button',{name:'Restore item',exact:true}).click(); await saved();
  await nav('History'); await page.getByText('item · restore',{exact:true}).waitFor();
  await page.getByText('Close first sprint; retain next sprint assignment',{exact:true}).waitFor();
- await nav('Kanban board'); await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
+ await nav('Kanban board'); await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
  await page.getByRole('button',{name:'Board setup',exact:true}).click();
  await page.getByRole('button',{name:'＋ Add column',exact:true}).click();

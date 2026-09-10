@@ -17,7 +17,10 @@ var (
 	ErrNotFound  = errors.New("planning record not found")
 )
 
-const MaxItems = 1000
+const (
+	MaxItems          = 1000
+	DefaultLabelColor = "#dcefe4"
+)
 
 type Workspace struct {
 	ID       string `json:"id"`
@@ -30,6 +33,10 @@ type Member struct {
 	Subject   string `json:"subject"`
 	Role      string `json:"role"`
 	AvatarURL string `json:"avatar_url,omitempty"`
+}
+type Label struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
 }
 type Project struct {
 	ID          string `json:"id"`
@@ -52,7 +59,6 @@ type Item struct {
 	ProjectID    string   `json:"project_id"`
 	SprintIDs    []string `json:"sprint_ids"`
 	Assignee     string   `json:"assignee"`
-	Priority     string   `json:"priority"`
 	Rank         int      `json:"rank"`
 	Revision     int64    `json:"revision"`
 	Archived     bool     `json:"archived"`
@@ -83,7 +89,7 @@ type Board struct {
 	Integration       Integration     `json:"integration"`
 	ConnectorInstance string          `json:"connector_instance"`
 	Links             []ExternalLink  `json:"links"`
-	Labels            []string        `json:"labels"`
+	Labels            []Label         `json:"labels"`
 	Workspace         Workspace       `json:"workspace"`
 	Projects          []Project       `json:"projects"`
 	Role              string          `json:"role"`
@@ -111,6 +117,7 @@ type Command struct {
 	Integration *Integration      `json:"integration,omitempty"`
 	Link        *LinkTarget       `json:"link,omitempty"`
 	Name        string            `json:"name,omitempty"`
+	Color       string            `json:"color,omitempty"`
 	Kind        string            `json:"kind"`
 	Revision    int64             `json:"revision"`
 	Target      string            `json:"target"`
@@ -126,6 +133,30 @@ type Command struct {
 func NewID() string { return rand.Text() }
 
 func invalid(s string) error { return fmt.Errorf("%w: %s", ErrInvalid, s) }
+
+func validLabelName(name string) bool {
+	if strings.TrimSpace(name) == "" || len(name) > 60 || strings.ContainsAny(name, "\r\n") {
+		return false
+	}
+	for scope := range strings.SplitSeq(name, "::") {
+		if strings.TrimSpace(scope) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validLabelColor(color string) bool {
+	if len(color) != 7 || color[0] != '#' {
+		return false
+	}
+	for _, c := range color[1:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
 
 // Apply mutates a transaction-local board. The caller must discard it on error.
 func Apply(b *Board, c Command) error {
@@ -157,7 +188,7 @@ func Apply(b *Board, c Command) error {
 		}
 		b.Members[i].Name = name
 	case "label.save", "label.delete":
-		at := slices.Index(b.Labels, c.Target)
+		at := slices.IndexFunc(b.Labels, func(label Label) bool { return label.Name == c.Target })
 		if c.Target != "" && at < 0 {
 			return ErrNotFound
 		}
@@ -168,19 +199,30 @@ func Apply(b *Board, c Command) error {
 			}
 			b.Labels = slices.Delete(b.Labels, at, at+1)
 		} else {
-			if name == "" || len(name) > 60 {
-				return invalid("label name must be 1–60 bytes")
+			if !validLabelName(name) {
+				return invalid("label names must be 1–60 bytes and have nonempty scopes")
 			}
-			if slices.Contains(b.Labels, name) && name != c.Target {
+			if slices.ContainsFunc(b.Labels, func(label Label) bool { return label.Name == name }) && name != c.Target {
 				return invalid("label already exists")
 			}
+			color := DefaultLabelColor
+			if at >= 0 {
+				color = b.Labels[at].Color
+			}
+			if strings.TrimSpace(c.Color) != "" {
+				color = strings.TrimSpace(c.Color)
+			}
+			if !validLabelColor(color) {
+				return invalid("label color must be a six-digit hexadecimal color")
+			}
+			label := Label{Name: name, Color: color}
 			if at < 0 {
 				if len(b.Labels) >= 500 {
 					return invalid("maximum 500 workspace labels")
 				}
-				b.Labels = append(b.Labels, name)
+				b.Labels = append(b.Labels, label)
 			} else {
-				b.Labels[at] = name
+				b.Labels[at] = label
 			}
 		}
 		if c.Target != "" {
@@ -413,12 +455,12 @@ func Apply(b *Board, c Command) error {
 	}
 	// Keep inline labels accepted by existing API clients and seed commands.
 	if c.Kind == "item.create" || c.Kind == "item.update" {
-		for _, label := range c.Item.Labels {
-			if !slices.Contains(b.Labels, label) {
+		for _, name := range c.Item.Labels {
+			if !slices.ContainsFunc(b.Labels, func(label Label) bool { return label.Name == name }) {
 				if len(b.Labels) >= 500 {
 					return invalid("maximum 500 workspace labels")
 				}
-				b.Labels = append(b.Labels, label)
+				b.Labels = append(b.Labels, Label{Name: name, Color: DefaultLabelColor})
 			}
 		}
 	}
@@ -472,11 +514,11 @@ func category(b *Board, id string) string {
 
 func Validate(b *Board) error {
 	labels := map[string]bool{}
-	for _, name := range b.Labels {
-		if strings.TrimSpace(name) == "" || len(name) > 60 || labels[name] {
+	for _, label := range b.Labels {
+		if !validLabelName(label.Name) || !validLabelColor(label.Color) || labels[label.Name] {
 			return invalid("invalid or duplicate workspace label")
 		}
-		labels[name] = true
+		labels[label.Name] = true
 	}
 	for _, project := range b.Projects {
 		if project.WorkspaceID != b.Workspace.ID || strings.TrimSpace(project.Name) == "" || len(project.Name) > 120 {
@@ -498,8 +540,8 @@ func Validate(b *Board) error {
 		}
 	}
 	for _, item := range b.Items {
-		if strings.TrimSpace(item.Title) == "" || len(item.Title) > 240 || len(item.Description) > 16000 || !hasColumn(b, item.ColumnID) || !slices.Contains([]string{"urgent", "high", "normal", "low"}, item.Priority) {
-			return invalid("item requires title, valid column and priority; content may exceed limits")
+		if strings.TrimSpace(item.Title) == "" || len(item.Title) > 240 || len(item.Description) > 16000 || !hasColumn(b, item.ColumnID) {
+			return invalid("item requires title and valid column; content may exceed limits")
 		}
 		if item.Assignee != "" && !slices.ContainsFunc(b.Members, func(m Member) bool { return m.Subject == item.Assignee }) {
 			return invalid("assignee must be a workspace member")

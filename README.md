@@ -10,11 +10,14 @@ planning evidence and draft suggestions for a human to review and approve.
 - A workspace owns its board, membership, ordering, WIP limits and sprints.
   Projects optionally classify work; filtering never partitions WIP or permissions.
 - Each item has one column, an optional project, assignee, labels, dependencies
-  and zero or more open sprint memberships. Unfinished unscheduled work is backlog.
+  and zero or more open sprint memberships. Labels may use `scope::value` names and
+  workspace-selected colors from the fixed 64-swatch palette. Unfinished unscheduled
+  work is backlog.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
   memberships and optionally assigns unfinished work to another open sprint.
   Closed-scope metrics describe current cards, not historical completion.
-- Drag cards from their body and columns from their headers; the item editor keeps
+- Cards show the title as their header and omit descriptions and the native item ID.
+  Drag cards from their body and columns from their headers; the item editor keeps
   the keyboard-accessible column movement control. Archive instead of deleting work;
   restore archived items before editing them.
 - Viewers read, members plan and review proposals, and admins also configure
@@ -118,8 +121,9 @@ flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
 
 `flux migrate`, `bootstrap`, `member`, `seed`, `serve`, `read`, `import` and
 `version` are the CLI commands. `flux plan` also namespaces the first five commands.
-Serving requires schema 6 and never runs DDL. Back up and restore-test databases;
-stop servers before applying schema changes and retain compatible binaries.
+Serving requires schema 7 and never runs DDL. Migration 007 preserves legacy priorities as
+`priority::<value>` labels before removing the priority field. Back up and restore-test
+databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
 owner credential. After migration, grant the runtime role only required DML:
@@ -194,8 +198,8 @@ flux read --workspace WORKSPACE_ID --view sprints
 ```
 
 Read views: `board`, `item`, `triage`, `sprints`, `review`, `failures`, `links`,
-`catalog`, `imports`; CLI/Pi also expose `history`. Catalog pages contain column,
-project, member and label IDs. Review candidates are open, non-draft MRs, not proof
+`catalog`, `imports`; CLI/Pi also expose `history`. Catalog pages contain columns,
+projects, members, and label names with colors. Review candidates are open, non-draft MRs, not proof
 of an explicit review request. Triage hints do not assess acceptance-criteria quality.
 
 Pages contain `version:1`, `workspace_id`, `revision`, `as_of`, `records`, `total`
@@ -268,8 +272,8 @@ numeric `project_id`. Supply an explicit mapping for every record:
     "snapshot_id":"group/project#7", "gitlab_project_id":42, "issue_iid":7,
     "item":{
       "column_id":"COLUMN_ID", "project_id":"", "assignee":"",
-      "priority":"normal", "description":"Acceptance criteria",
-      "labels":[], "sprint_ids":[], "dependencies":[]
+      "description":"Acceptance criteria",
+      "labels":["type::bug"], "sprint_ids":[], "dependencies":[]
     }
   }]
 }
@@ -306,6 +310,8 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 `GET /api/v2/session` returns identity, optional `avatar_url`, and CSRF. `/healthz` and
 `/readyz` check liveness and DB/schema readiness independently of GitLab. Board responses
 may include observations, import receipts, and cached GitLab profile metadata on members.
+The label catalog includes each label’s `name` and selected `color`; item labels remain names.
+The web editor offers a fixed 64-swatch palette of solid colors for labels.
 
 Changes require `Content-Type: application/json`, `X-CSRF-Token`, a 16–120-character
 `Idempotency-Key`, and workspace `revision`. Entity edits also require their
@@ -324,7 +330,7 @@ Command kinds and payloads:
 - `column.rank` (`target`, optional `before`), `column.delete` (`target`,
   destination column); `sprint.start` (`target`), `sprint.close` (`target`, reason,
   optional destination open sprint).
-- `label.save` (`name`, optional target), `label.delete` (`target`);
+- `label.save` (`name`, `color`, optional target), `label.delete` (`target`);
   admin-only `member.name` (`target` subject, name).
 - Admin-only `integration.save` (`integration:{instance,projects}`);
   `link.attach` (`target` item, `link:{project,kind,number}`), `link.detach`
@@ -337,7 +343,8 @@ Command kinds and payloads:
   planning revision. Import documents use `imports:[{source,item}]` instead of
   agent operations; the two cannot be mixed.
 
-Priorities: `urgent|high|normal|low`. Columns have name, category
+Labels may use names such as `type::bug` or `priority::high`; each workspace label
+also has a selectable palette color shown on cards. Columns have name, category
 (`todo|doing|done`) and WIP (0 = unlimited). Sprints have name, goal and start/end
 (`YYYY-MM-DD`). Items carry title, description, column_id, optional project_id,
 assignee, labels, dependencies and sprint_ids. `reason` records planning rationale.

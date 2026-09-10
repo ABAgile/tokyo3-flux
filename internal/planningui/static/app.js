@@ -4,6 +4,16 @@ let session, workspaces = [], board, root, view = 'board', busy = false, loading
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
 const theme = localStorage.getItem('flux-plan-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = theme;
+const LABEL_PALETTE = Object.freeze([
+ '#ff6b6b', '#f94144', '#e63946', '#d62828', '#c1121f', '#a4161a', '#8d0801', '#6a040f',
+ '#ff9f1c', '#ff8500', '#f77f00', '#e76f00', '#d95d00', '#c75100', '#aa4a00', '#833800',
+ '#ffe066', '#ffd166', '#ffcc00', '#fcbf49', '#f9c74f', '#e9c46a', '#d4a72c', '#8f6d00',
+ '#dcefe4', '#90be6d', '#70ad47', '#52b788', '#40916c', '#2d6a4f', '#237a57', '#14532d',
+ '#2ec4b6', '#20a39e', '#00a896', '#0a9396', '#087f8f', '#147d92', '#145a42', '#0b525b',
+ '#4dabf7', '#339af0', '#228be6', '#1971c2', '#1864ab', '#155e75', '#0d4f8b', '#0b3d91',
+ '#748ffc', '#5c7cfa', '#4c6ef5', '#4263eb', '#364fc7', '#3f37c9', '#3730a3', '#2b2d6e',
+ '#c77dff', '#b26fff', '#9d4edd', '#8338ec', '#7209b7', '#6a0dad', '#5a189a', '#3c096c'
+]);
 $('theme').onclick = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; localStorage.setItem('flux-plan-theme', next); };
 function el(tag, text, className) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; }
 function button(text, fn, className) { const b = el('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
@@ -28,7 +38,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
@@ -61,6 +71,15 @@ function assigneeView(subject) {
 }
 function activeSprints() { return board.sprints.filter(s => s.state === 'active'); }
 function projectName(id) { return board.projects.find(p => p.id === id)?.name || 'No project'; }
+function labelInfo(name) { return board.labels.find(label => label.name === name) || {name, color: '#dcefe4'}; }
+function labelForeground(color) {
+ const match = /^#([0-9a-f]{6})$/i.exec(color || ''); if (!match) return 'var(--ink)';
+ const value = Number.parseInt(match[1], 16); const channels = [value >> 16 & 255, value >> 8 & 255, value & 255].map(channel => { channel /= 255; return channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4; });
+ const luminance = channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+ return luminance > .21 ? 'var(--label-ink)' : 'var(--label-contrast)';
+}
+function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge label-badge'); badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
+function styleLabelOptions(select) { [...select.options].forEach(option => { const label = labelInfo(option.value); option.style.backgroundColor = label.color; option.style.color = labelForeground(label.color); }); }
 function done(item) { return board.columns.find(c => c.id === item.column_id)?.category === 'done'; }
 function blocked(item) { return item.dependencies.some(id => { const dep = board.items.find(i => i.id === id); return dep && !done(dep); }); }
 function scopeItems(sprint) { return sprint.state === 'closed' ? board.items.filter(i => board.closed_scope.some(s => s.sprint_id === sprint.id && s.item_id === i.id)) : board.items.filter(i => !i.archived && i.sprint_ids.includes(sprint.id)); }
@@ -81,6 +100,7 @@ function render() {
  if (!board) { $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('content').replaceChildren(el('p', 'Choose an available workspace to begin. Projects are optional.', 'empty')); return; }
  $('breadcrumb').textContent = board.workspace.name + ' / Shared planning';
  const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
+ const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
  const titles = { board: 'Kanban board', backlog: 'Backlog', sprints: 'Sprint planning', archive: 'Archived work', history: 'Planning history' };
  $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : 'Plan intentionally. Keep work moving.';
  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
@@ -95,19 +115,20 @@ function filteredItems() {
   if (view === 'archive') { if (!i.archived) return false; } else if (i.archived && sprint?.state !== 'closed') return false;
   if (view !== 'archive') { if (scope === 'active' && !activeSprints().some(s => i.sprint_ids.includes(s.id))) return false; if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false; if (sprint && !scopeItems(sprint).some(v => v.id === i.id)) return false; }
   const project = $('project').value; if (project === 'none' && i.project_id) return false; if (project !== 'all' && project !== 'none' && i.project_id !== project) return false;
+  const label = $('label').value; if (label === 'none' && i.labels.length) return false; if (label !== 'all' && label !== 'none' && !i.labels.includes(label)) return false;
   return `${i.title} ${i.description} ${i.labels.join(' ')} ${i.assignee} ${memberName(i.assignee)} ${projectName(i.project_id)}`.toLowerCase().includes(query);
  });
 }
 function card(item, peers) {
- const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); top.append(el('span', `FX-${item.id.slice(0, 6).toUpperCase()}`, 'card-id'), el('span', item.priority, item.priority === 'urgent' ? 'badge warning' : 'badge'));
+ const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); top.append(button(item.title, () => editItem(item), 'card-title'));
  c.dataset.item = item.id;
  if (!item.archived) {
   makeDraggable(c, 'card', item.id, item.title);
   dropZone(c, 'card', (id, after) => ({kind: 'item.move', target: id, destination: item.column_id, before: after ? peers[peers.findIndex(p => p.id === item.id) + 1]?.id || '' : item.id}));
  }
- c.append(top, button(item.title, () => editItem(item), 'card-title'), el('small', projectName(item.project_id), 'muted'));
+ c.append(top, el('small', projectName(item.project_id), 'muted'));
  const sprintTags = el('div', undefined, 'tags'); item.sprint_ids.forEach(id => sprintTags.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); c.append(sprintTags);
- const tags = el('div', undefined, 'tags'); item.labels.forEach(l => tags.append(el('span', l, 'badge'))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
+ const tags = el('div', undefined, 'tags'); item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
  c.append(assigneeView(item.assignee));
  if (item.archived) {
   const controls = el('div', undefined, 'card-controls');
@@ -141,6 +162,12 @@ function field(parent, name, title, value = '', type = 'text', entries) {
  const label = el('label', title); const input = el(entries ? 'select' : type === 'textarea' ? 'textarea' : 'input'); input.name = name;
  if (entries) options(input, entries, value); else { if (type !== 'textarea') input.type = type; input.value = value; }
  label.append(input); parent.append(label); return input;
+}
+function labelColorPicker(parent, value) {
+ const palette = el('fieldset', undefined, 'label-palette'); palette.append(el('legend', 'Label color'));
+ const selected = String(value || '').trim().toLowerCase();
+ LABEL_PALETTE.forEach(color => { const input = el('input'); input.type = 'radio'; input.name = 'color'; input.value = color; input.checked = color === selected; input.setAttribute('aria-label', color); input.title = color; input.style.backgroundColor = color; palette.append(input); });
+ parent.append(palette); return palette;
 }
 function openEditor(title, build, submit, readOnly = false) {
  $('editor-title').textContent = title; $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
@@ -223,10 +250,10 @@ async function rejectProposal(id) {
  $('save').textContent = 'Reject proposal';
 }
 function editItem(item) {
- const existing = !!item; item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', priority: 'normal', labels: [], dependencies: [] };
+ const existing = !!item; item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
  openEditor(existing ? 'Work item' : 'Create work item', fields => {
   const title = field(fields, 'title', 'Title', item.title); title.required = true; title.maxLength = 240;
-  const desc = field(fields, 'description', 'Description & acceptance criteria', item.description, 'textarea'); desc.maxLength = 16000;
+  const desc = field(fields, 'description', 'Description', item.description, 'textarea'); desc.maxLength = 16000;
   const grid = el('div', undefined, 'form-grid'); fields.append(grid);
   field(grid, 'column_id', 'Board column', item.column_id, 'text', board.columns.map(c => [c.id, c.name]));
   field(grid, 'project_id', 'Project', item.project_id, 'text', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])]);
@@ -235,14 +262,13 @@ function editItem(item) {
   fields.append(el('p', 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.', 'help'));
   const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
   if (closed.length) fields.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
-  field(grid, 'priority', 'Priority', item.priority, 'text', ['urgent', 'high', 'normal', 'low'].map(v => [v, v]));
   field(grid, 'assignee', 'Assignee', item.assignee, 'text', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])]);
-  const labels = field(fields, 'labels', 'Labels · select multiple with Ctrl / Command', '', 'text', board.labels.map(name => [name, name])); labels.multiple = true; labels.size = 4; [...labels.options].forEach(o => { o.selected = item.labels.includes(o.value); });
+  const labels = field(fields, 'labels', 'Labels · select multiple with Ctrl / Command', '', 'text', board.labels.map(label => [label.name, label.name])); labels.multiple = true; labels.size = 4; [...labels.options].forEach(o => { o.selected = item.labels.includes(o.value); }); styleLabelOptions(labels);
   fields.append(el('p', 'Manage available labels using Labels in the workspace header. Select none to clear labels.', 'help'));
   const deps = field(fields, 'dependencies', 'Depends on · select multiple with Ctrl / Command', '', 'text', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title])); deps.multiple = true; deps.size = Math.min(5, Math.max(2, board.items.length - 1)); [...deps.options].forEach(o => { o.selected = item.dependencies.includes(o.value); });
-  field(fields, 'reason', 'Planning decision / rationale (optional)', '', 'textarea').maxLength = 4000;
+  field(fields, 'reason', 'Decision note (optional)', '', 'textarea').maxLength = 4000;
   if (existing) { fields.append(el('p', `Item revision ${item.revision} · Native ID ${item.id}`, 'help')); if (!item.archived) fields.append(writeButton('Archive item', () => archiveItem(item), 'danger')); }
- }, data => ({ kind: existing ? 'item.update' : 'item.create', target: item.id || '', reason: data.get('reason'), item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), priority: data.get('priority'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } }), board.role === 'viewer' || item.archived);
+ }, data => ({ kind: existing ? 'item.update' : 'item.create', target: item.id || '', reason: data.get('reason'), item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } }), board.role === 'viewer' || item.archived);
 }
 function archiveItem(item) {
  $('editor').close();
@@ -294,18 +320,19 @@ function manageProjects() {
   fields.append(writeButton('＋ New project', () => editProject(), 'primary'));
  }, () => ({}), true);
 }
-function editLabel(name = '') {
- $('editor').close();
- openEditor(name ? 'Rename label' : 'Create label', fields => {
-  const input = field(fields, 'name', 'Label name', name); input.required = true; input.maxLength = 60;
-  fields.append(el('p', 'Renaming updates every assigned card, including archived work. Historical audit is retained.', 'help'));
- }, data => ({kind: 'label.save', target: name, name: data.get('name').trim()}));
+function editLabel(label) {
+ $('editor').close(); const originalName = typeof label === 'string' ? label : label?.name || ''; const originalColor = typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
+ openEditor(originalName ? 'Rename label' : 'Create label', fields => {
+  const input = field(fields, 'name', 'Label name', originalName); input.required = true; input.maxLength = 60;
+  labelColorPicker(fields, originalColor);
+  fields.append(el('p', 'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.', 'help'));
+ }, data => ({kind: 'label.save', target: originalName, name: data.get('name').trim(), color: data.get('color') || originalColor}));
 }
 function manageLabels() {
  openEditor('Workspace labels', fields => {
-  board.labels.forEach(name => { const row = el('div', undefined, 'setup-row'); const actions = el('div', undefined, 'actions');
-   actions.append(writeButton('Rename', () => editLabel(name)), writeButton('Delete…', () => { $('editor').close(); openEditor('Delete label', f => { f.append(el('p', `Remove “${name}” from the workspace and all ${board.items.filter(i => i.labels.includes(name)).length} assigned cards, including archived work? Historical audit is retained.`)); }, () => ({kind: 'label.delete', target: name})); $('save').textContent = 'Delete label'; }, 'danger'));
-   row.append(el('strong', name), actions); fields.append(row);
+  board.labels.forEach(label => { const row = el('div', undefined, 'setup-row'); const actions = el('div', undefined, 'actions');
+   actions.append(writeButton('Rename', () => editLabel(label)), writeButton('Delete…', () => { $('editor').close(); openEditor('Delete label', f => { f.append(el('p', `Remove “${label.name}” from the workspace and all ${board.items.filter(i => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`)); }, () => ({kind: 'label.delete', target: label.name})); $('save').textContent = 'Delete label'; }, 'danger'));
+   row.append(labelBadge(label.name), actions); fields.append(row);
   });
   if (!board.labels.length) fields.append(el('p', 'No labels yet. Create reusable labels for this workspace.', 'help'));
   fields.append(writeButton('＋ New label', () => editLabel(), 'primary'));
@@ -402,10 +429,10 @@ $('projects').onclick = manageProjects;
 $('proposals').onclick = () => showProposals();
 $('labels').onclick = manageLabels; $('members').onclick = manageMembers; $('integration').onclick = editIntegration;
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh;
-$('scope').onchange = $('project').onchange = $('search').oninput = renderContent;
+$('scope').onchange = $('project').onchange = $('label').onchange = $('search').oninput = renderContent;
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
- board = undefined; $('project').value = 'all'; $('scope').value = 'all'; $('search').value = ''; render();
+ board = undefined; $('project').value = 'all'; $('label').value = 'all'; $('scope').value = 'all'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
  await refresh();
 }

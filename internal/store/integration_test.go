@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -226,7 +225,7 @@ func TestIntegrationMigrationAndApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := getBoard(t, s, "w")
-	if len(b.Items) != 3 || !slices.Equal(b.Labels, []string{"native"}) || len(b.Links) != 0 {
+	if len(b.Items) != 3 || len(b.Labels) != 4 || b.Labels[0].Name != "native" || b.Labels[1].Name != "priority::high" || b.Labels[2].Name != "priority::low" || b.Labels[3].Name != "priority::normal" || b.Labels[0].Color != p.DefaultLabelColor || len(b.Links) != 0 {
 		t.Fatal(b)
 	}
 	if _, err := s.Change(context.Background(), "w", "alice", p.NewID(), p.Command{Kind: "integration.save", Revision: b.Workspace.Revision, Integration: &p.Integration{Instance: "https://arbitrary.example", Projects: []int64{42}}}); !errors.Is(err, p.ErrConflict) {

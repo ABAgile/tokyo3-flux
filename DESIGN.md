@@ -6,7 +6,7 @@ Native planning is the sole UI; the transitional cockpit is retired.
 ## Direction
 
 A calm, compact planning workspace: left navigation, workspace heading, sprint goals
-and scope summary, then a Kanban board or prioritized backlog. Native planning
+and scope summary, then a Kanban board or backlog. Native planning
 state is primary; do not show invented GitLab or agent status. Display a clear
 local-demo indicator when fixture authentication is enabled.
 
@@ -21,8 +21,12 @@ text #15241d, muted #53645a, accent #145a42, accent surface #dcefe4,
 warning #80500a, danger #a53228. Dark colors: background #111713,
 panel #1a241d, inset #222f26, border #3a4a3e, text #e7efe8, muted #aabaad,
 accent #9be0b8, accent surface #1b3c2d, warning #e0aa55, danger #ffaca0.
-Use these semantic tokens only. No external fonts or assets are required for the
-base UI; optional GitLab avatar images use the configured instance.
+Label colors use a fixed 64-swatch palette: eight hue families with eight opaque,
+high-saturation swatches each. Include #dcefe4, #145a42, and #ffcc00 for the default
+and common accent choices; use dark ink on light swatches and white on dark swatches.
+Use semantic tokens for all other UI colors. No external
+fonts or assets are required for the base UI; optional GitLab avatar images use the
+configured instance.
 
 ## Components and interaction
 
@@ -30,16 +34,20 @@ base UI; optional GitLab avatar images use the configured instance.
   desktop, 16px below 900px. Board columns use a responsive grid, minimum 240px;
   wrap columns rather than causing page-level horizontal scroll.
 - One shared board belongs to each workspace; projects classify items optionally.
-  Project filtering sits beside Scope in the planning toolbar (All projects / No
-  project / a project), never in the sidebar and never as a planning boundary. WIP
-  counts the whole workspace column, regardless of filtering. Project management
-  uses the existing dialog/controls, not a new component variant.
+  Project and label filters sit beside Scope in the planning toolbar (All projects /
+  No project / a project, and All labels / No labels / a label), never in the sidebar
+  and never as a planning boundary. WIP counts the whole workspace column, regardless
+  of filtering. Project management uses the existing dialog/controls, not a new
+  component variant.
 - Cards show project (or No project) and all open sprint memberships as badges.
   Item editor uses a project select and a labeled multiple-select for open sprints;
   closed-sprint membership is displayed read-only. Multiple active sprints are
   allowed. Closing one does not remove assignments to other open sprints.
-- Cards have title, priority, assignee, labels, and blocked state. Cards and board
-  columns use a restrained accent-border hover cue. Card ordering uses drag-and-drop;
+- Cards use the item title as a header, followed by project, assignee, labels, and
+  blocked state. Descriptions remain available in the editor but are not shown on cards.
+  The native item ID is not displayed on cards.
+  Cards and board columns use a restrained accent-border hover cue. Card ordering uses
+  drag-and-drop;
   there are no separate up/down controls. The item editor’s labeled column select
   remains the keyboard movement mechanism. Cards are draggable from their body
   context, and columns are draggable from their headers, moving cards before/after
@@ -47,9 +55,11 @@ base UI; optional GitLab avatar images use the configured instance.
   Drops use the same revision-checked commands; no optimistic rearrangement. Accent
   outlines mark drop targets, with top/bottom borders marking insertion. Filtering
   never changes project or sprint membership. Archived cards and viewers cannot drag.
-- Workspace labels have create/rename/delete management (deletion confirms removal
-  from all cards, including archived work). Item labels use a native labeled
-  multiple-select, matching sprint selection. Names are plain text, at most 60 bytes.
+- Workspace labels have create/rename/delete and color management (deletion confirms
+  removal from all cards, including archived work). Names may use an optional
+  `scope::value` form such as `type::bug` or `priority::high`. Item labels use a
+  native labeled multiple-select and display their chosen palette colors as text badges.
+  Names are plain text, at most 60 bytes.
 - Assignee cards show an optional 24px circular GitLab avatar and display name when
   profile data is available from the configured read connector or current session.
   Assignee options and the Members dialog show display names, falling back to an

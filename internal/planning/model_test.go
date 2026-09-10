@@ -7,7 +7,7 @@ import (
 )
 
 func testBoard() Board {
-	return Board{Workspace: Workspace{ID: "w", Name: "Team", Revision: 1}, Projects: []Project{{ID: "p1", WorkspaceID: "w", Name: "First", Revision: 1}, {ID: "p2", WorkspaceID: "w", Name: "Second", Revision: 1}}, Role: "member", Members: []Member{{Subject: "alice", Role: "member"}}, Columns: []Column{{ID: "ready", Name: "Ready", Category: "todo"}, {ID: "doing", Name: "Doing", Category: "doing", WIP: 1}, {ID: "done", Name: "Done", Category: "done"}}, Items: []Item{{ID: "a", Title: "A", ColumnID: "ready", Priority: "normal", Revision: 1}, {ID: "b", Title: "B", ColumnID: "ready", Priority: "high", Revision: 1}}, Sprints: []Sprint{{ID: "s1", Name: "First", Goal: "Ship", Start: "2026-09-01", End: "2026-09-14", State: "planned", Revision: 1}, {ID: "s2", Name: "Next", Goal: "Learn", Start: "2026-09-15", End: "2026-09-28", State: "planned", Revision: 1}}}
+	return Board{Workspace: Workspace{ID: "w", Name: "Team", Revision: 1}, Projects: []Project{{ID: "p1", WorkspaceID: "w", Name: "First", Revision: 1}, {ID: "p2", WorkspaceID: "w", Name: "Second", Revision: 1}}, Role: "member", Members: []Member{{Subject: "alice", Role: "member"}}, Columns: []Column{{ID: "ready", Name: "Ready", Category: "todo"}, {ID: "doing", Name: "Doing", Category: "doing", WIP: 1}, {ID: "done", Name: "Done", Category: "done"}}, Items: []Item{{ID: "a", Title: "A", ColumnID: "ready", Revision: 1}, {ID: "b", Title: "B", ColumnID: "ready", Revision: 1}}, Sprints: []Sprint{{ID: "s1", Name: "First", Goal: "Ship", Start: "2026-09-01", End: "2026-09-14", State: "planned", Revision: 1}, {ID: "s2", Name: "Next", Goal: "Learn", Start: "2026-09-15", End: "2026-09-28", State: "planned", Revision: 1}}}
 }
 func mustApply(t *testing.T, b *Board, c Command) {
 	t.Helper()
@@ -57,7 +57,7 @@ func TestApplyValidation(t *testing.T) {
 }
 func TestWorkspaceValidation(t *testing.T) {
 	cases := map[string]func(*Board){
-		"title": func(b *Board) { b.Items[0].Title = " " }, "priority": func(b *Board) { b.Items[0].Priority = "invalid" }, "assignee": func(b *Board) { b.Items[0].Assignee = "outsider" },
+		"title": func(b *Board) { b.Items[0].Title = " " }, "assignee": func(b *Board) { b.Items[0].Assignee = "outsider" },
 		"foreign project": func(b *Board) { b.Items[0].ProjectID = "foreign" }, "foreign sprint": func(b *Board) { b.Items[0].SprintIDs = []string{"foreign"} },
 		"closed sprint": func(b *Board) { b.Sprints[0].State = "closed"; b.Items[0].SprintIDs = []string{"s1"} }, "duplicate sprint": func(b *Board) { b.Items[0].SprintIDs = []string{"s1", "s1"} },
 		"self dependency": func(b *Board) { b.Items[0].Dependencies = []string{"a"} }, "foreign dependency": func(b *Board) { b.Items[0].Dependencies = []string{"foreign"} },
@@ -77,7 +77,7 @@ func TestWorkspaceValidation(t *testing.T) {
 }
 func TestNativeLifecycleAndOrdering(t *testing.T) {
 	b := testBoard()
-	it := Item{Title: "New", ColumnID: "ready", Priority: "normal", Assignee: "alice", Labels: []string{"native"}}
+	it := Item{Title: "New", ColumnID: "ready", Assignee: "alice", Labels: []string{"native"}}
 	mustApply(t, &b, Command{Kind: "item.create", Item: &it})
 	id := b.Items[2].ID
 	mustApply(t, &b, Command{Kind: "item.rank", Target: id, Before: "a"})
