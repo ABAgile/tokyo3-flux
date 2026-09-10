@@ -1,40 +1,16 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 
-	"abagile.com/tokyo3/flux/internal/action"
-	"abagile.com/tokyo3/flux/internal/api"
-	fluxauth "abagile.com/tokyo3/flux/internal/auth"
-	"abagile.com/tokyo3/flux/internal/domain"
-	"abagile.com/tokyo3/flux/internal/fixture"
-	"abagile.com/tokyo3/flux/internal/gitlab"
-	"abagile.com/tokyo3/flux/internal/reconcile"
-	"abagile.com/tokyo3/flux/internal/state"
-	fluxweb "abagile.com/tokyo3/flux/internal/web"
-	"abagile.com/tokyo3/flux/internal/webhook"
-	basecli "github.com/abagile/tokyo3-base/cli"
 	basecrypto "github.com/abagile/tokyo3-base/crypto"
-	baserun "github.com/abagile/tokyo3-base/run"
-	basesession "github.com/abagile/tokyo3-base/session"
 	baseversion "github.com/abagile/tokyo3-base/version"
 )
 
-const appName = "flux"
-
-// Version is overridden at build time via -ldflags "-X main.Version=...".
-// version.Resolve falls back to Go build information for source-tree and
-// module-version builds.
 var Version = "dev"
 
 func main() {
@@ -43,316 +19,45 @@ func main() {
 		os.Exit(1)
 	}
 }
-
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		printUsage(stdout)
 		return nil
 	}
-
 	switch args[0] {
-	case "today":
-		return runToday(args[1:], stdout, stderr)
-	case "serve":
-		return runServe(args[1:], stderr)
+	case "serve", "migrate", "bootstrap", "member", "seed":
+		return runPlan(args, stdout, stderr)
+	case "plan":
+		return runPlan(args[1:], stdout, stderr) // Native command namespace, not a legacy runtime.
+	case "read":
+		return runRead(args[1:], stdout, stderr)
+	case "import":
+		return runImport(args[1:], stdout, stderr)
 	case "version":
-		_, err := fmt.Fprintf(stdout, "%s %s\n", appName, baseversion.Resolve(Version))
+		_, err := fmt.Fprintf(stdout, "flux %s\n", baseversion.Resolve(Version))
 		return err
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
 	default:
-		printUsage(stderr)
-		return fmt.Errorf("unknown command %q", args[0])
+		return fmt.Errorf("unknown command %q; Flux is native-only (see flux help)", args[0])
 	}
 }
-
-func runToday(args []string, stdout, stderr io.Writer) error {
-	flags := flag.NewFlagSet("today", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	inputPath := flags.String("input", "", "normalized snapshot file, or - for stdin")
-	gitlabURL := flags.String("gitlab-url", os.Getenv("FLUX_GITLAB_URL"), "GitLab base URL")
-	gitlabGroup := flags.String("gitlab-group", os.Getenv("FLUX_GITLAB_GROUP"), "GitLab group ID or full path")
-	goal := flags.String("goal", os.Getenv("FLUX_SPRINT_GOAL"), "optional sprint goal override; otherwise use the milestone description")
-	blockedLabels := flags.String("blocked-labels", envOrDefault("FLUX_GITLAB_BLOCKED_LABELS", "status::blocked,blocked"), "comma-separated labels treated as blocked")
-	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
-	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("today accepts flags only")
-	}
-
-	target := strings.TrimSpace(*gitlabGroup)
-	if *inputPath == "" && target == "" {
-		return errors.New("GitLab group is required")
-	}
-	snapshot, err := loadSnapshot(*inputPath, gitlab.Config{
-		URL:           *gitlabURL,
-		Token:         envFirst("FLUX_GITLAB_SERVICE_TOKEN", "FLUX_GITLAB_TOKEN"),
-		BlockedLabels: splitList(*blockedLabels),
-	}, target, *goal)
-	if err != nil {
-		return err
-	}
-
-	now := snapshot.GeneratedAt
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	summary := domain.Summarize(snapshot.Sprint, now, *staleAfter)
-	if *jsonOutput {
-		return renderTodayJSON(stdout, snapshot, summary)
-	}
-	return renderToday(stdout, snapshot, summary)
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Flux — native planning\n\nflux serve|migrate|bootstrap|member|seed [flags]\nflux read --workspace ID --view board|item|triage|sprints|review|failures|links|catalog|imports|history [--target ID --offset N --revision N --limit N]\nflux import --workspace ID --input snapshot.json --mapping mapping.json (dry run only)\nflux version\n\nBrowser membership, CSRF, revision checks and human approval are required for planning writes. Machine credentials are read-only.")
 }
-
-func runServe(args []string, stderr io.Writer) error {
-	intervalDefault, err := durationFromEnv("FLUX_RECONCILE_INTERVAL", 5*time.Minute)
-	if err != nil {
-		return err
+func envOrDefault(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
 	}
-
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	addr := flags.String("addr", envOrDefault("FLUX_ADDR", "127.0.0.1:8080"), "HTTP listen address")
-	gitlabURL := flags.String("gitlab-url", os.Getenv("FLUX_GITLAB_URL"), "GitLab base URL")
-	gitlabGroup := flags.String("gitlab-group", os.Getenv("FLUX_GITLAB_GROUP"), "GitLab group ID or full path")
-	goal := flags.String("goal", os.Getenv("FLUX_SPRINT_GOAL"), "optional sprint goal override; otherwise use the milestone description")
-	blockedLabels := flags.String("blocked-labels", envOrDefault("FLUX_GITLAB_BLOCKED_LABELS", "status::blocked,blocked"), "comma-separated labels treated as blocked")
-	stateDir := flags.String("state-dir", envOrDefault("FLUX_STATE_DIR", ".flux-state"), "directory for the cached snapshot and webhook event log")
-	fixturePath := flags.String("fixture", os.Getenv("FLUX_FIXTURE_FILE"), "normalized snapshot file for local fixture mode")
-	oauthClientID := flags.String("gitlab-oauth-client-id", os.Getenv("FLUX_GITLAB_OAUTH_CLIENT_ID"), "GitLab OAuth application client ID")
-	oauthRedirectURL := flags.String("gitlab-oauth-redirect-url", os.Getenv("FLUX_GITLAB_OAUTH_REDIRECT_URL"), "absolute GitLab OAuth callback URL")
-	interval := flags.Duration("reconcile-interval", intervalDefault, "periodic GitLab reconciliation interval")
-	staleAfter := flags.Duration("stale-after", 7*24*time.Hour, "duration without activity before work is stale")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("serve accepts flags only")
-	}
-	if *interval <= 0 {
-		return errors.New("reconcile interval must be positive")
-	}
-
-	fixtureMode := strings.TrimSpace(*fixturePath) != ""
-	target := strings.TrimSpace(*gitlabGroup)
-	if fixtureMode {
-		if !isLoopbackAddress(*addr) {
-			return errors.New("fixture mode requires a loopback listen address, for example 127.0.0.1:8080")
-		}
-		if target == "" {
-			target = "fixture"
-		}
-	} else if target == "" {
-		return errors.New("GitLab group is required")
-	}
-
-	sessionKey, err := serveSessionKey(os.Getenv("FLUX_SESSION_KEY"), fixtureMode)
-	if err != nil {
-		return fmt.Errorf("parse FLUX_SESSION_KEY: %w", err)
-	}
-	machineToken, err := fluxauth.NewMachineToken(os.Getenv("FLUX_API_TOKEN"))
-	if err != nil {
-		return fmt.Errorf("configure FLUX_API_TOKEN: %w", err)
-	}
-	var (
-		source          reconcile.Source
-		milestoneSource api.MilestoneSource
-		actionReader    action.IssueReader
-		actionLabels    action.LabelReader
-		mutationClient  *gitlab.MutationClient
-	)
-	if fixtureMode {
-		fixtureSource, fixtureErr := fixture.New(*fixturePath)
-		if fixtureErr != nil {
-			return fmt.Errorf("configure fixture source: %w", fixtureErr)
-		}
-		source = fixtureSource
-		milestoneSource = fixtureSource
-		actionReader = fixtureSource
-		actionLabels = fixtureSource
-	} else {
-		client, clientErr := gitlab.New(gitlab.Config{
-			URL:           *gitlabURL,
-			Token:         envFirst("FLUX_GITLAB_SERVICE_TOKEN", "FLUX_GITLAB_TOKEN"),
-			BlockedLabels: splitList(*blockedLabels),
-		})
-		if clientErr != nil {
-			return fmt.Errorf("configure GitLab client: %w", clientErr)
-		}
-		source = client
-		milestoneSource = client
-		actionReader = client
-		actionLabels = client
-		if mutationToken := strings.TrimSpace(os.Getenv("FLUX_GITLAB_WRITE_TOKEN")); mutationToken != "" {
-			mutationClient, clientErr = gitlab.NewMutationClient(gitlab.Config{
-				URL:           *gitlabURL,
-				Token:         mutationToken,
-				BlockedLabels: splitList(*blockedLabels),
-			})
-			if clientErr != nil {
-				return fmt.Errorf("configure GitLab mutation client: %w", clientErr)
-			}
-		}
-	}
-	store, err := state.OpenFileStore(*stateDir)
-	if err != nil {
-		return fmt.Errorf("open state store: %w", err)
-	}
-
-	rt := basecli.App{Name: "flux", EnvPrefix: "FLUX"}.Setup(context.Background())
-	defer rt.Shutdown()
-	reconciler, err := reconcile.New(reconcile.Config{
-		Source:   source,
-		Store:    store,
-		Target:   target,
-		Goal:     *goal,
-		Interval: *interval,
-		OnError: func(err error) {
-			rt.Log.Error("pull reconciliation failed", "error", err)
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("configure reconciler: %w", err)
-	}
-	var (
-		webhookHandler http.Handler
-		webhookEnabled bool
-	)
-	if fixtureMode {
-		webhookHandler = disabledWebhookHandler("webhooks are disabled in fixture mode")
-	} else if secret := strings.TrimSpace(os.Getenv("FLUX_GITLAB_WEBHOOK_SECRET")); secret == "" {
-		webhookHandler = disabledWebhookHandler("webhooks are not configured")
-	} else {
-		webhookConfig := webhook.Config{
-			Secret:        secret,
-			ExpectedGroup: target,
-			Trigger:       reconciler.Trigger,
-			OnEvent: func(event webhook.Event) error {
-				return store.RecordEvent(state.Event{
-					Kind:        event.Kind,
-					DeliveryID:  event.DeliveryID,
-					ProjectID:   event.ProjectID,
-					ProjectPath: event.ProjectPath,
-					GroupID:     event.GroupID,
-					GroupPath:   event.GroupPath,
-					ReceivedAt:  event.ReceivedAt,
-				})
-			},
-		}
-		webhookHandler, err = webhook.New(webhookConfig)
-		if err != nil {
-			return fmt.Errorf("configure webhook handler: %w", err)
-		}
-		webhookEnabled = true
-	}
-
-	sessions, err := basesession.New(basesession.Config{
-		SessionKey:   sessionKey,
-		CookiePrefix: "flux",
-		SessionTTL:   8 * time.Hour,
-		ExemptPaths:  []string{"/healthz", "/readyz", "/webhooks/gitlab", "/auth/callback"},
-		Log:          rt.Log,
-	})
-	if err != nil {
-		return fmt.Errorf("configure sessions: %w", err)
-	}
-	var authHandler http.Handler
-	if fixtureMode {
-		authHandler, err = fluxauth.NewFixture(sessions)
-		if err != nil {
-			return fmt.Errorf("configure fixture auth: %w", err)
-		}
-	} else {
-		authenticator, authErr := fluxauth.NewGitLab(fluxauth.Config{
-			GitLabURL:    *gitlabURL,
-			ClientID:     *oauthClientID,
-			ClientSecret: os.Getenv("FLUX_GITLAB_OAUTH_CLIENT_SECRET"),
-			RedirectURL:  *oauthRedirectURL,
-			Log:          rt.Log,
-		}, sessions)
-		if authErr != nil {
-			return fmt.Errorf("configure GitLab OAuth: %w", authErr)
-		}
-		authHandler = authenticator.Handler()
-	}
-
-	apiHandler := api.NewHandlerWithSync(store, webhookHandler, *staleAfter, milestoneSource, target, *goal, reconciler)
-	actionService, err := action.New(action.Config{
-		Snapshot: store,
-		Reader:   actionReader,
-		Labels:   actionLabels,
-		Writer:   mutationClient,
-		Audit:    store,
-		Trigger:  reconciler.Trigger,
-		Log:      rt.Log,
-	})
-	if err != nil {
-		return fmt.Errorf("configure GitLab actions: %w", err)
-	}
-	actionHandler, err := action.NewHandler(actionService, sessions)
-	if err != nil {
-		return fmt.Errorf("configure GitLab action HTTP handler: %w", err)
-	}
-	syncHandler, err := api.NewSyncHandler(reconciler, sessions)
-	if err != nil {
-		return fmt.Errorf("configure manual sync handler: %w", err)
-	}
-	cockpitHandler := fluxweb.NewHandler(apiHandler)
-	browserAPIHandler := sessions.Gate(apiHandler)
-	machineAPIHandler := machineToken.Gate(apiHandler, browserAPIHandler)
-	syncRoute := machineToken.Gate(syncHandler, sessions.Gate(syncHandler))
-	routes := http.NewServeMux()
-	routes.Handle("/auth/", authHandler)
-	routes.Handle("/api/sync/status", machineAPIHandler)
-	routes.Handle("/api/sync/csrf", syncRoute)
-	routes.Handle("/api/sync", syncRoute)
-	routes.Handle("/api/actions/", sessions.Gate(actionHandler))
-	routes.Handle("/api/", machineAPIHandler)
-	routes.Handle("/", sessions.Gate(cockpitHandler))
-	server := &http.Server{
-		Addr:              *addr,
-		Handler:           routes,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
-
-	mode := "live"
-	if fixtureMode {
-		mode = "fixture"
-	}
-	rt.Log.Info("Flux server started", "version", baseversion.Resolve(Version), "addr", *addr, "group", target, "state_dir", *stateDir, "reconcile_interval", *interval, "mutation_enabled", mutationClient != nil, "webhook_enabled", webhookEnabled, "mode", mode, "fixture", strings.TrimSpace(*fixturePath))
-
-	return baserun.Group(rt.Ctx,
-		baserun.HTTPServer(server, 10*time.Second, false),
-		reconciler.Run,
-	)
+	return fallback
 }
-
-func durationFromEnv(name string, fallback time.Duration) (time.Duration, error) {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback, nil
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s: %w", name, err)
-	}
-	return duration, nil
-}
-
-func serveSessionKey(raw string, fixtureMode bool) ([]byte, error) {
-	if strings.TrimSpace(raw) == "" && fixtureMode {
+func serveSessionKey(raw string, demo bool) ([]byte, error) {
+	if strings.TrimSpace(raw) == "" && demo {
 		return basecrypto.RandomBytes(32)
 	}
 	return basecrypto.ParseKEK(strings.TrimSpace(raw))
 }
-
 func isLoopbackAddress(addr string) bool {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
 	if err != nil {
@@ -364,185 +69,4 @@ func isLoopbackAddress(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-func disabledWebhookHandler(message string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, message, http.StatusNotFound)
-	})
-}
-
-func loadSnapshot(inputPath string, cfg gitlab.Config, target, goal string) (domain.Snapshot, error) {
-	if inputPath != "" {
-		reader := io.Reader(os.Stdin)
-		var input io.ReadCloser
-		if inputPath != "-" {
-			file, err := os.Open(inputPath)
-			if err != nil {
-				return domain.Snapshot{}, fmt.Errorf("open input: %w", err)
-			}
-			input = file
-			defer input.Close()
-			reader = file
-		}
-
-		var snapshot domain.Snapshot
-		if err := json.NewDecoder(reader).Decode(&snapshot); err != nil {
-			return domain.Snapshot{}, fmt.Errorf("decode snapshot: %w", err)
-		}
-		return snapshot, nil
-	}
-
-	client, err := gitlab.New(cfg)
-	if err != nil {
-		return domain.Snapshot{}, fmt.Errorf("configure GitLab client: %w", err)
-	}
-	snapshot, err := client.Snapshot(context.Background(), target, goal)
-	if err != nil {
-		return domain.Snapshot{}, fmt.Errorf("load GitLab snapshot: %w", err)
-	}
-	return snapshot, nil
-}
-
-func envOrDefault(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func envFirst(names ...string) string {
-	for _, name := range names {
-		if value := os.Getenv(name); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func splitList(value string) []string {
-	var result []string
-	for entry := range strings.SplitSeq(value, ",") {
-		if entry = strings.TrimSpace(entry); entry != "" {
-			result = append(result, entry)
-		}
-	}
-	return result
-}
-
-type todayJSONResponse struct {
-	GeneratedAt time.Time        `json:"generated_at"`
-	Sprint      todayJSONSprint  `json:"sprint"`
-	Summary     todayJSONSummary `json:"summary"`
-}
-
-type todayJSONSprint struct {
-	Name string `json:"name"`
-	Goal string `json:"goal,omitempty"`
-}
-
-type todayJSONSummary struct {
-	Total  int             `json:"total"`
-	Counts map[string]int  `json:"counts"`
-	Items  []todayJSONItem `json:"items"`
-}
-
-type todayJSONItem struct {
-	ID            string                `json:"id"`
-	ProjectID     int                   `json:"project_id,omitempty"`
-	ProjectPath   string                `json:"project_path,omitempty"`
-	Title         string                `json:"title"`
-	State         domain.IssueState     `json:"state"`
-	Assignee      string                `json:"assignee,omitempty"`
-	Labels        []string              `json:"labels,omitempty"`
-	Blocked       bool                  `json:"blocked"`
-	LastActivity  time.Time             `json:"last_activity"`
-	Status        domain.Status         `json:"status"`
-	MergeRequests []domain.MergeRequest `json:"merge_requests,omitempty"`
-}
-
-func renderTodayJSON(w io.Writer, snapshot domain.Snapshot, summary domain.Summary) error {
-	counts := make(map[string]int)
-	for _, status := range []domain.Status{
-		domain.StatusTodo,
-		domain.StatusInProgress,
-		domain.StatusAwaitingReview,
-		domain.StatusPipelineFailed,
-		domain.StatusBlocked,
-		domain.StatusStale,
-		domain.StatusDone,
-	} {
-		counts[string(status)] = summary.Count(status)
-	}
-	response := todayJSONResponse{
-		GeneratedAt: snapshot.GeneratedAt,
-		Sprint: todayJSONSprint{
-			Name: snapshot.Sprint.Name,
-			Goal: snapshot.Sprint.Goal,
-		},
-		Summary: todayJSONSummary{
-			Total:  summary.Total(),
-			Counts: counts,
-			Items:  make([]todayJSONItem, 0, len(summary.Items)),
-		},
-	}
-	for _, item := range summary.Items {
-		response.Summary.Items = append(response.Summary.Items, todayJSONItem{
-			ID:            item.Item.ID,
-			ProjectID:     item.Item.ProjectID,
-			ProjectPath:   item.Item.ProjectPath,
-			Title:         item.Item.Title,
-			State:         item.Item.State,
-			Assignee:      item.Item.Assignee,
-			Labels:        append([]string(nil), item.Item.Labels...),
-			Blocked:       item.Item.Blocked,
-			LastActivity:  item.Item.LastActivity,
-			Status:        item.Status,
-			MergeRequests: item.Item.MergeRequests,
-		})
-	}
-	return json.NewEncoder(w).Encode(response)
-}
-
-func renderToday(w io.Writer, snapshot domain.Snapshot, summary domain.Summary) error {
-	if _, err := fmt.Fprintf(w, "Sprint: %s\n", snapshot.Sprint.Name); err != nil {
-		return err
-	}
-	if snapshot.Sprint.Goal != "" {
-		if _, err := fmt.Fprintf(w, "Goal:   %s\n", snapshot.Sprint.Goal); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(w, "Work:   %d total, %d done, %d blocked, %d awaiting review, %d pipeline failing\n\n",
-		summary.Total(),
-		summary.Count(domain.StatusDone),
-		summary.Count(domain.StatusBlocked),
-		summary.Count(domain.StatusAwaitingReview),
-		summary.Count(domain.StatusPipelineFailed),
-	); err != nil {
-		return err
-	}
-
-	for _, item := range summary.Items {
-		if _, err := fmt.Fprintf(w, "- %-12s %-18s %s\n", item.Item.ID, item.Status, item.Item.Title); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "flux - a minimal, fluid SDLC cockpit")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  flux today --input snapshot.json [--stale-after 168h] [--json]")
-	fmt.Fprintln(w, "  flux today --gitlab-url URL --gitlab-group GROUP [--json]")
-	fmt.Fprintln(w, "  flux serve --addr 127.0.0.1:8080")
-	fmt.Fprintln(w, "  flux serve --fixture examples/today.json --addr 127.0.0.1:8080")
-	fmt.Fprintln(w, "  flux version")
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "GitLab scope is configured with FLUX_GITLAB_GROUP.")
-	fmt.Fprintln(w, "GitLab credentials are read from FLUX_GITLAB_SERVICE_TOKEN or FLUX_GITLAB_TOKEN.")
-	fmt.Fprintln(w, "Live server also requires FLUX_SESSION_KEY and GitLab OAuth settings; webhook setup is optional.")
-	fmt.Fprintln(w, "Use --fixture or FLUX_FIXTURE_FILE for a loopback-only offline cockpit server.")
 }

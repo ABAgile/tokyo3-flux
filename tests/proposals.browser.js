@@ -1,0 +1,38 @@
+// Disposable seeded native workspace. Connector disabled; configured machine
+// fixture token/subject is a viewer. No production credentials or data.
+async page => {
+ const check=(ok,message)=>{if(!ok)throw new Error(message);};
+ await page.setViewportSize({width:1440,height:1000});await page.reload();
+ await page.getByRole('button',{name:'Proposals',exact:true}).waitFor();
+ const board=()=>page.evaluate(async()=> (await fetch(`/api/v2/workspaces/${document.querySelector('#workspace').value}/board`)).json());
+ let b=await board();const item=b.items[0];const originalTitle=item.title;
+ const doc={version:1,workspace_id:b.workspace.id,revision:b.workspace.revision,title:'Agent acceptance criteria',rationale:'Inspect the native dependency evidence. '+ 'x'.repeat(200),provenance:'Unverified Pi fixture '+ 'y'.repeat(150),evidence:[{kind:'item',id:item.id,revision:item.revision}],operations:[{kind:'item.update',target:item.id,expected_revision:item.revision,item:{...item,title:'Human-approved native change',description:'Acceptance criteria: explicit human approval; never execute <script>alert(1)</script>.'}}]};
+ const openList=()=>page.getByRole('button',{name:'Proposals',exact:true}).click();
+ const importDoc=async d=>{await openList();await page.getByRole('button',{name:'Import proposal or migration JSON',exact:true}).click();await page.getByLabel('Proposal JSON',{exact:true}).fill(JSON.stringify(d));await page.getByLabel('Import rationale',{exact:true}).fill('Review a suggested native change');await page.getByRole('button',{name:'Save draft only',exact:true}).click();await page.locator('dialog').waitFor({state:'hidden'});};
+ const review=async title=>{await openList();await page.getByRole('button',{name:'Review '+title,exact:true}).click();await page.getByRole('heading',{name:'Review planning proposal',exact:true}).waitFor();};
+ await importDoc(doc);b=await board();check(b.workspace.revision===doc.revision&&b.items.find(i=>i.id===item.id).title===originalTitle,'draft changed native planning');
+ await review(doc.title);
+ check(await page.getByText('Before: "'+originalTitle+'"\nAfter: "Human-approved native change"',{exact:true}).count()===1,'exact title diff missing');
+ await page.getByLabel('Approval rationale',{exact:true}).fill('Reviewed the exact field changes');
+ await page.getByRole('button',{name:'Accept exact diff',exact:true}).click();check(await page.locator('dialog').isVisible(),'acceptance lacked explicit consent');
+ await page.getByLabel('Approval rationale',{exact:true}).focus();
+ for(const theme of ['light','dark']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);for(const width of [1440,768,390]){await page.setViewportSize({width,height:1000});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'page overflow');check(await page.locator('dialog').evaluate(d=>d.scrollWidth<=d.clientWidth),'proposal overflow');await page.locator('dialog').evaluate(d=>d.scrollTop=0);await page.screenshot({path:`/tmp/flux-cutover/proposal-${theme}-${width}.png`});}}
+ await page.getByLabel('I reviewed and approve this exact diff',{exact:true}).check();await page.getByRole('button',{name:'Accept exact diff',exact:true}).focus();await page.keyboard.press('Enter');await page.locator('dialog').waitFor({state:'hidden'});
+ b=await board();check(b.items.find(i=>i.id===item.id).title==='Human-approved native change','approved change not applied');
+ // A new draft becomes stale when another browser command changes planning.
+ const current=b.items.find(i=>i.id===item.id);const stale={...doc,title:'Stale fixture proposal',revision:b.workspace.revision,evidence:[{kind:'item',id:current.id,revision:current.revision}],operations:[{kind:'item.rank',target:current.id,expected_revision:current.revision,before:''}]};await importDoc(stale);
+ await page.evaluate(async()=>{const session=await (await fetch('/api/v2/session')).json();const root='/api/v2/workspaces/'+document.querySelector('#workspace').value;const b=await (await fetch(root+'/board')).json();const r=await fetch(root+'/changes',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf,'Idempotency-Key':'fixture-concurrent-native-change-001'},body:JSON.stringify({kind:'label.save',revision:b.workspace.revision,name:'parallel edit'})});if(!r.ok)throw new Error('concurrent change failed');});
+ await review(stale.title);await page.getByText(/Planning or evidence changed/).waitFor();check(!await page.getByRole('button',{name:'Accept exact diff',exact:true}).isVisible(),'stale proposal could be accepted');
+ await page.getByRole('button',{name:'Reject proposal',exact:true}).click();await page.getByLabel('Rejection rationale',{exact:true}).fill('Planning changed; do not automatically rebase');await page.getByRole('button',{name:'Reject proposal',exact:true}).click();await page.locator('dialog').waitFor({state:'hidden'});
+ // Explicit mapped import and repeat: stable native IDs, no duplicates.
+ b=await board();const source='https://gitlab.example/projects/42/issues/700/';
+ let imported={version:1,workspace_id:b.workspace.id,revision:b.workspace.revision,title:'Mapped migration',rationale:'Explicit source and native mapping',provenance:'Operator fixture snapshot, unverified',evidence:[],operations:[],imports:[{source,item:{title:'Imported fixture item',description:'Mapped explicitly',column_id:b.columns[0].id,project_id:'',assignee:'',priority:'normal',labels:[],sprint_ids:[],dependencies:[]}}]};
+ const accept=async title=>{await review(title);await page.getByLabel('Approval rationale',{exact:true}).fill('Approved explicit mapping');await page.getByLabel('I reviewed and approve this exact diff',{exact:true}).check();await page.getByRole('button',{name:'Accept exact diff',exact:true}).click();await page.locator('dialog').waitFor({state:'hidden'});};
+ await importDoc(imported);await accept(imported.title);b=await board();const receipt=b.imported.find(r=>r.source===source);check(!!receipt,'missing native source receipt');const count=b.items.length;
+ imported={...imported,title:'Repeated migration',revision:b.workspace.revision};await importDoc(imported);await review(imported.title);await page.getByText(/New imports: 0 · Already imported, retained unchanged: 1/).waitFor();await page.keyboard.press('Escape');await accept(imported.title);
+ b=await board();check(b.items.length===count&&b.imported.find(r=>r.source===source).item_id===receipt.item_id,'import created duplicate identity');
+ const security=await page.evaluate(async()=>{const root='/api/v2/workspaces/'+document.querySelector('#workspace').value;const headers={Authorization:'Bearer fixture-native-machine-token-0000000000','Content-Type':'application/json'};const statuses=[];for(const kind of ['proposal.import','proposal.accept','proposal.reject']){statuses.push((await fetch(root+'/changes',{method:'POST',headers,body:JSON.stringify({kind})})).status)};return {statuses,read:(await fetch(root+'/read/board?limit=1',{headers})).status,legacy:(await fetch('/api/today',{headers})).status};});
+ check(security.read===200&&security.legacy===404&&security.statuses.every(s=>s===405),'native machine/retired-route boundary failed');
+ await review(doc.title);check(await page.getByText(/Reviewed by fixture-user/).count()===1,'reviewer attribution missing');check(!await page.getByRole('button',{name:'Accept exact diff',exact:true}).isVisible(),'accepted proposal exposed repeated acceptance');await page.keyboard.press('Escape');
+ return 'PASS: native proposal draft/consent/exact diff, immutable accepted review, stale rejection, mapped import/retry identity, machine write denial, retired API, keyboard and six light/dark layouts.';
+}

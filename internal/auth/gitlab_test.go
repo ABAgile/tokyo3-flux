@@ -56,7 +56,7 @@ func TestGitLabOAuthLogin(t *testing.T) {
 		t.Fatalf("NewGitLab() error = %v", err)
 	}
 
-	loginRequest := httptest.NewRequest(http.MethodGet, "/auth/login?return_to=%2Fapi%2Ftoday", nil)
+	loginRequest := httptest.NewRequest(http.MethodGet, "/auth/login?return_to="+url.QueryEscape("/api/v2/workspaces/w/read/board"), nil)
 	loginResponse := httptest.NewRecorder()
 	authenticator.Handler().ServeHTTP(loginResponse, loginRequest)
 	if got, want := loginResponse.Code, http.StatusSeeOther; got != want {
@@ -89,7 +89,7 @@ func TestGitLabOAuthLogin(t *testing.T) {
 	if got, want := callbackResponse.Code, http.StatusSeeOther; got != want {
 		t.Fatalf("callback status = %d, want %d", got, want)
 	}
-	if got, want := callbackResponse.Header().Get("Location"), "/api/today"; got != want {
+	if got, want := callbackResponse.Header().Get("Location"), "/api/v2/workspaces/w/read/board"; got != want {
 		t.Errorf("callback location = %q, want %q", got, want)
 	}
 	if tokenUsername != "flux-client" || tokenPassword != "flux-secret" || tokenRequest.Get("code") != "auth-code" {
@@ -120,7 +120,7 @@ func TestGitLabOAuthLogin(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	protectedRequest := httptest.NewRequest(http.MethodGet, "/api/today", nil)
+	protectedRequest := httptest.NewRequest(http.MethodGet, "/api/v2/workspaces/w/read/board", nil)
 	protectedRequest.AddCookie(sessionCookie)
 	protectedResponse := httptest.NewRecorder()
 	protected.ServeHTTP(protectedResponse, protectedRequest)

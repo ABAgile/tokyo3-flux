@@ -1,65 +1,88 @@
-# Flux server for a self-hosted GitLab instance.
+# Native Flux planning examination stack.
+# Copy .env.example to .env and configure the session key and GitLab OAuth.
+#   docker compose up --build -d
+# Then bootstrap a workspace with your GitLab numeric user ID; see
+# README.md#compose.
 #
-# Copy .env.example to .env, fill in the required values, then run:
-#   docker compose -f compose.yml up --build -d
-#
-# Webhooks are optional. If enabled later, configure GitLab to POST to:
-#   http(s)://<flux-host>/webhooks/gitlab
-# using FLUX_GITLAB_WEBHOOK_SECRET as its secret token. Enable issue,
-# merge-request, and pipeline events as appropriate. If group webhooks are
-# unavailable, configure the same hook on each project.
+# Examination only: the bundled DB uses one role and non-SSL connections.
+# Its development credentials are not suitable for production. No DB port is
+# published. The browser still requires authenticated OAuth sessions.
 
 name: ${COMPOSE_PROJECT_NAME:-flux}
 
+x-flux-build: &flux-build
+  context: .
+  target: server
+  args:
+    VERSION: ${VERSION:-dev-docker}
+
 services:
-  flux:
-    build:
-      context: .
-      target: server
-      args:
-        VERSION: ${VERSION:-dev-docker}
+  db:
+    image: postgres:17-alpine
     restart: unless-stopped
+    environment:
+      POSTGRES_DB: flux
+      POSTGRES_USER: flux
+      POSTGRES_PASSWORD: flux
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flux -d flux"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  migrate:
+    build: *flux-build
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # The same URL is used for migration, operator commands, and serving.
+      FLUX_DATABASE_URL: &database-url "postgres://flux:flux@db:5432/flux?sslmode=disable"
+
+  flux:
+    build: *flux-build
+    command: ["serve"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
-      - "${FLUX_PORT:-8080}:8080"
+      - "${FLUX_BIND_ADDR:-127.0.0.1}:${FLUX_PORT:-8080}:8080"
     environment:
       TZ: "${TZ:-UTC}"
-
-      # Flux HTTP server and local durable state.
       FLUX_ADDR: ":8080"
-      FLUX_STATE_DIR: /var/lib/flux
-      FLUX_RECONCILE_INTERVAL: "${FLUX_RECONCILE_INTERVAL:-5m}"
+      FLUX_DATABASE_URL: *database-url
 
-      # GitLab group source and background reconciliation credential.
-      FLUX_GITLAB_URL: "${FLUX_GITLAB_URL:?set FLUX_GITLAB_URL}"
-      FLUX_GITLAB_SERVICE_TOKEN: "${FLUX_GITLAB_SERVICE_TOKEN:?set FLUX_GITLAB_SERVICE_TOKEN}"
-      # Optional separate flux-mutation-bot credential (Reporter + api scope)
-      # used only after browser approval.
-      FLUX_GITLAB_WRITE_TOKEN: "${FLUX_GITLAB_WRITE_TOKEN:-}"
-      FLUX_GITLAB_GROUP: "${FLUX_GITLAB_GROUP:?set FLUX_GITLAB_GROUP}"
-      FLUX_SPRINT_GOAL: "${FLUX_SPRINT_GOAL:-}"
-      FLUX_GITLAB_BLOCKED_LABELS: "${FLUX_GITLAB_BLOCKED_LABELS:-status::blocked,blocked}"
-      # Optional event trigger; periodic pull reconciliation works without it.
-      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:-}"
-
-      # Optional read-only machine credential for API-backed Pi tools.
+      # Optional workspace-scoped, read-only machine access.
       FLUX_API_TOKEN: "${FLUX_API_TOKEN:-}"
+      FLUX_API_SUBJECT: "${FLUX_API_SUBJECT:-}"
 
       # Sealed browser session key. Generate with: openssl rand -hex 32
       FLUX_SESSION_KEY: "${FLUX_SESSION_KEY:?set FLUX_SESSION_KEY to 64 hex characters}"
 
-      # GitLab OAuth application. Register the exact redirect URL in GitLab.
+      # Native observations reuse the configured GitLab instance and read token.
+      FLUX_GITLAB_SERVICE_TOKEN: "${FLUX_GITLAB_SERVICE_TOKEN:-}"
+      FLUX_GITLAB_REFRESH_INTERVAL: "${FLUX_GITLAB_REFRESH_INTERVAL:-1m}"
+      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:-}"
+
+      # Browser OAuth login, independent of observation credentials.
+      FLUX_GITLAB_URL: "${FLUX_GITLAB_URL:?set FLUX_GITLAB_URL}"
       FLUX_GITLAB_OAUTH_CLIENT_ID: "${FLUX_GITLAB_OAUTH_CLIENT_ID:?set FLUX_GITLAB_OAUTH_CLIENT_ID}"
       FLUX_GITLAB_OAUTH_CLIENT_SECRET: "${FLUX_GITLAB_OAUTH_CLIENT_SECRET:?set FLUX_GITLAB_OAUTH_CLIENT_SECRET}"
       FLUX_GITLAB_OAUTH_REDIRECT_URL: "${FLUX_GITLAB_OAUTH_REDIRECT_URL:?set FLUX_GITLAB_OAUTH_REDIRECT_URL}"
-
-    volumes:
-      - state:/var/lib/flux
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
       interval: 10s
       timeout: 3s
       retries: 6
       start_period: 5s
 
 volumes:
-  state:
+  db:

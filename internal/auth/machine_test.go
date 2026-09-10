@@ -40,7 +40,7 @@ func TestMachineTokenGate(t *testing.T) {
 			if test.name == "write rejected" {
 				method = http.MethodPost
 			}
-			request := httptest.NewRequest(method, "/api/today", nil)
+			request := httptest.NewRequest(method, "/api/v2/workspaces/w/read/board", nil)
 			if test.authorize != "" {
 				request.Header.Set("Authorization", test.authorize)
 			}
