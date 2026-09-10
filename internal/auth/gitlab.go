@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,7 @@ type Config struct {
 // GitLab's OAuth provider and issues Flux's sealed session cookie.
 type Authenticator struct {
 	oauth      oauth2.Config
+	gitlabURL  string
 	userURL    string
 	httpClient *http.Client
 	sessions   *session.Manager
@@ -85,6 +87,7 @@ func NewGitLab(cfg Config, sessions *session.Manager) (*Authenticator, error) {
 	}
 
 	return &Authenticator{
+		gitlabURL: baseURL,
 		oauth: oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -119,11 +122,12 @@ type flowState struct {
 }
 
 type gitlabUser struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	State    string `json:"state"`
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	AvatarURL string `json:"avatar_url"`
+	State     string `json:"state"`
 }
 
 func (a *Authenticator) login(w http.ResponseWriter, r *http.Request) {
@@ -210,6 +214,11 @@ func (a *Authenticator) callback(w http.ResponseWriter, r *http.Request) {
 	if sess.Name == "" {
 		sess.Name = user.Username
 	}
+	if avatar := safeAvatarURL(a.gitlabURL, user.AvatarURL); avatar != "" {
+		sess.Extra, _ = json.Marshal(struct {
+			AvatarURL string `json:"avatar_url"`
+		}{AvatarURL: avatar})
+	}
 	if err := a.sessions.IssueSession(w, r, sess); err != nil {
 		a.log.Error("Flux session issuance failed", "error", err)
 		http.Error(w, "session initialization failed", http.StatusInternalServerError)
@@ -243,6 +252,22 @@ func (a *Authenticator) fetchUser(ctx context.Context, token *oauth2.Token) (git
 		return gitlabUser{}, errors.New("user endpoint returned incomplete identity")
 	}
 	return user, nil
+}
+
+func safeAvatarURL(baseRaw, raw string) string {
+	if len(raw) > 2048 {
+		return ""
+	}
+	base, err := url.Parse(baseRaw)
+	avatar, avatarErr := url.Parse(raw)
+	if err != nil || avatarErr != nil || avatar.Scheme != base.Scheme || avatar.Host != base.Host || avatar.User != nil || avatar.ForceQuery || avatar.RawQuery != "" || avatar.Fragment != "" || avatar.RawPath != "" || path.Clean(avatar.Path) != avatar.Path {
+		return ""
+	}
+	prefix := strings.TrimRight(base.Path, "/") + "/"
+	if !strings.HasPrefix(avatar.Path, prefix) {
+		return ""
+	}
+	return avatar.String()
 }
 
 func parseBaseURL(raw string) (string, error) {

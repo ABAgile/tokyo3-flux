@@ -36,6 +36,33 @@ func TestConfig(t *testing.T) {
 		t.Fatal("unsafe navigation URL")
 	}
 }
+func TestMemberProfiles(t *testing.T) {
+	var calls atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/api/v4/users" || r.Header.Get("PRIVATE-TOKEN") != "server-secret" {
+			t.Fatalf("profile request = %s %q", r.URL, r.Header.Get("PRIVATE-TOKEN"))
+		}
+		if got := r.URL.Query()["user_ids[]"]; len(got) != 2 || got[0] != "42" || got[1] != "7" {
+			t.Fatalf("user IDs = %v", got)
+		}
+		_, _ = w.Write([]byte(`[{"id":42,"username":"alex","name":"Alex Example","avatar_url":"` + server.URL + `/uploads/alex.png"}]`))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := c.Profiles(context.Background(), []string{"42", "7", "fixture-user", "42"})
+	if profiles["42"].Name != "Alex Example" || profiles["42"].AvatarURL != server.URL+"/uploads/alex.png" || len(profiles) != 1 {
+		t.Fatalf("profiles = %+v", profiles)
+	}
+	if cached := c.Profiles(context.Background(), []string{"42"}); cached["42"].Name != "Alex Example" || calls.Load() != 1 {
+		t.Fatalf("profile cache = %+v, calls = %d", cached, calls.Load())
+	}
+}
+
 func TestObservations(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, kind, want string

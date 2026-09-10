@@ -29,7 +29,7 @@ async (page) => {
  const initial=await board(); const first=initial.items[0], second=initial.items[1]; const ready=initial.columns[0], doing=initial.columns[1];
  const card = id => page.locator(`[data-item="${id}"]`);
  const column = id => page.locator(`[data-column="${id}"]`);
- const handle = id => card(id).getByRole('button',{name:/^Drag card/});
+ const handle = id => card(id);
  check(await card(first.id).getByText('Alex Planner',{exact:true}).count()===1,'raw subject shown instead of name');
  await drag(handle(second.id), card(first.id), {x:16,y:8}); await saved();
  check((await board()).items[0].id===second.id,'card before-drop did not reorder');
@@ -46,19 +46,19 @@ async (page) => {
  await page.getByRole('status').filter({hasText:'WIP limit'}).waitFor();
  check(await column(ready.id).locator(`[data-item="${second.id}"]`).count()===1,'rejected drop rearranged local card');
  check((await board()).items.find(i=>i.id===second.id).column_id===ready.id,'WIP drop persisted');
- await drag(column(doing.id).getByRole('button',{name:/^Drag list/}),column(ready.id),{x:8,y:16}); await saved();
+ await drag(column(doing.id).locator('.column-head'),column(ready.id),{x:8,y:16}); await saved();
  check((await board()).columns[0].id===doing.id,'list before-drop failed');
  box=await column(ready.id).boundingBox();
- await drag(column(doing.id).getByRole('button',{name:/^Drag list/}),column(ready.id),{x:box.width-8,y:16}); await saved();
+ await drag(column(doing.id).locator('.column-head'),column(ready.id),{x:box.width-8,y:16}); await saved();
  check((await board()).columns[0].id===ready.id,'list after-drop failed');
  await page.reload(); await page.getByRole('button',{name:'Drag first',exact:true}).waitFor();
  check(await column(doing.id).locator(`[data-item="${first.id}"]`).count()===1,'drop did not survive reload');
- // Group/filter drops change order/column, never project classification.
- await page.getByRole('combobox',{name:'Group by',exact:true}).selectOption('project');
+ check(await card(first.id).getAttribute('draggable')==='true','card body is not draggable');
+ check(await column(doing.id).locator('.column-head').getAttribute('draggable')==='true','column header is not draggable');
+ // Project filtering changes visibility, never project classification or order.
  await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('none');
  await drag(handle(first.id),card(second.id),{x:16,y:8}); await saved();
- check((await board()).items.every(i=>i.project_id===''),'grouped drop changed project');
- await page.getByRole('combobox',{name:'Group by',exact:true}).selectOption('none');
+ check((await board()).items.every(i=>i.project_id===''),'project filter drop changed classification');
  await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
  // A drop begun against stale data must conflict, not overwrite another tab.
  const other=await page.context().newPage(); await other.goto(page.url());
@@ -90,8 +90,9 @@ async (page) => {
  // Check viewer affordances independently of the backend authorization tests.
  await page.route('**/board',async route=>{const response=await route.fetch();const data=await response.json();data.role='viewer';await route.fulfill({response,json:data});});
  await page.reload(); await page.getByRole('button',{name:'Drag second',exact:true}).waitFor();
- check(await handle(second.id).isDisabled(),'viewer drag handle enabled');
- check(await handle(second.id).getAttribute('draggable')==='false','viewer draggable');
+ check(await card(second.id).getByRole('button',{name:/^Drag card/}).count()===0,'explicit card drag handle remains');
+ check(await card(second.id).getAttribute('draggable')==='false','viewer draggable');
+ check(await column(doing.id).locator('.column-head').getAttribute('draggable')==='false','viewer column draggable');
  check(await page.getByRole('button',{name:'Labels',exact:true}).isDisabled(),'viewer label management enabled');
  await page.unroute('**/board'); await page.reload();
  await page.getByRole('button',{name:'Drag second',exact:true}).waitFor();
@@ -107,5 +108,5 @@ async (page) => {
    check(await page.getByRole('button',{name:'Drag second',exact:true}).evaluate(e=>e===document.activeElement),'editor focus return');
   }
  }
- return 'PASS: card/list before/after drops, cross-list and grouped movement, WIP/stale rejection, persistence, display names, label CRUD/multi-select/archive propagation, viewer controls, responsive keyboard workflows.';
+ return 'PASS: implicit card/header before/after drops, cross-list and filtered movement, WIP/stale rejection, persistence, display names, label CRUD/multi-select/archive propagation, viewer controls, responsive keyboard workflows.';
 }

@@ -53,7 +53,11 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			return
 		}
 		sess, _ := session.SessionFromContext(r.Context())
-		respond(w, 200, map[string]any{"subject": sess.Subject, "name": sess.Name, "csrf": token, "demo": h.demo})
+		var profile struct {
+			AvatarURL string `json:"avatar_url"`
+		}
+		_ = json.Unmarshal(sess.Extra, &profile)
+		respond(w, 200, map[string]any{"subject": sess.Subject, "name": sess.Name, "avatar_url": profile.AvatarURL, "csrf": token, "demo": h.demo})
 	})
 	mux.HandleFunc("GET /api/v2/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		v, err := h.repo.Workspaces(r.Context(), h.subject(r, machine))

@@ -26,9 +26,10 @@ type Workspace struct {
 	Revision int64  `json:"revision"`
 }
 type Member struct {
-	Name    string `json:"name"`
-	Subject string `json:"subject"`
-	Role    string `json:"role"`
+	Name      string `json:"name"`
+	Subject   string `json:"subject"`
+	Role      string `json:"role"`
+	AvatarURL string `json:"avatar_url,omitempty"`
 }
 type Project struct {
 	ID          string `json:"id"`

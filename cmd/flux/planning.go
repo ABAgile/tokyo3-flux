@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -166,6 +167,18 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
+	imageSources := []string{"'self'"}
+	for _, raw := range []string{os.Getenv("FLUX_GITLAB_URL"), connectorSettings.Client.Instance()} {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {
+			continue
+		}
+		source := u.Scheme + "://" + u.Host
+		if !slices.Contains(imageSources, source) {
+			imageSources = append(imageSources, source)
+		}
+	}
+	contentSecurityPolicy := "default-src 'self'; script-src 'self'; style-src 'self'; img-src " + strings.Join(imageSources, " ") + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if *demo {
 			host := r.Host
@@ -178,7 +191,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 				return
 			}
 		}
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		routes.ServeHTTP(w, r)
@@ -235,7 +248,7 @@ func seedPlanning(ctx context.Context, db *store.Store, wid, pid, subject string
 	}{
 		{"Define the team's acceptance criteria", "Agree what ready and done mean. Record the checklist in each work item's description.", "high", "planning", 0, true},
 		{"Review the first sprint's scope", "Keep the goal achievable. Move lower-priority work to the backlog before starting new cards.", "normal", "planning", 0, true},
-		{"Try the native Kanban workflow", "Move this card with the column selector. Reordering and WIP checks are saved transactionally.", "high", "product", 1, true},
+		{"Try the native Kanban workflow", "Drag this card from its body, or use the column selector in the editor. Reordering and WIP checks are saved transactionally.", "high", "product", 1, true},
 		{"Validate sprint carry-over decisions", "Close a sprint with a rationale and explicitly choose backlog or the next planned sprint.", "normal", "product", 1, true},
 		{"Review workspace permissions", "Viewer access is read-only. Members can plan; all changes have native history.", "high", "security", 2, true},
 		{"Create a durable planning home", "Native work items live in PostgreSQL, independently of GitLab issues and milestones.", "normal", "platform", 3, true},

@@ -15,7 +15,8 @@ import (
 func TestGitLabOAuthLogin(t *testing.T) {
 	var tokenRequest url.Values
 	var tokenUsername, tokenPassword string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/oauth/token":
 			if err := r.ParseForm(); err != nil {
@@ -33,11 +34,12 @@ func TestGitLabOAuthLogin(t *testing.T) {
 				t.Errorf("Authorization = %q, want %q", got, want)
 			}
 			writeJSON(t, w, map[string]any{
-				"id":       42,
-				"username": "alex",
-				"name":     "Alex Example",
-				"email":    "alex@example.test",
-				"state":    "active",
+				"id":         42,
+				"username":   "alex",
+				"name":       "Alex Example",
+				"email":      "alex@example.test",
+				"avatar_url": server.URL + "/uploads/alex.png",
+				"state":      "active",
 			})
 		default:
 			http.NotFound(w, r)
@@ -118,6 +120,12 @@ func TestGitLabOAuthLogin(t *testing.T) {
 		if sess.Subject != "42" || sess.Name != "Alex Example" || sess.Email != "alex@example.test" {
 			t.Errorf("session = %+v, want GitLab identity", sess)
 		}
+		var profile struct {
+			AvatarURL string `json:"avatar_url"`
+		}
+		if err := json.Unmarshal(sess.Extra, &profile); err != nil || profile.AvatarURL != server.URL+"/uploads/alex.png" {
+			t.Errorf("session profile = %+v, unmarshal error = %v", profile, err)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	protectedRequest := httptest.NewRequest(http.MethodGet, "/api/v2/workspaces/w/read/board", nil)
@@ -153,6 +161,23 @@ func TestGitLabOAuthRejectsStateMismatch(t *testing.T) {
 	authenticator.Handler().ServeHTTP(callbackResponse, callbackRequest)
 	if callbackResponse.Code != http.StatusBadRequest {
 		t.Fatalf("state mismatch status = %d, want %d", callbackResponse.Code, http.StatusBadRequest)
+	}
+}
+
+func TestSafeAvatarURL(t *testing.T) {
+	base := "https://gitlab.example.com/gitlab"
+	for _, test := range []struct {
+		raw, want string
+	}{
+		{base + "/uploads/avatar.png", base + "/uploads/avatar.png"},
+		{"https://other.example/avatar.png", ""},
+		{base + "/uploads/avatar.png?token=secret", ""},
+		{base + "/../avatar.png", ""},
+		{"javascript:alert(1)", ""},
+	} {
+		if got := safeAvatarURL(base, test.raw); got != test.want {
+			t.Errorf("safeAvatarURL(%q) = %q, want %q", test.raw, got, test.want)
+		}
 	}
 }
 

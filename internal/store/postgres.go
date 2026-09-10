@@ -252,7 +252,34 @@ func (s *Store) Board(ctx context.Context, wid, subject string) (p.Board, error)
 	}
 	b.ConnectorInstance = s.connector.Instance()
 	b.RefreshSeconds = int64(s.refreshInterval / time.Second)
-	return b, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return b, err
+	}
+	s.enrichMembers(ctx, &b)
+	return b, nil
+}
+
+func (s *Store) enrichMembers(ctx context.Context, b *p.Board) {
+	if s.connector == nil || len(b.Members) == 0 {
+		return
+	}
+	subjects := make([]string, 0, len(b.Members))
+	for _, member := range b.Members {
+		subjects = append(subjects, member.Subject)
+	}
+	profileCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	profiles := s.connector.Profiles(profileCtx, subjects)
+	for i := range b.Members {
+		profile, ok := profiles[b.Members[i].Subject]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(b.Members[i].Name) == "" {
+			b.Members[i].Name = profile.Name
+		}
+		b.Members[i].AvatarURL = profile.AvatarURL
+	}
 }
 
 func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) {

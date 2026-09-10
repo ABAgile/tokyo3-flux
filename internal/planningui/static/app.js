@@ -28,15 +28,17 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; }
 let drag;
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
-function dragHandle(type, id, name) {
- const handle = writeButton('⠿', () => notice('Drag this handle, or use the movement buttons and selects.'), 'drag-handle');
- handle.setAttribute('aria-label', `Drag ${type} ${name}`); handle.draggable = writable();
- handle.ondragstart = e => { if (!writable()) { e.preventDefault(); return; } e.stopPropagation(); drag = {type, id, revision: board.workspace.revision, root}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); };
- handle.ondragend = () => { drag = undefined; clearDropMarks(); };
- return handle;
+function makeDraggable(node, type, id, name) {
+ node.dataset.dragType = type; node.draggable = writable(); node.setAttribute('aria-label', `Drag ${type} ${name}`);
+ node.addEventListener('dragstart', e => {
+  if (!writable() || (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))) { e.preventDefault(); return; }
+  e.stopPropagation(); drag = {type, id, revision: board.workspace.revision, root}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
+ });
+ node.addEventListener('dragend', () => { drag = undefined; clearDropMarks(); });
+ return node;
 }
 function dropZone(node, type, command, axis = 'y') {
  function accepts() { return drag?.type === type && drag.root === root && writable(); }
@@ -45,7 +47,18 @@ function dropZone(node, type, command, axis = 'y') {
  node.addEventListener('dragleave', e => { if (!node.contains(e.relatedTarget)) node.classList.remove('drop-before', 'drop-after', 'drop-end'); });
  node.addEventListener('drop', e => { if (!accepts()) return; e.preventDefault(); e.stopPropagation(); const c = command(drag.id, after(e)); const revision = drag.revision; drag = undefined; clearDropMarks(); if (c && c.target !== c.before) quick({...c, revision}); });
 }
-function memberName(subject) { return board.members.find(m => m.subject === subject)?.name || (subject === session.subject && session.name) || (subject ? `Unnamed member (${subject})` : 'Unassigned'); }
+function memberInfo(subject) {
+ const member = board.members.find(m => m.subject === subject); const name = member?.name || (subject === session?.subject && session.name) || (subject ? `Unnamed member (${subject})` : 'Unassigned');
+ return {name, avatarURL: member?.avatar_url || (subject === session?.subject && session.avatar_url) || ''};
+}
+function memberName(subject) { return memberInfo(subject).name; }
+function initials(name) { const words = name.trim().split(/\s+/).filter(Boolean); return words.length ? words.slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase() : '—'; }
+function assigneeView(subject) {
+ const info = memberInfo(subject); const node = el('span', undefined, 'assignee'); node.setAttribute('aria-label', `Assignee: ${info.name}`); node.title = info.name;
+ const avatar = el('span', undefined, 'avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
+ if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
+ node.append(avatar, el('span', info.name)); return node;
+}
 function activeSprints() { return board.sprints.filter(s => s.state === 'active'); }
 function projectName(id) { return board.projects.find(p => p.id === id)?.name || 'No project'; }
 function done(item) { return board.columns.find(c => c.id === item.column_id)?.category === 'done'; }
@@ -89,20 +102,18 @@ function card(item, peers) {
  const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); top.append(el('span', `FX-${item.id.slice(0, 6).toUpperCase()}`, 'card-id'), el('span', item.priority, item.priority === 'urgent' ? 'badge warning' : 'badge'));
  c.dataset.item = item.id;
  if (!item.archived) {
-  top.prepend(dragHandle('card', item.id, item.title));
+  makeDraggable(c, 'card', item.id, item.title);
   dropZone(c, 'card', (id, after) => ({kind: 'item.move', target: id, destination: item.column_id, before: after ? peers[peers.findIndex(p => p.id === item.id) + 1]?.id || '' : item.id}));
  }
  c.append(top, button(item.title, () => editItem(item), 'card-title'), el('small', projectName(item.project_id), 'muted'));
  const sprintTags = el('div', undefined, 'tags'); item.sprint_ids.forEach(id => sprintTags.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); c.append(sprintTags);
  const tags = el('div', undefined, 'tags'); item.labels.forEach(l => tags.append(el('span', l, 'badge'))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
- c.append(el('small', memberName(item.assignee), 'muted'));
- const controls = el('div', undefined, 'card-controls');
- if (!item.archived) {
-  const label = el('label', 'Move to'); const select = el('select'); options(select, board.columns.map(v => [v.id, v.name]), item.column_id); select.setAttribute('aria-label', `Move ${item.title}`); select.disabled = !writable(); select.onchange = () => quick({ kind: 'item.move', target: item.id, destination: select.value }); label.append(select); controls.append(label);
-  const index = peers.findIndex(i => i.id === item.id); const up = writeButton('↑', () => quick({ kind: 'item.rank', target: item.id, before: peers[index - 1].id })); up.setAttribute('aria-label', `Prioritize ${item.title}`); up.disabled ||= index === 0;
-  const down = writeButton('↓', () => quick({ kind: 'item.rank', target: item.id, before: peers[index + 2]?.id || '' })); down.setAttribute('aria-label', `Deprioritize ${item.title}`); down.disabled ||= index === peers.length - 1; controls.append(up, down);
- } else controls.append(writeButton('Restore item', () => quick({ kind: 'item.restore', target: item.id })));
- c.append(controls);
+ c.append(assigneeView(item.assignee));
+ if (item.archived) {
+  const controls = el('div', undefined, 'card-controls');
+  controls.append(writeButton('Restore item', () => quick({ kind: 'item.restore', target: item.id })));
+  c.append(controls);
+ }
  const links = board.links.filter(l => l.items.includes(item.id));
  links.forEach(l => c.append(observationSummary('small', l)));
  c.append(button(`GitLab links · ${links.length}`, () => showLinks(item)));
@@ -116,17 +127,10 @@ function renderContent() {
  }
  if (view === 'history') { renderHistory(content); return; }
  const items = filteredItems(); $('count').textContent = `${items.length} items · workspace revision ${board.workspace.revision}`;
- if (view === 'board') { const grid = el('div', undefined, 'board'); for (const col of board.columns) { const section = el('section', undefined, 'column'); section.setAttribute('aria-label', col.name); const head = el('div', undefined, 'column-head'); const peers = items.filter(i => i.column_id === col.id); const total = board.items.filter(i => !i.archived && i.column_id === col.id).length; head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} WIP` : 'No limit'}`)); head.prepend(dragHandle('list', col.id, col.name)); section.dataset.column = col.id; dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(c => c.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) section.append(el('p', 'No work here', 'empty')); grid.append(section); } content.append(grid); }
+ if (view === 'board') { const grid = el('div', undefined, 'board'); for (const col of board.columns) { const section = el('section', undefined, 'column'); section.setAttribute('aria-label', col.name); const head = el('div', undefined, 'column-head'); const peers = items.filter(i => i.column_id === col.id); const total = board.items.filter(i => !i.archived && i.column_id === col.id).length; head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} WIP` : 'No limit'}`)); makeDraggable(head, 'list', col.id, col.name); section.dataset.column = col.id; dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(c => c.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) section.append(el('p', 'No work here', 'empty')); grid.append(section); } content.append(grid); }
  else { const list = el('div', undefined, 'list'); appendCards(list, items); if (!items.length) list.append(el('p', view === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.', 'empty')); content.append(list); }
 }
-function appendCards(parent, items) {
- if ($('group').value !== 'project') { items.forEach(i => parent.append(card(i, items))); return; }
- for (const id of [...board.projects.map(p => p.id), '']) {
-  const peers = items.filter(i => i.project_id === id); if (!peers.length) continue;
-  const group = el('section', undefined, 'list'); group.setAttribute('aria-label', projectName(id)); group.append(el('h3', `${projectName(id)} · ${peers.length}`, 'muted'));
-  peers.forEach(i => group.append(card(i, peers))); parent.append(group);
- }
-}
+function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
 function renderHistory(content) {
  if (!history.length) content.append(el('p', 'No planning changes yet.', 'empty'));
@@ -398,7 +402,7 @@ $('projects').onclick = manageProjects;
 $('proposals').onclick = () => showProposals();
 $('labels').onclick = manageLabels; $('members').onclick = manageMembers; $('integration').onclick = editIntegration;
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh;
-$('scope').onchange = $('group').onchange = $('project').onchange = $('search').oninput = renderContent;
+$('scope').onchange = $('project').onchange = $('search').oninput = renderContent;
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
  board = undefined; $('project').value = 'all'; $('scope').value = 'all'; $('search').value = ''; render();

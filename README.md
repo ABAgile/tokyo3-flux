@@ -14,10 +14,13 @@ planning evidence and draft suggestions for a human to review and approve.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
   memberships and optionally assigns unfinished work to another open sprint.
   Closed-scope metrics describe current cards, not historical completion.
-- Move cards with drag handles or keyboard-accessible controls. Archive instead
-  of deleting work; restore archived items before editing them.
+- Drag cards from their body and columns from their headers; the item editor keeps
+  the keyboard-accessible column movement control. Archive instead of deleting work;
+  restore archived items before editing them.
 - Viewers read, members plan and review proposals, and admins also configure
-  integrations and member display names. Membership and roles are operator-managed,
+  integrations and member display names. When configured, GitLab profile names and
+  avatars enrich assignee cards without changing native membership. Membership and
+  roles are operator-managed,
   never inferred from GitLab access.
 - Browser changes require membership, CSRF, revisions and idempotency. Planning,
   history and successful audit commit atomically. GitLab and agents never own
@@ -39,7 +42,9 @@ docker compose exec flux flux bootstrap --name 'My team' --subject GITLAB_NUMERI
 
 Register the browser-visible `/auth/callback` URL in your GitLab OAuth application
 and `FLUX_GITLAB_OAUTH_REDIRECT_URL`. Login uses `read_user`; no connector token is
-needed for planning. Use your numeric GitLab user ID, not username. Signing in
+needed for planning. When a read connector is configured, numeric workspace members
+also receive cached GitLab profile names and avatars for assignee display. Use your
+numeric GitLab user ID, not username. Signing in
 without membership displays your subject. Bootstrap prints the new workspace ID.
 
 Open <http://localhost:8080/>. Optionally add `--project 'My project'` to bootstrap,
@@ -78,19 +83,28 @@ database or starting workers. PostgreSQL is required.
 | --- | --- |
 | `FLUX_DATABASE_URL` | Runtime PostgreSQL DSN. |
 | `FLUX_ADMIN_DATABASE_URL` | Migration/bootstrap/membership DSN; defaults to runtime URL. |
-| `FLUX_DB_CERT`, `FLUX_DB_KEY`, `FLUX_DB_CA` | Runtime DB TLS; CA falls back to `FLUX_WORKLOAD_CA`. |
-| `FLUX_ADMIN_DB_CERT`, `FLUX_ADMIN_DB_KEY`, `FLUX_ADMIN_DB_CA` | Admin DB TLS, with shared-base fallbacks to runtime material. |
+| `FLUX_DB_CERT` | Runtime DB TLS certificate. |
+| `FLUX_DB_KEY` | Runtime DB TLS key. |
+| `FLUX_DB_CA` | Runtime DB TLS CA; falls back to `FLUX_WORKLOAD_CA`. |
+| `FLUX_ADMIN_DB_CERT` | Admin DB TLS certificate. |
+| `FLUX_ADMIN_DB_KEY` | Admin DB TLS key. |
+| `FLUX_ADMIN_DB_CA` | Admin DB TLS CA; falls back to runtime material. |
 | `FLUX_ADDR` | Listen address; default `127.0.0.1:8080`, overridden by `--addr`. |
 | `FLUX_PORT`, `FLUX_BIND_ADDR` | Compose HTTP publication; defaults `8080`, `127.0.0.1`. |
 | `FLUX_SESSION_KEY` | Required outside demo: 32-byte key encoded as 64 hex characters. |
 | `FLUX_GITLAB_URL` | GitLab instance root, shared by OAuth and observations. |
-| `FLUX_GITLAB_OAUTH_CLIENT_ID`, `FLUX_GITLAB_OAUTH_CLIENT_SECRET`, `FLUX_GITLAB_OAUTH_REDIRECT_URL` | Browser OAuth settings, required outside demo. |
-| `FLUX_GITLAB_SERVICE_TOKEN` | Optional server-only, restricted `read_api` token. Empty disables observations, not planning. |
-| `FLUX_GITLAB_REFRESH_INTERVAL` | Observation refresh: default `1m`, range `30s`–`1h`, or `0` for manual-only. |
-| `FLUX_GITLAB_WEBHOOK_SECRET` | Optional secret of at least 32 characters; requires observations and automatic refresh. |
-| `FLUX_API_TOKEN`, `FLUX_API_SUBJECT` | Optional machine access: token ≥32 characters and explicitly authorized subject. |
-| `FLUX_API_URL`, `FLUX_WORKSPACE` | CLI/Pi client API origin and default workspace ID. HTTPS, except HTTP loopback fixtures. |
+| `FLUX_GITLAB_OAUTH_CLIENT_ID` | Browser OAuth client ID; required outside demo. |
+| `FLUX_GITLAB_OAUTH_CLIENT_SECRET` | Browser OAuth client secret; required outside demo. |
+| `FLUX_GITLAB_OAUTH_REDIRECT_URL` | Browser OAuth redirect URL; required outside demo. |
+| `FLUX_GITLAB_SERVICE_TOKEN` | Optional server-only `read_api` token for observations/profiles. |
+| `FLUX_GITLAB_REFRESH_INTERVAL` | Refresh interval: `1m` default; `30s`–`1h`, or `0` manual-only. |
+| `FLUX_GITLAB_WEBHOOK_SECRET` | Optional 32+ character secret; requires observations/refresh. |
+| `FLUX_API_TOKEN` | Optional machine-access token of at least 32 characters. |
+| `FLUX_API_SUBJECT` | Explicitly authorized subject for machine access. |
+| `FLUX_API_URL` | CLI/Pi client API origin; HTTPS except for loopback fixtures. |
+| `FLUX_WORKSPACE` | Default workspace ID for CLI/Pi clients. |
 
+An empty service token disables observations and profile enrichment, but not planning.
 Keep database, OAuth and connector secrets server-side. Give Pi only its scoped
 API credentials, not the server's environment file. Machine mutations are denied
 even when the configured subject has an administrator role.
@@ -118,9 +132,11 @@ GRANT UPDATE (name) ON memberships TO flux_runtime;
 GRANT INSERT, UPDATE ON projects, sprints, work_items TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON board_columns TO flux_runtime;
 GRANT INSERT, DELETE ON item_labels, workspace_labels, dependencies, item_sprints TO flux_runtime;
-GRANT INSERT ON closed_sprint_scope, work_item_events, audit_events, idempotency_keys TO flux_runtime;
+GRANT INSERT ON closed_sprint_scope, work_item_events, audit_events,
+  idempotency_keys TO flux_runtime;
 GRANT INSERT, UPDATE ON workspace_integrations, integration_runs, proposals TO flux_runtime;
-GRANT INSERT, DELETE ON approved_gitlab_projects, item_external_links, webhook_deliveries TO flux_runtime;
+GRANT INSERT, DELETE ON approved_gitlab_projects, item_external_links,
+  webhook_deliveries TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON external_links TO flux_runtime;
 GRANT INSERT ON imported_items TO flux_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
@@ -238,7 +254,8 @@ retain the exact historical diff.
 `flux import` is a read-only dry run that prepares a human-reviewed import document:
 
 ```sh
-flux import --workspace WORKSPACE_ID --input snapshot.json --mapping mapping.json > import-review.json
+flux import --workspace WORKSPACE_ID --input snapshot.json \
+  --mapping mapping.json > import-review.json
 ```
 
 A snapshot contains `sprint.work_items`, each with `id`, `title` and optional
@@ -278,7 +295,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 
 | Method/path | Purpose |
 | --- | --- |
-| `GET /projects`, `GET /board` | Project list and consistent planning board with observations/import receipts. |
+| `GET /projects`, `GET /board` | Project list and planning board. |
 | `GET /read/{view}` | Agent pages; `limit`, `offset`, `revision`, optional `target`. |
 | `GET /history?before=ID` | Up to 50 descending planning events. |
 | `GET /proposals?before=SEQUENCE` | Up to 20 review summaries. |
@@ -286,8 +303,9 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | `POST /changes` | Typed, transactional browser mutation. |
 
 `GET /api/v2/workspaces` lists authorized workspaces. Browser-only
-`GET /api/v2/session` returns identity and CSRF. `/healthz` and `/readyz` check
-liveness and DB/schema readiness independently of GitLab.
+`GET /api/v2/session` returns identity, optional `avatar_url`, and CSRF. `/healthz` and
+`/readyz` check liveness and DB/schema readiness independently of GitLab. Board responses
+may include observations, import receipts, and cached GitLab profile metadata on members.
 
 Changes require `Content-Type: application/json`, `X-CSRF-Token`, a 16–120-character
 `Idempotency-Key`, and workspace `revision`. Entity edits also require their

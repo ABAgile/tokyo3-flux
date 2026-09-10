@@ -60,23 +60,21 @@ services:
       FLUX_ADDR: ":8080"
       FLUX_DATABASE_URL: *database-url
 
-      # Optional workspace-scoped, read-only machine access.
-      FLUX_API_TOKEN: "${FLUX_API_TOKEN:-}"
-      FLUX_API_SUBJECT: "${FLUX_API_SUBJECT:-}"
-
-      # Sealed browser session key. Generate with: openssl rand -hex 32
       FLUX_SESSION_KEY: "${FLUX_SESSION_KEY:?set FLUX_SESSION_KEY to 64 hex characters}"
 
-      # Native observations reuse the configured GitLab instance and read token.
-      FLUX_GITLAB_SERVICE_TOKEN: "${FLUX_GITLAB_SERVICE_TOKEN:-}"
-      FLUX_GITLAB_REFRESH_INTERVAL: "${FLUX_GITLAB_REFRESH_INTERVAL:-1m}"
-      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:-}"
-
-      # Browser OAuth login, independent of observation credentials.
       FLUX_GITLAB_URL: "${FLUX_GITLAB_URL:?set FLUX_GITLAB_URL}"
       FLUX_GITLAB_OAUTH_CLIENT_ID: "${FLUX_GITLAB_OAUTH_CLIENT_ID:?set FLUX_GITLAB_OAUTH_CLIENT_ID}"
       FLUX_GITLAB_OAUTH_CLIENT_SECRET: "${FLUX_GITLAB_OAUTH_CLIENT_SECRET:?set FLUX_GITLAB_OAUTH_CLIENT_SECRET}"
       FLUX_GITLAB_OAUTH_REDIRECT_URL: "${FLUX_GITLAB_OAUTH_REDIRECT_URL:?set FLUX_GITLAB_OAUTH_REDIRECT_URL}"
+
+      # Native observations and assignee profiles reuse the configured GitLab read token.
+      FLUX_GITLAB_SERVICE_TOKEN: "${FLUX_GITLAB_SERVICE_TOKEN:-}"
+      FLUX_GITLAB_REFRESH_INTERVAL: "${FLUX_GITLAB_REFRESH_INTERVAL:-1m}"
+      FLUX_GITLAB_WEBHOOK_SECRET: "${FLUX_GITLAB_WEBHOOK_SECRET:-}"
+
+      # Optional workspace-scoped, read-only machine access.
+      FLUX_API_TOKEN: "${FLUX_API_TOKEN:-}"
+      FLUX_API_SUBJECT: "${FLUX_API_SUBJECT:-}"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/readyz"]
       interval: 10s

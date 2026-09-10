@@ -26,17 +26,20 @@ async (page) => {
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('none');
  await page.getByRole('button',{name:title,exact:true}).waitFor();
- await page.getByRole('combobox',{name:'Group by',exact:true}).selectOption('project');
- check(await page.getByRole('heading',{name:/No project ·/}).count()>0, 'No project grouping missing');
+ check(await page.getByRole('heading',{name:/No project ·/}).count()===0, 'project grouping should be removed');
  await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
- await page.getByRole('combobox',{name:'Group by',exact:true}).selectOption('none');
- // Native keyboard movement persists, and WIP counts all projects together.
- const move=page.getByRole('combobox',{name:'Move '+title,exact:true});
- await move.focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await saved();
+ // The item editor keeps keyboard-accessible column movement, and WIP counts all projects together.
+ await page.getByRole('button',{name:title,exact:true}).click();
+ await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'}); await save();
  await page.reload(); await page.getByRole('button',{name:title,exact:true}).waitFor();
- check(await page.getByRole('combobox',{name:'Move '+title,exact:true}).locator('option:checked').textContent()==='In progress','move did not persist');
- await page.getByRole('combobox',{name:"Move Define the team's acceptance criteria",exact:true}).selectOption({label:'In progress'});
+ await page.getByRole('button',{name:title,exact:true}).click();
+ check(await page.getByRole('combobox',{name:'Board column',exact:true}).locator('option:checked').textContent()==='In progress','move did not persist');
+ await page.getByRole('button',{name:'Cancel',exact:true}).click();
+ await page.getByRole('button',{name:"Define the team's acceptance criteria",exact:true}).click();
+ await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'});
+ await page.getByRole('button',{name:'Save changes',exact:true}).click();
  await page.getByRole('status').filter({hasText:'WIP limit'}).waitFor();
+ await page.getByRole('button',{name:'Cancel',exact:true}).click();
  // A single card can belong to both sprints without duplication.
  await nav('Backlog'); await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
@@ -48,10 +51,7 @@ async (page) => {
  await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption({label:'Cross-project stream'});
  check(await page.getByRole('button',{name:title,exact:true}).count()===1,'project filtering duplicates or hides card');
  await page.getByText('1 shown · 3/3 WIP',{exact:true}).waitFor();
- await page.getByRole('combobox',{name:'Group by',exact:true}).selectOption('project');
- await page.getByRole('heading',{name:'Cross-project stream · 1',exact:true}).waitFor();
  await page.getByRole('combobox',{name:'Project filter',exact:true}).selectOption('all');
- await page.getByRole('combobox',{name:'Group by',exact:true}).selectOption('none');
  await page.getByRole('button',{name:title,exact:true}).click();
  check((await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).locator('option:checked').allTextContents()).length===2,'multi-sprint membership not persisted');
  await page.getByLabel('Title',{exact:true}).fill('Retained stale draft');
@@ -110,5 +110,5 @@ async (page) => {
    await page.keyboard.press('Escape');check(await page.getByRole('button',{name:'＋ New item',exact:true}).evaluate(e=>e===document.activeElement),'focus return');
   }
  }
- return 'PASS: workspace board, optional projects, project grouping/filtering, shared WIP, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
+ return 'PASS: workspace board, optional projects and toolbar filtering, shared WIP, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
 }

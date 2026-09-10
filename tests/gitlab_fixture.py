@@ -5,6 +5,13 @@ import json
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+
+
+AVATAR_PNG = bytes.fromhex(
+    '89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02'
+    '0000000b49444154789c6360600000000400010d0a2db40000000049454e44ae426082'
+)
 
 
 def main():
@@ -16,10 +23,31 @@ def main():
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
+            parsed = urlsplit(self.path)
+            if re.fullmatch(r'/uploads/avatar/[1-9]\d*\.png', parsed.path):
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/png')
+                self.send_header('Content-Length', str(len(AVATAR_PNG)))
+                self.end_headers()
+                self.wfile.write(AVATAR_PNG)
+                return
             if self.headers.get('PRIVATE-TOKEN') != 'fixture-read-secret':
                 self.send_error(403)
                 return
-            match = re.fullmatch(r'/api/v4/projects/42/(merge_requests|pipelines)/(\d+)', self.path)
+            if parsed.path == '/api/v4/users':
+                users = []
+                for raw_id in parse_qs(parsed.query).get('user_ids[]', []):
+                    if re.fullmatch(r'[1-9]\d*', raw_id):
+                        user_id = int(raw_id)
+                        users.append(dict(id=user_id, username=f'fixture-{user_id}', name=f'Fixture User {user_id}', avatar_url=f'http://127.0.0.1:{args.port}/uploads/avatar/{user_id}.png'))
+                body = json.dumps(users).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            match = re.fullmatch(r'/api/v4/projects/42/(merge_requests|pipelines)/(\d+)', parsed.path)
             if not match:
                 self.send_error(404)
                 return
