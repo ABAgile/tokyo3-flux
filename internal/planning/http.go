@@ -23,6 +23,10 @@ type Repository interface {
 	History(context.Context, string, string, int64) ([]Event, error)
 }
 
+type BurndownRepository interface {
+	Burndown(context.Context, string, string, string, string, string) (Burndown, error)
+}
+
 type ProposalRepository interface {
 	Proposals(context.Context, string, string, int64) ([]ProposalSummary, error)
 	Review(context.Context, string, string, string) (ProposalPreview, error)
@@ -74,6 +78,31 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			v.Role = "viewer"
 			v.Workspace.Role = "viewer"
 		}
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/burndown", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := h.repo.(BurndownRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		query := r.URL.Query()
+		sprint := query.Get("sprint")
+		if sprint == "" || len(sprint) > 240 {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		project, err := burndownFilter(query.Get("project"))
+		if err != nil {
+			h.failure(w, r, err)
+			return
+		}
+		assignee, err := burndownFilter(query.Get("assignee"))
+		if err != nil {
+			h.failure(w, r, err)
+			return
+		}
+		v, err := repo.Burndown(r.Context(), r.PathValue("workspace"), h.subject(r, machine), sprint, project, assignee)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/read/{view}", func(w http.ResponseWriter, r *http.Request) {
@@ -211,6 +240,15 @@ func defaultQuery(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+func burndownFilter(value string) (string, error) {
+	if len(value) > 240 {
+		return "", ErrInvalid
+	}
+	if value == "all" {
+		return "", nil
+	}
+	return value, nil
 }
 func respond(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

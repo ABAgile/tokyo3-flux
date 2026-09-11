@@ -40,6 +40,10 @@ func (f *fakeRepository) History(_ context.Context, _, subject string, _ int64) 
 	f.subject = subject
 	return []Event{}, f.err
 }
+func (f *fakeRepository) Burndown(_ context.Context, _, subject, _, _, _ string) (Burndown, error) {
+	f.subject = subject
+	return Burndown{Version: 1, WorkspaceID: "w", Sprint: testBoard().Sprints[0], Points: []BurndownPoint{}}, f.err
+}
 
 func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
@@ -72,6 +76,7 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	}{
 		{name: "anonymous", method: "GET", path: "/board", status: 303},
 		{name: "read", method: "GET", path: "/board", cookie: true, status: 200},
+		{name: "burn down", method: "GET", path: "/burndown?sprint=s1&project=all&assignee=all", cookie: true, status: 200},
 		{name: "native read", method: "GET", path: "/read/board?limit=1", cookie: true, status: 200},
 		{name: "native bad page", method: "GET", path: "/read/board?limit=51", cookie: true, status: 400},
 		{name: "native stale page", method: "GET", path: "/read/board?offset=1", cookie: true, status: 409},

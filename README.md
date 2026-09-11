@@ -16,6 +16,11 @@ planning evidence and draft suggestions for a human to review and approve.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
   memberships and optionally assigns unfinished work to another open sprint.
   Closed-scope metrics describe current cards, not historical completion.
+- Each sprint panel can expand a compact native burn-down chart plotting daily remaining
+  work, ideal progress and recorded scope from planning audit snapshots. The active
+  filter condition sits beside the figure; project and assignee filters can be combined,
+  and daily values are available as a horizontal table. Future dates and missing history
+  are left unavailable rather than guessed.
 - Cards show the title as their header and omit descriptions and the native item ID.
   Drag cards from their body and columns from their headers; the item editor keeps
   the keyboard-accessible column movement control. Archive instead of deleting work;
@@ -121,8 +126,9 @@ flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
 
 `flux migrate`, `bootstrap`, `member`, `seed`, `serve`, `read`, `import` and
 `version` are the CLI commands. `flux plan` also namespaces the first five commands.
-Serving requires schema 7 and never runs DDL. Migration 007 preserves legacy priorities as
-`priority::<value>` labels before removing the priority field. Back up and restore-test
+Serving requires schema 8 and never runs DDL. Migration 007 preserves legacy priorities as
+`priority::<value>` labels before removing the priority field; migration 008 adds the
+historical audit index used by burn-down reads. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -300,6 +306,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | Method/path | Purpose |
 | --- | --- |
 | `GET /projects`, `GET /board` | Project list and planning board. |
+| `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
 | `GET /read/{view}` | Agent pages; `limit`, `offset`, `revision`, optional `target`. |
 | `GET /history?before=ID` | Up to 50 descending planning events. |
 | `GET /proposals?before=SEQUENCE` | Up to 20 review summaries. |
@@ -353,7 +360,8 @@ assignee, labels, dependencies and sprint_ids. `reason` records planning rationa
 
 Per workspace: 1,000 items including archived work, 200 sprints, 100 projects,
 12 columns for creation, 500 labels for creation, 200 registered GitLab links,
-100 approved GitLab projects and 200 pending proposals. Each item permits 20
+100 approved GitLab projects and 200 pending proposals. Daily burn-down timelines
+support up to 366 days. Each item permits 20
 labels, 50 dependencies and 20 external links. Titles are at most 240 bytes,
 descriptions 16,000 and rationale/goals 4,000. Self-dependencies and cycles are
 rejected; WIP has no administrator bypass.

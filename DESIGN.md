@@ -6,9 +6,10 @@ Native planning is the sole UI; the transitional cockpit is retired.
 ## Direction
 
 A calm, compact planning workspace: left navigation, workspace heading, sprint goals
-and scope summary, then a Kanban board or backlog. Native planning
-state is primary; do not show invented GitLab or agent status. Display a clear
-local-demo indicator when fixture authentication is enabled.
+and scope summary, then a Kanban board or backlog. Sprint panels can reveal their
+burn-down chart without leaving the planning context. Native planning state is
+primary; do not show invented GitLab or agent status. Display a clear local-demo
+indicator when fixture authentication is enabled.
 
 ## Tokens
 
@@ -34,9 +35,9 @@ configured instance.
   desktop, 16px below 900px. Board columns use a responsive grid, minimum 240px;
   wrap columns rather than causing page-level horizontal scroll.
 - One shared board belongs to each workspace; projects classify items optionally.
-  Project and label filters sit beside Scope in the planning toolbar (All projects /
-  No project / a project, and All labels / No labels / a label), never in the sidebar
-  and never as a planning boundary. WIP counts the whole workspace column, regardless
+  Project, assignee and label filters sit beside Scope in the planning toolbar
+  (including unassigned and named assignees), never in the sidebar and never as a
+  planning boundary. WIP counts the whole workspace column, regardless
   of filtering. Project management uses the existing dialog/controls, not a new
   component variant.
 - Cards show project (or No project) and all open sprint memberships as badges.
@@ -99,9 +100,21 @@ configured instance.
   Accepted reviews retain the exact historical diff, not a recomputed current diff.
   All controls use the existing dialog/form patterns; viewers cannot import/review-write.
 - Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close
-  actions. Below 900px, the goal spans the full panel width above metrics/actions.
-  Closing requires a rationale and an explicit additional carry-over choice (none, or
-  another open sprint). Existing other sprint memberships are retained.
+  actions, and a read-only burn-down toggle. The chart expands inside the same panel
+  on the Kanban board, backlog and Sprint planning displays; collapse state does not
+  alter planning data. Below 900px, the goal spans the full panel width above
+  metrics/actions. Closing requires a rationale and an explicit additional carry-over
+  choice (none, or another open sprint). Existing other sprint memberships are
+  retained.
+- Burn-down plots remaining native work-item count by day, a dashed ideal line, and
+  the recorded scope so one chart can describe a sprint, project, member, or their
+  intersection. Project and Assignee controls in the planning toolbar apply to an
+  expanded chart. Project and assignee filters are evaluated against each dated
+  native planning snapshot; scope changes remain visible. Future dates and periods
+  without recorded history are blank rather than invented. The chart uses existing
+  semantic tokens, places the active filter condition beside a compact figure on wide
+  screens, and has an accessible horizontal daily-values table behind a native
+  disclosure. It wraps below 900px without page-level horizontal scrolling.
 - Modal dialogs have a 640px maximum width and a 16px viewport margin;
   textareas start at 120px high.
 - Use native labeled forms and modal dialogs with focus return. All controls have

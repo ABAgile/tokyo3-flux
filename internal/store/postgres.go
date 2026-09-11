@@ -44,6 +44,9 @@ var proposalsMigration string
 //go:embed 007_labels_priority.sql
 var labelsPriorityMigration string
 
+//go:embed 008_burndown.sql
+var burndownMigration string
+
 type Store struct {
 	refreshInterval time.Duration
 	pool            *pgxpool.Pool
@@ -90,7 +93,7 @@ func (s *Store) Close() { s.pool.Close() }
 func (s *Store) Ready(ctx context.Context) error {
 	var version int
 	err := s.pool.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version)
-	if err != nil || version != 7 {
+	if err != nil || version != 8 {
 		return errors.New("native schema unavailable: run flux plan migrate")
 	}
 	return nil
@@ -115,7 +118,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 7 {
+		if version < 1 || version > 8 {
 			return errors.New("unsupported native schema version")
 		}
 	} else if _, err = tx.Exec(ctx, schema); err != nil {
@@ -148,6 +151,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if version < 7 {
 		if _, err = tx.Exec(ctx, labelsPriorityMigration); err != nil {
+			return err
+		}
+	}
+	if version < 8 {
+		if _, err = tx.Exec(ctx, burndownMigration); err != nil {
 			return err
 		}
 	}

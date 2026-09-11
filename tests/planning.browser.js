@@ -7,6 +7,23 @@ async (page) => {
  const nav = async name => { await page.getByRole('navigation').getByRole('button',{name}).click(); };
  const title = 'Browser spanning item';
  await page.getByRole('heading',{name:'Kanban board',exact:true}).waitFor();
+ const sprintBox = page.locator('#sprint-summary .sprint-panel').first();
+ await sprintBox.getByRole('button',{name:'Show burn down',exact:true}).click();
+ await sprintBox.getByRole('heading',{name:'Remaining work',exact:true}).waitFor();
+ await sprintBox.getByRole('button',{name:'Hide burn down',exact:true}).click();
+ check(await page.locator('#sprint-summary .burndown-panel').count() === 0,'burn down did not collapse');
+ await page.locator('#sprint-summary .sprint-panel').first().getByRole('button',{name:'Show burn down',exact:true}).click();
+ await page.locator('#sprint-summary .burndown-svg').waitFor();
+ check(await page.locator('#sprint-summary .burndown-chart-row .burndown-filter-condition').count() === 1,'burn down filter condition is not beside the figure');
+ const daily = page.locator('#sprint-summary .burndown-data'); await daily.locator('summary').click();
+ check(await daily.locator('thead th').first().textContent() === 'Metric','daily values are not metric rows');
+ check((await daily.locator('tbody th').allTextContents()).join('|') === 'In scope|Remaining','daily values rows are not horizontal metrics');
+ check(await page.getByLabel('Project',{exact:true}).isVisible(),'project filter is missing from burn down');
+ check(await page.getByLabel('Assignee',{exact:true}).isVisible(),'assignee filter is missing from burn down');
+ await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption('none');
+ await page.locator('#sprint-summary .burndown-svg').waitFor();
+ await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption('all');
+ await page.locator('#sprint-summary .burndown-svg').waitFor();
  // Project classification is optional and managed without creating a new board.
  await page.getByRole('button',{name:'Projects',exact:true}).click();
  await page.getByRole('button',{name:'＋ New project',exact:true}).click();

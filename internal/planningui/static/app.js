@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let session, workspaces = [], board, root, view = 'board', busy = false, loading = false;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
+let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
 const theme = localStorage.getItem('flux-plan-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = theme;
 const LABEL_PALETTE = Object.freeze([
@@ -22,12 +23,13 @@ function writeButton(text, fn, className) { const b = button(text, fn, className
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
 async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
+function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownRequests.clear(); burndownErrors.clear(); }
 async function refresh() {
  if (!root || busy) return;
  const generation = ++loadGeneration; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
- try { const next = await api(root + '/board'); if (generation !== loadGeneration) return false; board = next; history = []; historyBefore = 0; if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
+ try { const next = await api(root + '/board'); if (generation !== loadGeneration) return false; board = next; resetBurndown(); history = []; historyBefore = 0; if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
  catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
- finally { if (generation === loadGeneration) { loading = false; render(); $('content').setAttribute('aria-busy', 'false'); } }
+ finally { if (generation === loadGeneration) { loading = false; render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
 }
 function requestKey() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''); }
 async function change(command, key = requestKey()) {
@@ -38,7 +40,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
@@ -88,25 +90,27 @@ function sprintPanel(s) {
  const items = scopeItems(s); const metrics = el('div', undefined, 'metrics');
  for (const [n, label] of [[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked now']]) { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(n)), el('span', label)); metrics.append(metric); }
  const actions = el('div', undefined, 'actions');
+ const expanded = burndownExpanded.has(s.id); const toggle = button(expanded ? 'Hide burn down' : 'Show burn down', () => { if (expanded) burndownExpanded.delete(s.id); else burndownExpanded.add(s.id); render(); [...document.querySelectorAll('[data-burndown-toggle]')].find(element => element.dataset.burndownToggle === s.id)?.focus(); }, 'quiet'); toggle.dataset.burndownToggle = s.id; toggle.setAttribute('aria-expanded', String(expanded)); if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`); toggle.disabled = busy || loading; actions.append(toggle);
  actions.append(button('View scope', () => { view = 'board'; render(); $('scope').value = s.id; renderContent(); }));
  if (s.state !== 'closed') actions.append(writeButton('Edit sprint', () => editSprint(s)));
  if (s.state === 'planned') actions.append(writeButton('Start sprint', () => quick({ kind: 'sprint.start', target: s.id }), 'primary'));
  if (s.state === 'active') actions.append(writeButton('Close sprint', () => closeSprint(s)));
  if (s.state === 'closed') info.append(el('small', 'Scope preserved at closure. Card details reflect current work; historical state is retained in audit.', 'muted'));
- panel.append(info, metrics, actions); return panel;
+ panel.append(info, metrics, actions); if (expanded) panel.append(renderBurndown(s)); return panel;
 }
 function render() {
  renderControls();
  if (!board) { $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('content').replaceChildren(el('p', 'Choose an available workspace to begin. Projects are optional.', 'empty')); return; }
  $('breadcrumb').textContent = board.workspace.name + ' / Shared planning';
  const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
+ const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
  const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
  const titles = { board: 'Kanban board', backlog: 'Backlog', sprints: 'Sprint planning', archive: 'Archived work', history: 'Planning history' };
  $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : 'Plan intentionally. Keep work moving.';
  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
  const active = activeSprints(); $('sprint-summary').replaceChildren(...(view === 'board' || view === 'backlog' ? (active.length ? active.map(sprintPanel) : [el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty')]) : []));
  const selected = $('scope').value; options($('scope'), [['all', 'All open work'], ['active', 'Active sprints'], ['backlog', 'Backlog'], ...board.sprints.map(s => [s.id, `${s.name} (${s.state})`])], selected); if (!$('scope').value) $('scope').value = 'all';
- $('scope-label').hidden = view !== 'board'; document.querySelector('.toolbar').hidden = view === 'sprints' || view === 'history';
+ $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'sprints' || view === 'history'; document.querySelector('.toolbar').hidden = view === 'history';
  renderContent();
 }
 function filteredItems() {
@@ -115,6 +119,7 @@ function filteredItems() {
   if (view === 'archive') { if (!i.archived) return false; } else if (i.archived && sprint?.state !== 'closed') return false;
   if (view !== 'archive') { if (scope === 'active' && !activeSprints().some(s => i.sprint_ids.includes(s.id))) return false; if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false; if (sprint && !scopeItems(sprint).some(v => v.id === i.id)) return false; }
   const project = $('project').value; if (project === 'none' && i.project_id) return false; if (project !== 'all' && project !== 'none' && i.project_id !== project) return false;
+  const assignee = $('assignee').value; if (assignee === 'none' && i.assignee) return false; if (assignee !== 'all' && assignee !== 'none' && i.assignee !== assignee) return false;
   const label = $('label').value; if (label === 'none' && i.labels.length) return false; if (label !== 'all' && label !== 'none' && !i.labels.includes(label)) return false;
   return `${i.title} ${i.description} ${i.labels.join(' ')} ${i.assignee} ${memberName(i.assignee)} ${projectName(i.project_id)}`.toLowerCase().includes(query);
  });
@@ -140,9 +145,62 @@ function card(item, peers) {
  c.append(button(`GitLab links · ${links.length}`, () => showLinks(item)));
  return c;
 }
+function currentBurndownKey(sprintID) { return [board?.workspace.revision || 0, sprintID, $('project').value, $('assignee').value].join('|'); }
+function selectedFilterText(id) { return $(id).selectedOptions[0]?.textContent || 'All'; }
+function svgNode(tag, attributes = {}) { const node = document.createElementNS('http://www.w3.org/2000/svg', tag); Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, value)); return node; }
+function burndownSegments(points, key, x, y) {
+ const segments = []; let segment = [];
+ const flush = () => { if (segment.length > 1) segments.push(segment.join(' ')); segment = []; };
+ points.forEach((point, index) => { if (!Number.isFinite(point[key])) { flush(); return; } segment.push(`${x(index)},${y(point[key])}`); }); flush(); return segments;
+}
+function burndownDateLabel(date) { const value = new Date(`${date}T00:00:00Z`); return Number.isNaN(value.getTime()) ? date : value.toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'}); }
+function burndownSVG(data) {
+ const width = 760, height = 220, left = 48, right = 20, top = 16, bottom = 36, plotWidth = width - left - right, plotHeight = height - top - bottom, points = data.points;
+ const values = points.flatMap(point => [point.scope, point.remaining]).filter(Number.isFinite); const maximum = Math.max(1, ...values);
+ const x = index => points.length > 1 ? left + index / (points.length - 1) * plotWidth : left + plotWidth / 2;
+ const y = value => top + (maximum - value) / maximum * plotHeight;
+ const svg = svgNode('svg', {viewBox:`0 0 ${width} ${height}`, role:'img', 'aria-label':`Burn down for ${data.sprint.name}`, class:'burndown-svg'});
+ const title = svgNode('title'); title.textContent = `Burn down for ${data.sprint.name}`; svg.append(title);
+ [...new Set(Array.from({length:5}, (_, index) => Math.round(maximum * (1 - index / 4))))].forEach(value => { const line = svgNode('line', {class:'burndown-grid', x1:left, x2:width-right, y1:y(value), y2:y(value)}); svg.append(line); const label = svgNode('text', {class:'burndown-axis-label', x:left-8, y:y(value)+4, 'text-anchor':'end'}); label.textContent = String(value); svg.append(label); });
+ const first = points.findIndex(point => Number.isFinite(point.remaining));
+ if (first >= 0) { const idealStart = Number.isFinite(points[first].scope) ? points[first].scope : points[first].remaining; svg.append(svgNode('line', {class:'burndown-ideal', x1:x(first), x2:x(points.length-1), y1:y(idealStart), y2:y(0)})); }
+ burndownSegments(points, 'scope', x, y).forEach(segment => svg.append(svgNode('polyline', {class:'burndown-scope', points:segment})));
+ burndownSegments(points, 'remaining', x, y).forEach(segment => svg.append(svgNode('polyline', {class:'burndown-actual', points:segment})));
+ points.forEach((point, index) => { if (!Number.isFinite(point.remaining)) return; const circle = svgNode('circle', {class:'burndown-point', cx:x(index), cy:y(point.remaining), r:3}); const label = svgNode('title'); label.textContent = `${burndownDateLabel(point.date)} · ${point.remaining} remaining · ${point.scope} in scope`; circle.append(label); svg.append(circle); });
+ [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])].forEach(index => { if (index < 0 || !points[index]) return; const label = svgNode('text', {class:'burndown-axis-label', x:x(index), y:height-16, 'text-anchor':index === 0 ? 'start' : index === points.length-1 ? 'end' : 'middle'}); label.textContent = burndownDateLabel(points[index].date); svg.append(label); });
+ return svg;
+}
+function burndownLegendItem(className, text) { const item = el('span', undefined, 'burndown-legend-item'); item.append(el('span', undefined, `burndown-swatch ${className}`), el('span', text)); return item; }
+function burndownTable(data) {
+ const details = el('details', undefined, 'burndown-data'); details.append(el('summary', 'View daily values')); const scroll = el('div', undefined, 'burndown-table-scroll'); const table = el('table'); table.append(el('caption', 'Daily native work-item counts')); const head = el('thead'); const heading = el('tr'); const metric = el('th', 'Metric'); metric.scope = 'col'; heading.append(metric); data.points.forEach(point => { const date = el('th', burndownDateLabel(point.date)); date.scope = 'col'; heading.append(date); }); head.append(heading); table.append(head); const body = el('tbody'); [['In scope', 'scope'], ['Remaining', 'remaining']].forEach(([label, key]) => { const row = el('tr'); const metric = el('th', label); metric.scope = 'row'; row.append(metric); data.points.forEach(point => row.append(el('td', point[key] == null ? '—' : String(point[key])))); body.append(row); }); table.append(body); scroll.append(table); details.append(scroll); return details;
+}
+function latestBurndownPoint(points, key) { return [...points].reverse().find(point => Number.isFinite(point[key])); }
+function firstBurndownPoint(points, key) { return points.find(point => Number.isFinite(point[key])); }
+function renderBurndown(sprint) {
+ const panel = el('section', undefined, 'burndown-panel'); panel.id = `burndown-${sprint.id}`; const headingID = `burndown-heading-${sprint.id}`; panel.setAttribute('aria-labelledby', headingID); const heading = el('div', undefined, 'section-head burndown-head'); const intro = el('div'); const title = el('h3', 'Remaining work'); title.id = headingID; const filterCondition = el('div', undefined, 'burndown-filter-condition'); filterCondition.append(el('p', `Project: ${selectedFilterText('project')}`, 'muted'), el('p', `Assignee: ${selectedFilterText('assignee')}`, 'muted')); intro.append(title, filterCondition); heading.append(intro); const context = el('div', undefined, 'burndown-context'); context.append(heading);
+ const key = currentBurndownKey(sprint.id); const data = burndownData.get(key); const error = burndownErrors.get(key);
+ if (error) { const retry = button('Retry burn down', () => requestBurndown(sprint.id, true)); retry.disabled = busy || loading; const message = el('p', error, 'error'); message.setAttribute('role', 'alert'); panel.append(context, message, retry); return panel; }
+ if (!data) { panel.append(context, el('p', 'Loading native planning history…', 'empty')); requestBurndown(sprint.id); return panel; }
+ if (!data.history_available) { panel.append(context, el('p', data.warning, 'empty')); return panel; }
+ const available = data.points.some(point => Number.isFinite(point.remaining));
+ if (!available) { panel.append(context, el('p', data.warning || 'No matching work is available for this sprint and filter.', 'empty')); return panel; }
+ const first = firstBurndownPoint(data.points, 'remaining'); const latest = latestBurndownPoint(data.points, 'remaining'); const stats = el('div', undefined, 'metrics burndown-metrics'); [[firstBurndownPoint(data.points, 'scope')?.scope ?? first.remaining, 'Starting scope'], [latest.remaining, 'Remaining'], [latest.scope, 'Ending scope']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); stats.append(metric); }); context.append(stats);
+ const note = el('p', data.warning, 'help burndown-note'); context.append(note);
+ const figure = el('figure', undefined, 'burndown-figure'); figure.append(burndownSVG(data)); const legend = el('div', undefined, 'burndown-legend'); legend.append(burndownLegendItem('actual', 'Remaining'), burndownLegendItem('ideal', 'Ideal'), burndownLegendItem('scope', 'Scope')); figure.append(legend); const row = el('div', undefined, 'burndown-chart-row'); row.append(context, figure); panel.append(row, burndownTable(data)); return panel;
+}
+async function requestBurndown(sprintID, force = false) {
+ if (!board || !burndownExpanded.has(sprintID) || loading) return;
+ const key = currentBurndownKey(sprintID); if (burndownRequests.has(key)) return; if (!force && (burndownData.has(key) || burndownErrors.has(key))) return;
+ if (force) { burndownData.delete(key); burndownErrors.delete(key); }
+ const generation = burndownGeneration; const currentBoard = board, currentRoot = root; const token = {}; burndownRequests.set(key, token); $('content').setAttribute('aria-busy', 'true');
+ try { const query = new URLSearchParams({sprint:sprintID, project:$('project').value, assignee:$('assignee').value}); const next = await api(currentRoot + '/burndown?' + query); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!next || !Array.isArray(next.points) || !next.sprint) throw new Error('Burn-down data is invalid. Refresh to retry.'); if (next.revision !== currentBoard.workspace.revision) throw new Error('Planning changed while loading. Refresh to review.'); burndownData.set(key, next); burndownErrors.delete(key); }
+ catch (e) { if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; burndownErrors.set(key, e.message); }
+ finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'backlog' || view === 'sprints') render(); }
+}
 function renderContent() {
  if (!board) return; const content = $('content'); content.replaceChildren();
  if (view === 'sprints') {
+  $('count').textContent = '';
   const head = el('div', undefined, 'section-head'); head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary')); content.append(head);
   const list = el('div', undefined, 'sprints'); board.sprints.forEach(s => list.append(sprintPanel(s))); if (!board.sprints.length) list.append(el('p', 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty')); content.append(list); return;
  }
@@ -429,10 +487,11 @@ $('projects').onclick = manageProjects;
 $('proposals').onclick = () => showProposals();
 $('labels').onclick = manageLabels; $('members').onclick = manageMembers; $('integration').onclick = editIntegration;
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh;
-$('scope').onchange = $('project').onchange = $('label').onchange = $('search').oninput = renderContent;
+$('scope').onchange = $('label').onchange = $('search').oninput = renderContent;
+$('project').onchange = $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
- board = undefined; $('project').value = 'all'; $('label').value = 'all'; $('scope').value = 'all'; $('search').value = ''; render();
+ board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'all'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
  await refresh();
 }
