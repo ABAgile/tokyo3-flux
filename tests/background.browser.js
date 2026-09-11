@@ -10,20 +10,21 @@ async page => {
  const initial=await board();const item=initial.items[0];
  check(initial.refresh_seconds===30,'worker configuration missing');
  await page.getByRole('button',{name:'Integration',exact:true}).click();
- await page.getByLabel('Approved numeric GitLab project IDs · comma separated',{exact:true}).fill('42');
+ await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
+ await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
  for(const number of [7,8]){
   await page.locator(`[data-item="${item.id}"]`).getByRole('button',{name:item.title,exact:true}).click();
   await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).click();
-  await page.getByRole('combobox',{name:'Approved GitLab project',exact:true}).selectOption('42');
-  await page.getByLabel('MR IID or pipeline ID',{exact:true}).fill(String(number));await save();
+  const projectPicker=page.getByRole('group',{name:'Approved GitLab project',exact:true});await projectPicker.getByRole('button',{name:'Edit Approved GitLab project',exact:true}).click();await projectPicker.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();await page.keyboard.press('Escape');
+  const mrPicker=page.getByRole('group',{name:'Merge request',exact:true});await mrPicker.getByRole('button',{name:'Edit Merge request',exact:true}).click();await mrPicker.getByRole('searchbox',{name:'Filter merge request',exact:true}).fill(String(number));await mrPicker.getByRole('checkbox',{name:new RegExp(`^MR !${number} ·`)}).check();await page.keyboard.press('Escape');await save();await page.getByRole('button',{name:'Cancel',exact:true}).click();
  }
  const linked=await board();const revision=linked.workspace.revision;const ids=linked.links.map(l=>l.id);
  await until(b=>b.links.length===2&&b.links.every(l=>l.outcome==='ok'&&l.observation));
  let current=await board();check(current.workspace.revision===revision,'worker changed planning revision');
  const first=current.links.find(l=>l.number===7);check(first.observation.pipeline.state==='success','initial head not observed');
- // No manual observation refresh: the idle card summary must receive the cache.
- await page.locator(`[data-observation="${first.id}"]`).filter({hasText:/pipeline success/}).waitFor({timeout:20000});
+ // No manual observation refresh: the idle card must receive the direct MR link.
+ await page.locator(`[data-item="${item.id}"]`).getByRole('link',{name:'MR !7',exact:true}).waitFor({timeout:20000});
  const post=(headers,data)=>page.evaluate(async args=>(await fetch('/webhooks/gitlab',{method:'POST',headers:{'Content-Type':'application/json',...args.headers},body:JSON.stringify(args.data)})).status,{headers,data});
  const body={object_kind:'merge_request',project:{id:42},object_attributes:{iid:7,state:'merged',title:'Never trust webhook planning values',sha:'forged'}};
  const headers={'X-Gitlab-Event':'Merge Request Hook','X-Gitlab-Token':'fixture-webhook-secret-0000000000000000','X-Gitlab-Webhook-UUID':'browser-delivery-one'};

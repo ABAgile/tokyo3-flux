@@ -23,6 +23,16 @@ type Repository interface {
 	History(context.Context, string, string, int64) ([]Event, error)
 }
 
+type GitLabProjectRepository interface {
+	GitLabProjects(context.Context, string, string) ([]GitLabProject, error)
+}
+type GitLabMergeRequestRepository interface {
+	GitLabMergeRequests(context.Context, string, string, int64, string) ([]GitLabMergeRequest, error)
+}
+type GitLabMergeRequestScopeRepository interface {
+	GitLabMergeRequestsFor(context.Context, string, string, int64, string, string) ([]GitLabMergeRequest, error)
+}
+
 type BurndownRepository interface {
 	Burndown(context.Context, string, string, string, string, string) (Burndown, error)
 }
@@ -77,6 +87,60 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		if machine {
 			v.Role = "viewer"
 			v.Workspace.Role = "viewer"
+		}
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/gitlab/projects", func(w http.ResponseWriter, r *http.Request) {
+		if machine {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		repo, ok := h.repo.(GitLabProjectRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		v, err := repo.GitLabProjects(r.Context(), r.PathValue("workspace"), h.subject(r, false))
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/gitlab/merge-requests", func(w http.ResponseWriter, r *http.Request) {
+		if machine {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		repo, ok := h.repo.(GitLabMergeRequestRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		query := r.URL.Query()
+		project, err := strconv.ParseInt(query.Get("project"), 10, 64)
+		if err != nil || project <= 0 || project > MaxExternalID {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		rawSearch := query.Get("search")
+		if len(rawSearch) > 120 || strings.ContainsAny(rawSearch, "\r\n") {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		search := strings.TrimSpace(rawSearch)
+		scope := query.Get("scope")
+		if scope == "" {
+			scope = "recent"
+		}
+		if scope != "recent" && scope != "assigned_to_me" && scope != "board_members" {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		var v []GitLabMergeRequest
+		if scopedRepo, ok := h.repo.(GitLabMergeRequestScopeRepository); ok {
+			v, err = scopedRepo.GitLabMergeRequestsFor(r.Context(), r.PathValue("workspace"), h.subject(r, false), project, search, scope)
+		} else if scope == "recent" {
+			v, err = repo.GitLabMergeRequests(r.Context(), r.PathValue("workspace"), h.subject(r, false), project, search)
+		} else {
+			h.failure(w, r, ErrNotFound)
+			return
 		}
 		h.result(w, r, v, err)
 	})
@@ -230,6 +294,9 @@ func (h *HTTP) failure(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrNotFound):
 		status = 404
 		message = ErrNotFound.Error()
+	case errors.Is(err, ErrGitLabUnavailable):
+		status = http.StatusServiceUnavailable
+		message = ErrGitLabUnavailable.Error()
 	}
 	// Separate security/operational audit path. Never log bodies, tokens or DB errors.
 	h.log.Warn("planning request failed", "request_id", NewID(), "actor", h.subject(r, false), "method", r.Method, "status", status)

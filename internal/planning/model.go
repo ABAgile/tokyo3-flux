@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	ErrInvalid   = errors.New("invalid planning change")
-	ErrConflict  = errors.New("planning changed; refresh and review before saving")
-	ErrForbidden = errors.New("workspace permission denied")
-	ErrNotFound  = errors.New("planning record not found")
+	ErrInvalid           = errors.New("invalid planning change")
+	ErrConflict          = errors.New("planning changed; refresh and review before saving")
+	ErrForbidden         = errors.New("workspace permission denied")
+	ErrNotFound          = errors.New("planning record not found")
+	ErrGitLabUnavailable = errors.New("GitLab connector unavailable")
 )
 
 const (
@@ -43,6 +44,19 @@ type Project struct {
 	WorkspaceID string `json:"workspace_id"`
 	Name        string `json:"name"`
 	Revision    int64  `json:"revision"`
+}
+type GitLabProject struct {
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	PathWithNamespace string `json:"path_with_namespace"`
+}
+type GitLabMergeRequest struct {
+	ProjectID int64      `json:"project_id"`
+	IID       int64      `json:"iid"`
+	Title     string     `json:"title"`
+	State     string     `json:"state"`
+	Draft     bool       `json:"draft"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
 type Column struct {
 	ID       string `json:"id"`

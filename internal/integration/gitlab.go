@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,13 +22,15 @@ import (
 )
 
 type Client struct {
-	instance string
-	token    string
-	http     *http.Client
-	slots    chan struct{}
-	mu       sync.Mutex
-	retryAt  time.Time
-	profiles map[int64]cachedProfile
+	instance        string
+	token           string
+	http            *http.Client
+	slots           chan struct{}
+	mu              sync.Mutex
+	retryAt         time.Time
+	profiles        map[int64]cachedProfile
+	projects        []Project
+	projectsExpires time.Time
 }
 type Result struct {
 	Observation *p.Observation
@@ -39,6 +42,18 @@ type MemberProfile struct {
 	Username  string
 	AvatarURL string
 }
+type Project struct {
+	ID                int64
+	Name              string
+	PathWithNamespace string
+}
+type MergeRequest struct {
+	IID       int64
+	Title     string
+	State     string
+	Draft     bool
+	UpdatedAt *time.Time
+}
 type cachedProfile struct {
 	profile MemberProfile
 	found   bool
@@ -46,8 +61,14 @@ type cachedProfile struct {
 }
 
 const (
-	memberProfileTTL        = 10 * time.Minute
-	memberProfileFailureTTL = time.Minute
+	memberProfileTTL         = 10 * time.Minute
+	memberProfileFailureTTL  = time.Minute
+	projectCatalogTTL        = time.Minute
+	projectPageSize          = 100
+	maxCatalogProjects       = 1000
+	maxCatalogPages          = maxCatalogProjects / projectPageSize
+	maxMergeRequestAssignees = 50
+	maxMergeRequestResults   = 50
 )
 
 // New accepts a trusted operator-configured instance, never a member-supplied
@@ -212,6 +233,275 @@ func (c *Client) fetchProfiles(ctx context.Context, ids []int64) (map[int64]Memb
 	return profiles, true
 }
 
+type projectResponse struct {
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	PathWithNamespace string `json:"path_with_namespace"`
+}
+type mergeRequestResponse struct {
+	ID        int64      `json:"id"`
+	IID       int64      `json:"iid"`
+	ProjectID int64      `json:"project_id"`
+	Title     string     `json:"title"`
+	State     string     `json:"state"`
+	Draft     bool       `json:"draft"`
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+// Projects returns projects visible to the configured read connector. The
+// short cache keeps opening the approval dialog from repeatedly querying
+// GitLab while retaining a bounded catalog for the browser.
+func (c *Client) Projects(ctx context.Context) ([]Project, error) {
+	if c == nil {
+		return nil, errors.New("GitLab connector is disabled")
+	}
+	now := time.Now()
+	c.mu.Lock()
+	if now.Before(c.projectsExpires) {
+		out := append([]Project(nil), c.projects...)
+		c.mu.Unlock()
+		return out, nil
+	}
+	c.mu.Unlock()
+	if retry := c.retryRemaining(); retry > 0 {
+		return nil, fmt.Errorf("GitLab connector is rate limited for %s", retry)
+	}
+
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	default:
+		return nil, errors.New("GitLab connector is busy")
+	}
+	projects, err := c.fetchProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.projects = append([]Project(nil), projects...)
+	c.projectsExpires = time.Now().Add(projectCatalogTTL)
+	c.mu.Unlock()
+	return projects, nil
+}
+
+func (c *Client) fetchProjects(ctx context.Context) ([]Project, error) {
+	endpoint, err := url.Parse(c.instance + "/api/v4/projects")
+	if err != nil {
+		return nil, errors.New("invalid GitLab project catalog endpoint")
+	}
+	query := endpoint.Query()
+	query.Set("membership", "true")
+	query.Set("simple", "true")
+	query.Set("per_page", strconv.Itoa(projectPageSize))
+	query.Set("order_by", "name")
+	query.Set("sort", "asc")
+	projects := []Project{}
+	seen := map[int64]struct{}{}
+	for page := 1; ; page++ {
+		if page > maxCatalogPages {
+			return nil, errors.New("GitLab project catalog exceeds the supported limit")
+		}
+		query.Set("page", strconv.Itoa(page))
+		endpoint.RawQuery = query.Encode()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+		if err != nil {
+			return nil, errors.New("create GitLab project catalog request")
+		}
+		request.Header.Set("PRIVATE-TOKEN", c.token)
+		request.Header.Set("Accept", "application/json")
+		response, err := c.http.Do(request)
+		if err != nil {
+			return nil, errors.New("request GitLab project catalog")
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+		response.Body.Close()
+		if readErr != nil || len(body) > 1<<20 {
+			return nil, errors.New("GitLab project catalog response is invalid")
+		}
+		if response.StatusCode == http.StatusTooManyRequests {
+			c.setRetryAfter(response.Header.Get("Retry-After"))
+			return nil, errors.New("GitLab project catalog is rate limited")
+		}
+		if response.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("GitLab project catalog returned %s", response.Status)
+		}
+		var data []projectResponse
+		if err := json.Unmarshal(body, &data); err != nil {
+			return nil, errors.New("GitLab project catalog response is invalid")
+		}
+		if len(data) > projectPageSize {
+			return nil, errors.New("GitLab project catalog response is too large")
+		}
+		for _, project := range data {
+			name := strings.TrimSpace(project.Name)
+			pathWithNamespace := strings.TrimSpace(project.PathWithNamespace)
+			if project.ID <= 0 || project.ID > p.MaxExternalID || len(name) > 240 || len(pathWithNamespace) > 512 || name == "" {
+				return nil, errors.New("GitLab project catalog response is invalid")
+			}
+			if _, ok := seen[project.ID]; ok {
+				continue
+			}
+			seen[project.ID] = struct{}{}
+			projects = append(projects, Project{ID: project.ID, Name: bounded(name, 240), PathWithNamespace: bounded(pathWithNamespace, 512)})
+			if len(projects) > maxCatalogProjects {
+				return nil, errors.New("GitLab project catalog exceeds the supported limit")
+			}
+		}
+		if len(data) == 0 {
+			break
+		}
+		nextRaw := strings.TrimSpace(response.Header.Get("X-Next-Page"))
+		if nextRaw == "" {
+			if len(data) < projectPageSize || page == maxCatalogPages {
+				break
+			}
+			continue
+		}
+		next, err := strconv.Atoi(nextRaw)
+		if err != nil || next <= page || next > maxCatalogPages {
+			return nil, errors.New("GitLab project catalog pagination is invalid")
+		}
+		page = next - 1
+	}
+	return projects, nil
+}
+
+// MergeRequests searches recent merge requests in one approved project. An
+// optional assignee list narrows the search to GitLab user IDs; the caller must
+// resolve those IDs from workspace authority before calling this method.
+func (c *Client) MergeRequests(ctx context.Context, projectID int64, search string, assigneeIDs ...int64) ([]MergeRequest, error) {
+	if c == nil || projectID <= 0 || projectID > p.MaxExternalID {
+		return nil, errors.New("invalid GitLab merge-request search")
+	}
+	if len(search) > 120 || strings.ContainsAny(search, "\r\n") {
+		return nil, errors.New("GitLab merge-request search is invalid")
+	}
+	search = strings.TrimSpace(search)
+	assignees := make([]int64, 0, len(assigneeIDs))
+	seenAssignees := map[int64]struct{}{}
+	for _, id := range assigneeIDs {
+		if id <= 0 || id > p.MaxExternalID {
+			return nil, errors.New("invalid GitLab merge-request assignee")
+		}
+		if _, ok := seenAssignees[id]; ok {
+			continue
+		}
+		seenAssignees[id] = struct{}{}
+		assignees = append(assignees, id)
+	}
+	if len(assignees) > maxMergeRequestAssignees {
+		return nil, errors.New("too many GitLab merge-request assignees")
+	}
+	if retry := c.retryRemaining(); retry > 0 {
+		return nil, fmt.Errorf("GitLab connector is rate limited for %s", retry)
+	}
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	default:
+		return nil, errors.New("GitLab connector is busy")
+	}
+	if len(assignees) == 0 {
+		data, err := c.fetchMergeRequests(ctx, projectID, search, 0)
+		if err != nil {
+			return nil, err
+		}
+		return normalizeMergeRequests(projectID, data)
+	}
+	data := make([]mergeRequestResponse, 0, len(assignees)*maxMergeRequestResults)
+	for _, assignee := range assignees {
+		page, err := c.fetchMergeRequests(ctx, projectID, search, assignee)
+		if err != nil {
+			return nil, err
+		}
+		data = append(data, page...)
+	}
+	return normalizeMergeRequests(projectID, data)
+}
+
+func (c *Client) fetchMergeRequests(ctx context.Context, projectID int64, search string, assigneeID int64) ([]mergeRequestResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v4/projects/%d/merge_requests", c.instance, projectID)
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, errors.New("invalid GitLab merge-request search endpoint")
+	}
+	query := parsed.Query()
+	query.Set("state", "all")
+	query.Set("order_by", "updated_at")
+	query.Set("sort", "desc")
+	query.Set("per_page", strconv.Itoa(maxMergeRequestResults))
+	if assigneeID > 0 {
+		query.Set("assignee_id", strconv.FormatInt(assigneeID, 10))
+	}
+	if search != "" {
+		if iid, parseErr := strconv.ParseInt(search, 10, 64); parseErr == nil && iid > 0 && iid <= p.MaxExternalID {
+			query.Set("iids[]", strconv.FormatInt(iid, 10))
+		} else {
+			query.Set("search", search)
+			query.Set("in", "title")
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, errors.New("create GitLab merge-request search request")
+	}
+	request.Header.Set("PRIVATE-TOKEN", c.token)
+	request.Header.Set("Accept", "application/json")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return nil, errors.New("request GitLab merge-request search")
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		c.setRetryAfter(response.Header.Get("Retry-After"))
+		return nil, errors.New("GitLab merge-request search is rate limited")
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitLab merge-request search returned %s", response.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(body) > 1<<20 {
+		return nil, errors.New("GitLab merge-request search response is invalid")
+	}
+	var data []mergeRequestResponse
+	if err := json.Unmarshal(body, &data); err != nil || len(data) > maxMergeRequestResults {
+		return nil, errors.New("GitLab merge-request search response is invalid")
+	}
+	return data, nil
+}
+
+func normalizeMergeRequests(projectID int64, data []mergeRequestResponse) ([]MergeRequest, error) {
+	out := make([]MergeRequest, 0, min(len(data), maxMergeRequestResults))
+	seen := map[int64]struct{}{}
+	for _, mr := range data {
+		if mr.ID <= 0 || mr.ID > p.MaxExternalID || mr.IID <= 0 || mr.IID > p.MaxExternalID || mr.ProjectID != projectID || len(mr.Title) > 240 || len(mr.State) > 40 || strings.TrimSpace(mr.Title) == "" {
+			return nil, errors.New("GitLab merge-request search response is invalid")
+		}
+		if _, ok := seen[mr.IID]; ok {
+			continue
+		}
+		seen[mr.IID] = struct{}{}
+		out = append(out, MergeRequest{IID: mr.IID, Title: bounded(mr.Title, 240), State: bounded(mr.State, 40), Draft: mr.Draft, UpdatedAt: mr.UpdatedAt})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].UpdatedAt == nil {
+			return out[j].UpdatedAt != nil
+		}
+		if out[j].UpdatedAt == nil {
+			return false
+		}
+		if !out[i].UpdatedAt.Equal(*out[j].UpdatedAt) {
+			return out[i].UpdatedAt.After(*out[j].UpdatedAt)
+		}
+		return out[i].IID > out[j].IID
+	})
+	if len(out) > maxMergeRequestResults {
+		out = out[:maxMergeRequestResults]
+	}
+	return out, nil
+}
+
 type response struct {
 	UpdatedAt    *time.Time `json:"updated_at"`
 	ID           int64      `json:"id"`
@@ -228,6 +518,21 @@ type response struct {
 }
 
 func failed(outcome string) Result { return Result{Outcome: outcome, RetryAfter: 30 * time.Second} }
+func (c *Client) retryRemaining() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Until(c.retryAt)
+}
+func (c *Client) setRetryAfter(raw string) time.Duration {
+	wait := retryDelay(raw)
+	c.mu.Lock()
+	until := time.Now().Add(wait)
+	if until.After(c.retryAt) {
+		c.retryAt = until
+	}
+	c.mu.Unlock()
+	return wait
+}
 func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 	if c == nil {
 		return failed("disabled")
@@ -235,10 +540,7 @@ func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 	if target.Project <= 0 || target.Project > p.MaxExternalID || target.Number <= 0 || target.Number > p.MaxExternalID || (target.Kind != "mr" && target.Kind != "pipeline") {
 		return failed("invalid")
 	}
-	c.mu.Lock()
-	retry := time.Until(c.retryAt)
-	c.mu.Unlock()
-	if retry > 0 {
+	if retry := c.retryRemaining(); retry > 0 {
 		return Result{Outcome: "rate_limited", RetryAfter: retry}
 	}
 	select {
@@ -268,14 +570,7 @@ func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 	case 404:
 		return failed("not_found") // GitLab also hides unauthorized objects as 404.
 	case 429:
-		wait := retryDelay(res.Header.Get("Retry-After"))
-		c.mu.Lock()
-		until := time.Now().Add(wait)
-		if until.After(c.retryAt) {
-			c.retryAt = until
-		}
-		c.mu.Unlock()
-		return Result{Outcome: "rate_limited", RetryAfter: wait}
+		return Result{Outcome: "rate_limited", RetryAfter: c.setRetryAfter(res.Header.Get("Retry-After"))}
 	case 200:
 	default:
 		return failed("unavailable")
@@ -303,6 +598,7 @@ func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 				return failed("invalid_response")
 			}
 			obs.Pipeline = normalize(pipe)
+			obs.Pipeline.URL = c.safeURL(pipe.WebURL)
 			obs.Pipeline.CurrentHead = data.SHA != "" && data.SHA == pipe.SHA
 			if !obs.Pipeline.CurrentHead {
 				obs.Pipeline.State = "unknown"
@@ -310,6 +606,7 @@ func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 		}
 	} else {
 		obs.Pipeline = normalize(&data)
+		obs.Pipeline.URL = c.safeURL(data.WebURL)
 	}
 	return Result{Observation: obs, Outcome: "ok", RetryAfter: 30 * time.Second}
 }

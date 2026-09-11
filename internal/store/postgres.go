@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -241,6 +242,163 @@ func (s *Store) Projects(ctx context.Context, wid, subject string) ([]p.Project,
 		return nil, errors.New("project list exceeds supported limit")
 	}
 	return out, rows.Err()
+}
+
+// GitLabProjects returns the full connector catalog to admins and only
+// approved projects to other workspace members. It is a picker source, not
+// persisted planning state.
+func (s *Store) GitLabProjects(ctx context.Context, wid, subject string) ([]p.GitLabProject, error) {
+	memberRole, err := role(ctx, s.pool, wid, subject)
+	if err != nil {
+		return nil, err
+	}
+	if s.connector == nil {
+		return nil, p.ErrGitLabUnavailable
+	}
+	approved := map[int64]bool{}
+	if memberRole != "admin" {
+		var instance string
+		if queryErr := s.pool.QueryRow(ctx, "SELECT instance FROM workspace_integrations WHERE workspace_id=$1", wid).Scan(&instance); errors.Is(queryErr, pgx.ErrNoRows) {
+			return []p.GitLabProject{}, nil
+		} else if queryErr != nil {
+			return nil, queryErr
+		} else if instance != s.connector.Instance() {
+			return []p.GitLabProject{}, nil
+		}
+		rows, queryErr := s.pool.Query(ctx, "SELECT project_id FROM approved_gitlab_projects WHERE workspace_id=$1", wid)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		for rows.Next() {
+			var id int64
+			if queryErr = rows.Scan(&id); queryErr != nil {
+				rows.Close()
+				return nil, queryErr
+			}
+			approved[id] = true
+		}
+		if queryErr = rows.Err(); queryErr != nil {
+			rows.Close()
+			return nil, queryErr
+		}
+		rows.Close()
+		if len(approved) == 0 {
+			return []p.GitLabProject{}, nil
+		}
+	}
+	projects, err := s.connector.Projects(ctx)
+	if err != nil {
+		return nil, p.ErrGitLabUnavailable
+	}
+	out := make([]p.GitLabProject, 0, len(projects))
+	for _, project := range projects {
+		if memberRole != "admin" && !approved[project.ID] {
+			continue
+		}
+		out = append(out, p.GitLabProject{ID: project.ID, Name: project.Name, PathWithNamespace: project.PathWithNamespace})
+	}
+	return out, nil
+}
+
+const maxGitLabAssigneeIDs = 50
+
+// GitLabMergeRequests searches only approved project coordinates. The
+// provider credential remains server-side and viewers cannot use this picker
+// to create links. Recent is the unfiltered compatibility default.
+func (s *Store) GitLabMergeRequests(ctx context.Context, wid, subject string, projectID int64, search string) ([]p.GitLabMergeRequest, error) {
+	return s.GitLabMergeRequestsFor(ctx, wid, subject, projectID, search, "recent")
+}
+
+// GitLabMergeRequestsFor applies a workspace-safe quick scope. GitLab's
+// assigned_to_me scope would refer to the server connector account, so the
+// store resolves Flux membership subjects to explicit GitLab assignee IDs.
+func (s *Store) GitLabMergeRequestsFor(ctx context.Context, wid, subject string, projectID int64, search, scope string) ([]p.GitLabMergeRequest, error) {
+	memberRole, err := role(ctx, s.pool, wid, subject)
+	if err != nil {
+		return nil, err
+	}
+	if memberRole == "viewer" {
+		return nil, p.ErrForbidden
+	}
+	if scope != "recent" && scope != "assigned_to_me" && scope != "board_members" {
+		return nil, p.ErrInvalid
+	}
+	if s.connector == nil {
+		return nil, p.ErrGitLabUnavailable
+	}
+	var approved bool
+	if err = s.pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM approved_gitlab_projects a
+		JOIN workspace_integrations i USING(workspace_id)
+		WHERE a.workspace_id=$1 AND a.project_id=$2 AND i.instance=$3
+	)`, wid, projectID, s.connector.Instance()).Scan(&approved); err != nil {
+		return nil, err
+	}
+	if !approved {
+		return nil, p.ErrForbidden
+	}
+	assigneeIDs, err := s.gitLabAssigneeIDs(ctx, wid, subject, scope)
+	if err != nil {
+		return nil, err
+	}
+	if scope != "recent" && len(assigneeIDs) == 0 {
+		return []p.GitLabMergeRequest{}, nil
+	}
+	mergeRequests, err := s.connector.MergeRequests(ctx, projectID, search, assigneeIDs...)
+	if err != nil {
+		return nil, p.ErrGitLabUnavailable
+	}
+	out := make([]p.GitLabMergeRequest, 0, len(mergeRequests))
+	for _, mergeRequest := range mergeRequests {
+		out = append(out, p.GitLabMergeRequest{ProjectID: projectID, IID: mergeRequest.IID, Title: mergeRequest.Title, State: mergeRequest.State, Draft: mergeRequest.Draft, UpdatedAt: mergeRequest.UpdatedAt})
+	}
+	return out, nil
+}
+
+func (s *Store) gitLabAssigneeIDs(ctx context.Context, wid, subject, scope string) ([]int64, error) {
+	if scope == "recent" {
+		return nil, nil
+	}
+	if scope == "assigned_to_me" {
+		if id, ok := gitLabUserID(subject); ok {
+			return []int64{id}, nil
+		}
+		return []int64{}, nil
+	}
+	rows, err := s.pool.Query(ctx, "SELECT subject FROM memberships WHERE workspace_id=$1 ORDER BY subject", wid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	seen := map[int64]struct{}{}
+	for rows.Next() {
+		var member string
+		if err := rows.Scan(&member); err != nil {
+			return nil, err
+		}
+		id, ok := gitLabUserID(member)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+		if len(ids) > maxGitLabAssigneeIDs {
+			return nil, fmt.Errorf("%w: board has too many GitLab members", p.ErrInvalid)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func gitLabUserID(subject string) (int64, bool) {
+	id, err := strconv.ParseInt(subject, 10, 64)
+	return id, err == nil && id > 0 && id <= p.MaxExternalID
 }
 
 type querier interface {

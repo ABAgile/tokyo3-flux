@@ -29,6 +29,7 @@ type ExternalLink struct {
 }
 type Pipeline struct {
 	SourceUpdatedAt *time.Time `json:"source_updated_at,omitempty"`
+	URL             string     `json:"url,omitempty"`
 	ID              int64      `json:"id"`
 	SHA             string     `json:"sha"`
 	State           string     `json:"state"`
@@ -91,8 +92,8 @@ func applyIntegration(b *Board, c Command) error {
 		if c.Link == nil || !slices.Contains(b.Integration.Projects, c.Link.Project) || b.Integration.Instance == "" {
 			return invalid("GitLab project is not approved for this workspace")
 		}
-		if c.Link.Number <= 0 || c.Link.Number > MaxExternalID || !slices.Contains([]string{"mr", "pipeline"}, c.Link.Kind) {
-			return invalid("link needs kind mr/pipeline and a positive IID/ID")
+		if c.Link.Number <= 0 || c.Link.Number > MaxExternalID || c.Link.Kind != "mr" {
+			return invalid("link needs kind mr and a positive IID")
 		}
 		count := 0
 		for _, l := range b.Links {

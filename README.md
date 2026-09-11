@@ -105,7 +105,7 @@ database or starting workers. PostgreSQL is required.
 | `FLUX_GITLAB_OAUTH_CLIENT_ID` | Browser OAuth client ID; required outside demo. |
 | `FLUX_GITLAB_OAUTH_CLIENT_SECRET` | Browser OAuth client secret; required outside demo. |
 | `FLUX_GITLAB_OAUTH_REDIRECT_URL` | Browser OAuth redirect URL; required outside demo. |
-| `FLUX_GITLAB_SERVICE_TOKEN` | Optional server-only `read_api` token for observations/profiles. |
+| `FLUX_GITLAB_SERVICE_TOKEN` | Optional server-only `read_api` token for project/MR catalogs, observations and profiles. |
 | `FLUX_GITLAB_REFRESH_INTERVAL` | Refresh interval: `1m` default; `30s`–`1h`, or `0` manual-only. |
 | `FLUX_GITLAB_WEBHOOK_SECRET` | Optional 32+ character secret; requires observations/refresh. |
 | `FLUX_API_TOKEN` | Optional machine-access token of at least 32 characters. |
@@ -161,17 +161,29 @@ records have no automatic purge; plan retention and backup policies.
 
 1. Configure a least-privilege read token and instance root (not `/api/v4`). The
    connector requires HTTPS except loopback fixtures and never follows redirects.
-2. A workspace admin opens **Integration**, approves numeric GitLab project IDs,
-   and consents to sharing metadata with **all workspace readers**, including machines.
+2. A workspace admin opens **Integration**, chooses numeric GitLab projects from
+   the searchable catalog provided by the server-side read connector, and consents
+   to sharing metadata with **all workspace readers**, including machines. The
+   picker only exposes projects visible to that connector; existing approvals are
+   retained if the catalog is temporarily unavailable.
 3. Members edit a card to associate registered GitLab links with its dropdown, or
-   attach an MR IID or pinned pipeline ID in an approved project. Observed links are
-   shown directly on cards and can be shared across cards.
+   use **Add GitLab link** beside that dropdown to paste a canonical MR URL or
+   choose quick scopes for recent, assigned-to-you, or board-member merge requests.
+   Pasted URLs are checked against the configured instance and approved project
+   catalog; Flux stores only the project/IID coordinate. The project/MR search and
+   exact MR IID remain fallbacks. Flux does not infer the newest MR from a card.
+   Observed MR links are shown once per card as direct GitLab links, with a Details
+   link for the full Linked GitLab observations view. That view links both the MR
+   and its corresponding latest pipeline directly; links can be shared across cards.
 
 Observations never change cards or sprint scope. Each link shows its own state,
 last success, last attempt and outcome. An MR pipeline is current only when its
-SHA matches the observed MR head; mismatches display unknown. Direct pipeline links
-stay pinned. Failed reads preserve the last cache; 404 means missing **or hidden**.
+SHA matches the observed MR head; mismatches display unknown. New links are always
+merge requests, while any legacy direct pipeline links remain pinned. Failed reads
+preserve the last cache; 404 means missing **or hidden**.
 Data older than five minutes, pending refresh, or followed by failure is stale.
+The observations view labels the last successful refresh and latest refresh attempt
+separately, including an explicit `none yet` state.
 
 Background refresh uses bounded concurrency, jitter and backoff; manual requests
 respect cooldowns too. Requests have an eight-second timeout and one-MiB body limit.
@@ -308,6 +320,8 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | Method/path | Purpose |
 | --- | --- |
 | `GET /projects`, `GET /board` | Project list and planning board. |
+| `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
+| `GET /gitlab/merge-requests?project=ID&scope=recent\|assigned_to_me\|board_members&search=TEXT` | Search merge requests in one currently approved project; browser members/admins only. Numeric search targets an exact project-scoped IID; assignment scopes use workspace GitLab member IDs. |
 | `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
 | `GET /read/{view}` | Agent pages; `limit`, `offset`, `revision`, optional `target`. |
 | `GET /history?before=ID` | Up to 50 descending planning events. |
@@ -342,9 +356,10 @@ Command kinds and payloads:
 - `label.save` (`name`, `color`, optional target), `label.delete` (`target`);
   admin-only `member.name` (`target` subject, name).
 - Admin-only `integration.save` (`integration:{instance,projects}`);
-  `link.attach` (`target` item, `link:{project,kind,number}`), `link.detach`
+  `link.attach` (`target` item, `link:{project,kind:"mr",number}`), `link.detach`
   (`target` item, destination link ID), `link.refresh` (`target` link ID).
-  Kind is `mr` or `pipeline`. Refresh does not increment planning revisions;
+  New attachments accept only merge requests; legacy pipeline links may still be
+  detached or refreshed. Refresh does not increment planning revisions;
   inspect its observation outcome rather than assuming HTTP success means healthy CI.
 - `proposal.import` (`target` random 16–80-byte proposal ID, `proposal` document,
   reason), `proposal.accept` (`target`, `name` preview digest, reason),
@@ -363,7 +378,8 @@ assignee, labels, dependencies and sprint_ids. `reason` records planning rationa
 Per workspace: 1,000 items including archived work, 200 sprints, 100 projects,
 12 columns for creation, 500 labels for creation, 200 registered GitLab links,
 100 approved GitLab projects and 200 pending proposals. Daily burn-down timelines
-support up to 366 days. Each item permits 20
+support up to 366 days. GitLab MR picker responses and board-member assignee scopes
+are capped at 50 results/IDs per request. Each item permits 20
 labels, 50 dependencies and 20 external links. Titles are at most 240 bytes,
 descriptions 16,000 and rationale/goals 4,000. Self-dependencies and cycles are
 rejected; WIP has no administrator bypass.

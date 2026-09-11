@@ -79,6 +79,87 @@ func TestMemberProfiles(t *testing.T) {
 	}
 }
 
+func TestProjects(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/api/v4/projects" || r.Header.Get("PRIVATE-TOKEN") != "server-secret" {
+			t.Fatalf("project request = %s %q", r.URL, r.Header.Get("PRIVATE-TOKEN"))
+		}
+		query := r.URL.Query()
+		for key, want := range map[string]string{"membership": "true", "simple": "true", "per_page": "100", "order_by": "name", "sort": "asc"} {
+			if query.Get(key) != want {
+				t.Fatalf("%s query = %q, want %q", key, query.Get(key), want)
+			}
+		}
+		page := query.Get("page")
+		if page == "1" {
+			w.Header().Set("X-Next-Page", "2")
+			_, _ = w.Write([]byte(`[{"id":42,"name":"Flux","path_with_namespace":"team/flux"}]`))
+			return
+		}
+		if page != "2" {
+			t.Fatalf("page = %q", page)
+		}
+		_, _ = w.Write([]byte(`[{"id":7,"name":"Docs","path_with_namespace":"team/docs"}]`))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects, err := c.Projects(context.Background())
+	if err != nil || len(projects) != 2 || projects[0].ID != 42 || projects[1].PathWithNamespace != "team/docs" {
+		t.Fatalf("projects = %+v, err = %v", projects, err)
+	}
+	if _, err = c.Projects(context.Background()); err != nil || calls.Load() != 2 {
+		t.Fatalf("project cache calls = %d, err = %v", calls.Load(), err)
+	}
+}
+
+func TestMergeRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/projects/42/merge_requests" || r.Header.Get("PRIVATE-TOKEN") != "server-secret" {
+			t.Fatalf("merge-request request = %s %q", r.URL, r.Header.Get("PRIVATE-TOKEN"))
+		}
+		query := r.URL.Query()
+		for key, want := range map[string]string{"state": "all", "order_by": "updated_at", "sort": "desc", "per_page": "50"} {
+			if query.Get(key) != want {
+				t.Fatalf("%s query = %q, want %q", key, query.Get(key), want)
+			}
+		}
+		if assignee := query.Get("assignee_id"); assignee != "" && assignee != "42" && assignee != "43" {
+			t.Fatalf("assignee query = %q", assignee)
+		}
+		if query.Get("search") == "latest" {
+			if query.Get("in") != "title" || len(query["iids[]"]) != 0 {
+				t.Fatalf("title search query = %v", query)
+			}
+		} else if query.Get("iids[]") == "7" {
+			if query.Get("search") != "" || query.Get("in") != "" {
+				t.Fatalf("IID search query = %v", query)
+			}
+		} else {
+			t.Fatalf("unexpected search query = %v", query)
+		}
+		_, _ = w.Write([]byte(`[{"id":1007,"iid":7,"project_id":42,"title":"Latest change","state":"opened","draft":false,"updated_at":"2026-09-11T00:00:00Z"}]`))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		search    string
+		assignees []int64
+	}{{search: "latest"}, {search: "7"}, {search: "latest", assignees: []int64{42, 43}}} {
+		mergeRequests, err := c.MergeRequests(context.Background(), 42, tc.search, tc.assignees...)
+		if err != nil || len(mergeRequests) != 1 || mergeRequests[0].IID != 7 || mergeRequests[0].Title != "Latest change" {
+			t.Fatalf("merge requests for %q = %+v, err = %v", tc.search, mergeRequests, err)
+		}
+	}
+}
+
 func TestObservations(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, kind, want string
@@ -109,6 +190,21 @@ func TestObservations(t *testing.T) {
 				t.Fatalf("%+v %+v", v, v.Observation)
 			}
 		})
+	}
+}
+func TestMRPipelineURL(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"id":10,"iid":3,"project_id":42,"sha":"head","web_url":%q,"head_pipeline":{"id":77,"sha":"head","status":"success","web_url":%q}}`, server.URL+"/team/flux/-/merge_requests/3", server.URL+"/team/flux/-/pipelines/77")
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := c.Fetch(context.Background(), p.LinkTarget{Project: 42, Kind: "mr", Number: 3})
+	if result.Outcome != "ok" || result.Observation == nil || result.Observation.Pipeline == nil || result.Observation.URL != server.URL+"/team/flux/-/merge_requests/3" || result.Observation.Pipeline.URL != server.URL+"/team/flux/-/pipelines/77" {
+		t.Fatalf("MR pipeline links = %+v", result)
 	}
 }
 func TestProviderFailures(t *testing.T) {

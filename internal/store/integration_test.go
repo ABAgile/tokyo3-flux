@@ -32,6 +32,60 @@ func linkedBoard(t *testing.T, handler http.HandlerFunc) (*Store, p.Board) {
 	apply(t, s, &b, p.Command{Kind: "link.attach", Target: b.Items[0].ID, Link: &p.LinkTarget{Project: 42, Kind: "mr", Number: 7}})
 	return s, b
 }
+func TestGitLabProjectCatalog(t *testing.T) {
+	s := testStore(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v4/projects":
+			_, _ = w.Write([]byte(`[{"id":42,"name":"Flux","path_with_namespace":"team/flux"}]`))
+		case "/api/v4/projects/42/merge_requests":
+			if assignee := r.URL.Query().Get("assignee_id"); assignee != "" && assignee != "42" {
+				t.Fatalf("GitLab assignee = %s", assignee)
+			}
+			_, _ = w.Write([]byte(`[{"id":1007,"iid":7,"project_id":42,"title":"Latest change","state":"opened"}]`))
+		default:
+			t.Fatalf("GitLab path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	connector, err := integration.New(server.URL, "server-only-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetConnector(connector)
+	b := bootstrap(t, s)
+	projects, err := s.GitLabProjects(context.Background(), b.Workspace.ID, "alice")
+	if err != nil || len(projects) != 1 || projects[0].ID != 42 || projects[0].PathWithNamespace != "team/flux" {
+		t.Fatalf("projects = %+v, err = %v", projects, err)
+	}
+	apply(t, s, &b, p.Command{Kind: "integration.save", Integration: &p.Integration{Instance: connector.Instance(), Projects: []int64{42}}})
+	mergeRequests, err := s.GitLabMergeRequests(context.Background(), b.Workspace.ID, "alice", 42, "latest")
+	if err != nil || len(mergeRequests) != 1 || mergeRequests[0].IID != 7 || mergeRequests[0].Title != "Latest change" {
+		t.Fatalf("merge requests = %+v, err = %v", mergeRequests, err)
+	}
+	if err := s.SetMember(context.Background(), b.Workspace.ID, "42", "member"); err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := s.GitLabMergeRequestsFor(context.Background(), b.Workspace.ID, "42", 42, "latest", "assigned_to_me")
+	if err != nil || len(assigned) != 1 || assigned[0].IID != 7 {
+		t.Fatalf("assigned merge requests = %+v, err = %v", assigned, err)
+	}
+	boardMembers, err := s.GitLabMergeRequestsFor(context.Background(), b.Workspace.ID, "alice", 42, "latest", "board_members")
+	if err != nil || len(boardMembers) != 1 || boardMembers[0].IID != 7 {
+		t.Fatalf("board-member merge requests = %+v, err = %v", boardMembers, err)
+	}
+	if err := s.SetMember(context.Background(), b.Workspace.ID, "viewer", "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	viewerProjects, err := s.GitLabProjects(context.Background(), b.Workspace.ID, "viewer")
+	if err != nil || len(viewerProjects) != 1 || viewerProjects[0].ID != 42 {
+		t.Fatalf("viewer catalog access = %+v, err = %v", viewerProjects, err)
+	}
+	if _, err := s.GitLabMergeRequests(context.Background(), b.Workspace.ID, "viewer", 42, "latest"); !errors.Is(err, p.ErrForbidden) {
+		t.Fatalf("viewer merge-request search = %v", err)
+	}
+}
+
 func expireLink(t *testing.T, s *Store, b p.Board) {
 	t.Helper()
 	if _, err := s.pool.Exec(context.Background(), "UPDATE external_links SET next_refresh=now()-interval '1 second' WHERE workspace_id=$1", b.Workspace.ID); err != nil {

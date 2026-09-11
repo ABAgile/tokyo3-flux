@@ -27,6 +27,17 @@ func (f *fakeRepository) Projects(_ context.Context, _, subject string) ([]Proje
 	f.subject = subject
 	return []Project{}, f.err
 }
+func (f *fakeRepository) GitLabProjects(_ context.Context, _, subject string) ([]GitLabProject, error) {
+	f.subject = subject
+	return []GitLabProject{{ID: 42, Name: "Flux", PathWithNamespace: "team/flux"}}, f.err
+}
+func (f *fakeRepository) GitLabMergeRequests(_ context.Context, _, subject string, project int64, _ string) ([]GitLabMergeRequest, error) {
+	f.subject = subject
+	return []GitLabMergeRequest{{ProjectID: project, IID: 7, Title: "Latest change", State: "opened"}}, f.err
+}
+func (f *fakeRepository) GitLabMergeRequestsFor(ctx context.Context, workspace, subject string, project int64, search, _ string) ([]GitLabMergeRequest, error) {
+	return f.GitLabMergeRequests(ctx, workspace, subject, project, search)
+}
 func (f *fakeRepository) Board(_ context.Context, _, subject string) (Board, error) {
 	f.subject = subject
 	return testBoard(), f.err
@@ -77,6 +88,12 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		{name: "anonymous", method: "GET", path: "/board", status: 303},
 		{name: "read", method: "GET", path: "/board", cookie: true, status: 200},
 		{name: "burn down", method: "GET", path: "/burndown?sprint=s1&project=all&assignee=all", cookie: true, status: 200},
+		{name: "merge-request search", method: "GET", path: "/gitlab/merge-requests?project=42&search=latest", cookie: true, status: 200},
+		{name: "merge-request assigned", method: "GET", path: "/gitlab/merge-requests?project=42&scope=assigned_to_me", cookie: true, status: 200},
+		{name: "merge-request board members", method: "GET", path: "/gitlab/merge-requests?project=42&scope=board_members", cookie: true, status: 200},
+		{name: "merge-request bad scope", method: "GET", path: "/gitlab/merge-requests?project=42&scope=unsafe", cookie: true, status: 400},
+		{name: "merge-request bad project", method: "GET", path: "/gitlab/merge-requests?project=0", cookie: true, status: 400},
+		{name: "merge-request bad search", method: "GET", path: "/gitlab/merge-requests?project=42&search=%0A", cookie: true, status: 400},
 		{name: "native read", method: "GET", path: "/read/board?limit=1", cookie: true, status: 200},
 		{name: "native bad page", method: "GET", path: "/read/board?limit=51", cookie: true, status: 400},
 		{name: "native stale page", method: "GET", path: "/read/board?offset=1", cookie: true, status: 409},
@@ -116,7 +133,7 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	if repo.changes != 1 {
 		t.Fatalf("unauthorized changes reached repository: %d", repo.changes)
 	}
-	for _, path := range []string{"/api/v2/session", "/api/v2/workspaces", "/api/v2/workspaces/w/projects"} {
+	for _, path := range []string{"/api/v2/session", "/api/v2/workspaces", "/api/v2/workspaces/w/projects", "/api/v2/workspaces/w/gitlab/projects"} {
 		r := httptest.NewRequest("GET", "http://localhost"+path, nil)
 		r.AddCookie(cookies[0])
 		w := httptest.NewRecorder()
@@ -139,6 +156,20 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("machine %s got %d", method, w.Code)
 		}
+	}
+	machineProjects := httptest.NewRecorder()
+	machineProjectRequest := httptest.NewRequest("GET", root+"/gitlab/projects", nil)
+	machineProjectRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	machine.ServeHTTP(machineProjects, machineProjectRequest)
+	if machineProjects.Code != http.StatusForbidden {
+		t.Fatalf("machine project catalog got %d", machineProjects.Code)
+	}
+	machineMergeRequests := httptest.NewRecorder()
+	machineMergeRequest := httptest.NewRequest("GET", root+"/gitlab/merge-requests?project=42", nil)
+	machineMergeRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	machine.ServeHTTP(machineMergeRequests, machineMergeRequest)
+	if machineMergeRequests.Code != http.StatusForbidden {
+		t.Fatalf("machine merge-request search got %d", machineMergeRequests.Code)
 	}
 	for _, kind := range []string{"integration.save", "link.attach", "link.detach", "link.refresh", "proposal.import", "proposal.accept", "proposal.reject"} {
 		r := httptest.NewRequest("POST", root+"/changes", strings.NewReader(`{"kind":"`+kind+`","revision":1}`))

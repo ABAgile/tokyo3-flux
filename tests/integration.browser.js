@@ -1,6 +1,6 @@
 // Run on a disposable seeded workspace with a loopback GitLab fixture:
 // approved project 42; MR 7 = current-head success, MR 8 = old-head success,
-// MR 9 = 503, pipeline 23 = failed. Never run against team planning data.
+// MR 9 = 503. Never run against team planning data.
 async page => {
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = () => page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor({timeout:15000});
@@ -12,35 +12,39 @@ async page => {
  const openEditor = item => card(item).getByRole('button',{name:item.title,exact:true}).click();
  const openObservations = item => card(item).getByRole('button',{name:/^View GitLab details/}).click();
  const close = () => page.getByRole('button',{name:'Close editor',exact:true}).click();
- const attach = async (item,kind,number) => {
+ const attach = async (item,number,usePaste=false) => {
   await openEditor(item); await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).click();
-  await page.getByRole('combobox',{name:'Approved GitLab project',exact:true}).selectOption('42');
-  await page.getByRole('combobox',{name:'Object kind',exact:true}).selectOption(kind);
-  await page.getByLabel('MR IID or pipeline ID',{exact:true}).fill(String(number)); await save();
+  const scope=page.getByRole('combobox',{name:'Quick scope',exact:true});check(await scope.locator('option').count()===3,'quick MR scopes missing');
+  if(usePaste){const base=initial.connector_instance.replace(/\/+$/,'');await page.getByLabel('Paste GitLab MR Link',{exact:true}).fill(`${base}/team/flux/-/merge_requests/${number}`);await page.getByRole('button',{name:'Get',exact:true}).click();await page.getByRole('status').filter({hasText:`Resolved team/flux · MR !${number}`}).waitFor();}
+  else {const projectPicker=page.getByRole('group',{name:'Approved GitLab project',exact:true});await projectPicker.getByRole('button',{name:'Edit Approved GitLab project',exact:true}).click();await projectPicker.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();await page.keyboard.press('Escape');const mrPicker=page.getByRole('group',{name:'Merge request',exact:true});await mrPicker.getByRole('button',{name:'Edit Merge request',exact:true}).click();await mrPicker.getByRole('searchbox',{name:'Filter merge request',exact:true}).fill(String(number));await mrPicker.getByRole('checkbox',{name:new RegExp(`^MR !${number} ·`)}).check();await page.keyboard.press('Escape');}
+  await save(); await page.getByRole('button',{name:'Cancel',exact:true}).click();
  };
  const refresh = async number => {
   const row=page.getByRole('dialog').locator('.setup-row').filter({has:page.getByText(new RegExp(`^(MR !|Pipeline #)${number} · project`))});
   await row.getByRole('button',{name:'Refresh observation',exact:true}).click(); await saved();
  };
  await page.getByRole('button',{name:'Integration',exact:true}).click();
- await page.getByLabel('Approved numeric GitLab project IDs · comma separated',{exact:true}).fill('42');
+ await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
+ await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  check((await board()).integration.projects.length===0,'approval bypassed consent');
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
- await attach(a,'mr',7);await attach(a,'mr',8);await attach(a,'pipeline',23);await attach(a,'mr',9);
+ await openEditor(a);await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).click();await page.getByRole('button',{name:'Cancel',exact:true}).click();check(await page.getByRole('heading',{name:'Work item',exact:true}).count()===1,'closing MR dialog did not return to card editor');await close();
+ await attach(a,7,true);await attach(a,8);await attach(a,9);
  await openEditor(b);await page.getByRole('button',{name:'Edit GitLab links',exact:true}).click();await page.getByRole('checkbox',{name:'MR !7 · project 42',exact:true}).check();await page.keyboard.press('Escape');await save();
- let current=await board();check(current.links.length===4&&current.links.find(l=>l.kind==='mr'&&l.number===7).items.length===2,'many-to-many registration failed');
- await openEditor(a);check(await page.getByRole('group',{name:'GitLab links',exact:true}).locator('.multi-select-chip').count()===4,'link dropdown associations missing');await close();
+ let current=await board();check(current.links.length===3&&current.links.find(l=>l.kind==='mr'&&l.number===7).items.length===2,'many-to-many registration failed');
+ await openEditor(a);check(await page.getByRole('group',{name:'GitLab links',exact:true}).locator('.multi-select-chip').count()===3,'link dropdown associations missing');await close();
  const revision=current.workspace.revision;const itemRevision=current.items.find(i=>i.id===a.id).revision;
- await openObservations(a);await refresh(7);await refresh(8);await refresh(23);await refresh(9);
+ await openObservations(a);await refresh(7);await refresh(8);await refresh(9);
  await page.getByRole('dialog').getByText('GitLab unavailable',{exact:true}).waitFor({timeout:10000});
+ check(await page.getByRole('dialog').getByText(/pipeline success/).count()===1,'latest MR pipeline status missing');
  check(await page.getByRole('dialog').getByText(/pipeline unknown \(not current head\)/).count()===1,'old success represented current head');
- check(await page.getByRole('dialog').getByText(/pipeline failed/).count()===1,'failure hidden by another success');
  check(await page.getByRole('dialog').getByText('Fixture MR <script>never executed</script>',{exact:true}).count()>0,'provider title not rendered as text');
  current=await board();check(current.workspace.revision===revision&&current.items.find(i=>i.id===a.id).revision===itemRevision,'refresh changed planning revisions');
  check(current.items.every(i=>i.column_id===initial.items.find(old=>old.id===i.id).column_id),'refresh moved a card');
- check(await card(a).getByRole('link',{name:'MR !7 · project 42',exact:true}).count()===1,'observed MR link is not on the card');
- await close();await openObservations(b);check(await page.getByRole('dialog').getByText(/pipeline success/).count()===1,'shared observation missing');
+ check(await card(a).getByRole('link',{name:'MR !7',exact:true}).count()===1,'observed MR link is not on the card');
+ check(await card(a).getByRole('button',{name:/^View GitLab details/}).count()===1,'card observation details link missing');
+ await close();await openObservations(b);check(await page.getByRole('dialog').getByRole('link',{name:'MR !7',exact:true}).count()===1,'shared MR direct link missing');check(await page.getByRole('dialog').getByRole('link',{name:'Pipeline #1007',exact:true}).count()===1,'latest pipeline direct link missing');check(await page.getByRole('dialog').getByText(/Last successful refresh:/).count()===1,'precise refresh timing missing');check(await page.getByRole('dialog').getByText(/Latest refresh attempt:/).count()===1,'latest attempt timing missing');check(await page.getByRole('dialog').getByText(/pipeline success/).count()===1,'shared observation missing');
  check(await page.getByRole('button',{name:'Refresh observation',exact:true}).isDisabled(),'cooldown not shown');await close();
  await page.reload();await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
  check((await board()).links.find(l=>l.kind==='mr'&&l.number===7).observation.pipeline.state==='success','observation not persisted');
@@ -66,8 +70,9 @@ async page => {
  await openEditor(b);await page.getByRole('button',{name:/^Remove MR !7 · project 42/}).click();await save();
  check((await board()).links.find(l=>l.kind==='mr'&&l.number===7).items.length===1,'unlink removed another item’s shared observation');
  await page.getByRole('button',{name:'Integration',exact:true}).click();
- await page.getByLabel('Approved numeric GitLab project IDs · comma separated',{exact:true}).fill('');
+ await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
+ await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).uncheck();
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
  current=await board();check(current.links.length===0&&current.items.length===initial.items.length,'revocation damaged planning or retained links');
- return 'PASS: unlink/revocation, explicit approval, shared MR and pinned-pipeline links, manual refresh, head-SHA safety, separate failures, persistent cache, planning independence, viewer restrictions, six responsive keyboard layouts.';
+ return 'PASS: MR URL paste, quick scopes, fallback MR search, MR-only links with corresponding pipeline status, revision-safe link association/removal, revocation, explicit approval, shared observations, manual refresh, head-SHA safety, separate failures, persistent cache, planning independence, viewer restrictions, six responsive keyboard layouts.';
 }

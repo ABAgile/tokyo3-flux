@@ -35,7 +35,7 @@ func TestIntegrationAuthorityAndLinks(t *testing.T) {
 	}
 }
 func TestInvalidExternalCoordinates(t *testing.T) {
-	for _, target := range []LinkTarget{{Project: 41, Kind: "mr", Number: 1}, {Project: 42, Kind: "issue", Number: 1}, {Project: 42, Kind: "mr", Number: -1}, {Project: 42, Kind: "pipeline", Number: MaxExternalID + 1}} {
+	for _, target := range []LinkTarget{{Project: 41, Kind: "mr", Number: 1}, {Project: 42, Kind: "issue", Number: 1}, {Project: 42, Kind: "mr", Number: -1}, {Project: 42, Kind: "pipeline", Number: 1}, {Project: 42, Kind: "mr", Number: MaxExternalID + 1}} {
 		b := testBoard()
 		b.Integration = Integration{Instance: "https://gitlab.example", Projects: []int64{42}}
 		if err := Apply(&b, Command{Kind: "link.attach", Target: "a", Link: &target, Revision: 1}); err == nil {

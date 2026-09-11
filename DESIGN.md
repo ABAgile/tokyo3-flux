@@ -44,7 +44,12 @@ configured instance or a validated HTTPS Gravatar avatar URL.
   editor uses a project select and labeled dropdown multi-selects for open
   sprints, labels and dependencies. Selected values are removable chips; the Edit
   link shares the field heading row and opens a keyboard-accessible, filterable
-  checkbox menu with a token-based shadow. Static field guidance uses a ? popover;
+  checkbox menu with a token-based shadow. GitLab link creation sits beside Edit
+  and first offers a canonical MR URL paste, followed by quick scopes for recent,
+  assigned-to-me, and board-member merge requests. The approved project and MR
+  dropdowns remain the final search fallback before storing the structured
+  project/IID coordinate; exact MR IID entry remains a fallback. Static field
+  guidance uses a ? popover;
   modal cards close when clicking outside them. Closed-sprint membership is
   displayed read-only. The column, project and assignee controls share a row on
   wide screens and stack
@@ -75,19 +80,23 @@ configured instance or a validated HTTPS Gravatar avatar URL.
   identifier.
   Workspace admins can maintain missing names via Members; subjects remain the
   stored identity.
-- Cards show associated MR/pipeline links as compact navigation links when observed;
-  the item editor manages associations with a dropdown multi-select and can add a
+- Cards show each associated merge request once as a compact direct GitLab link (`MR !IID`)
+  plus a Details link to Linked GitLab observations. Each MR observation includes its
+  corresponding latest head pipeline status. The observations dialog exposes direct MR and
+  pipeline links; the item editor manages associations with a dropdown multi-select and can add a
   new approved link. Observation details use existing setup rows, badges, forms and
   live errors. Provider text, URLs and SHAs wrap within setup rows rather than causing
-  horizontal scrolling. Display last-success time and
+  horizontal scrolling. Display precise successful-refresh and latest-attempt times and
   explicitly mark unobserved, stale, unavailable, inaccessible, and not-found observations.
   A 404 means missing OR hidden, not proof of deletion. Old-head pipeline success
   is unknown for the current head. Provider errors preserve last-known data.
 - Integration setup displays the operator-configured instance (never a free-form
-  fetch URL). Admins approve numeric GitLab projects with explicit workspace-wide
-  metadata visibility consent. Revoking approvals removes affected links/caches,
-  not cards or audit. Members attach structured MR/pipeline coordinates and can
-  manually refresh; viewers only read. Refresh never alters planning state.
+  fetch URL). Admins approve numeric GitLab projects from a searchable
+  connector-provided multi-select with explicit workspace-wide metadata visibility
+  consent. Revoking approvals removes affected links/caches,
+  not cards or audit. Members attach structured merge-request coordinates and can
+  manually refresh; viewers only read. Refresh never alters planning state. Legacy
+  direct pipeline records remain readable but new links are MR-only.
   The dialog describes the configured background interval (or manual-only mode).
   Queued hints mark cached observations stale until fetched; outdated provider
   versions never replace newer cache entries. Board summaries reload cached

@@ -91,7 +91,6 @@ func TestTargetedWebhookScopeAndRollback(t *testing.T) {
 	s, b := linkedBoard(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(observedMR)) })
 	s.SetRefreshInterval(time.Minute)
 	ctx := context.Background()
-	apply(t, s, &b, p.Command{Kind: "link.attach", Target: b.Items[0].ID, Link: &p.LinkTarget{Project: 42, Kind: "pipeline", Number: 88}})
 	_, err := s.pool.Exec(ctx, "UPDATE external_links SET dirty=false")
 	if err != nil {
 		t.Fatal(err)
