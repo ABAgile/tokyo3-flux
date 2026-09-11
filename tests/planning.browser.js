@@ -4,6 +4,7 @@ async (page) => {
  page.setDefaultTimeout(10000);
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = async () => { await page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor(); };
+ const chooseMulti = async (name, values) => { await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click(); for (const value of values) await page.getByRole('checkbox',{name:value,exact:true}).check(); await page.keyboard.press('Escape'); };
  const nav = async name => { await page.getByRole('navigation').getByRole('button',{name}).click(); };
  const title = 'Browser spanning item';
  await page.getByRole('heading',{name:'Kanban board',exact:true}).waitFor();
@@ -41,7 +42,7 @@ async (page) => {
  check(await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).inputValue() === '', 'new item required a project');
  await page.getByLabel('Title',{exact:true}).fill(title);
  await page.getByLabel('Description',{exact:true}).fill('One item across projects and sprints. <script>alert("never HTML")</script>');
- await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).selectOption(['type::review', 'priority::high']);
+ await chooseMulti('Labels', ['type::review', 'priority::high']);
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:title,exact:true}).waitFor();
@@ -52,10 +53,18 @@ async (page) => {
  check(await page.locator('.card .card-top .card-title').filter({hasText:title}).count()===1,'title is not the card header');
  check(await page.locator('.card .card-description').count()===0,'description is displayed on card');
  check(await page.locator('.card .label-badge').filter({hasText:'type::review'}).first().evaluate(e => e.style.backgroundColor !== ''),'label color is not displayed');
+ check(await page.getByRole('combobox',{name:'Label',exact:true}).evaluate(e => Number.parseInt(getComputedStyle(e.closest('label')).fontWeight, 10) >= 600),'input labels are not bold');
+ check(await page.getByRole('combobox',{name:'Label',exact:true}).evaluate(e => Number.parseInt(getComputedStyle(e).fontWeight, 10) === 400),'input control text is not normal');
  check(await page.locator('.card .card-id').count()===0,'native card ID is displayed');
  check(await page.getByLabel('Priority',{exact:true}).count()===0,'priority field is still displayed');
  await page.getByRole('combobox',{name:'Label',exact:true}).selectOption('all');
  // The item editor keeps keyboard-accessible column movement, and WIP counts all projects together.
+ await page.getByRole('button',{name:title,exact:true}).click();
+ const metaRows = await page.locator('.item-meta-grid > label').evaluateAll(labels => labels.map(label => label.getBoundingClientRect().top));
+ check((page.viewportSize()?.width ?? 1280) < 900 || new Set(metaRows).size === 1,'item metadata controls are not on one row');
+ await page.getByRole('button',{name:'Help: Open sprints',exact:true}).click();
+ await page.getByRole('tooltip').filter({hasText:'Select no open sprint'}).waitFor();
+ await page.getByRole('dialog').click({position:{x:10,y:10},force:true}); await page.getByRole('dialog').waitFor({state:'hidden'});
  await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'}); await save();
  await page.reload(); await page.getByRole('button',{name:title,exact:true}).waitFor();
@@ -70,7 +79,7 @@ async (page) => {
  // A single card can belong to both sprints without duplication.
  await nav('Backlog'); await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
- await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).selectOption([{label:'Sprint 1 · Planning foundations (active)'},{label:'Sprint 2 · Delivery signals (planned)'}]);
+ await chooseMulti('Open sprints', ['Sprint 1 · Planning foundations (active)', 'Sprint 2 · Delivery signals (planned)']);
  await page.getByLabel('Decision note (optional)',{exact:true}).fill('Work spans both sprints');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  check(await page.getByRole('button',{name:title,exact:true}).count()===0,'scheduled item remained in backlog');
@@ -80,7 +89,7 @@ async (page) => {
  await page.getByText('1 shown · 3/3 WIP',{exact:true}).waitFor();
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  await page.getByRole('button',{name:title,exact:true}).click();
- check((await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).locator('option:checked').allTextContents()).length===2,'multi-sprint membership not persisted');
+ check(await page.getByRole('group',{name:'Open sprints',exact:true}).locator('.multi-select-chip').count()===2,'multi-sprint membership not persisted');
  await page.getByLabel('Title',{exact:true}).fill('Retained stale draft');
  const other=await page.context().newPage(); other.setDefaultTimeout(10000); await other.goto(page.url());
  await other.getByRole('button',{name:title,exact:true}).click();
@@ -106,7 +115,7 @@ async (page) => {
  await nav('Kanban board'); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('active');
  await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).click();
  await page.getByText('Closed sprint history (read-only): Sprint 1 · Planning foundations',{exact:true}).waitFor();
- check((await page.getByRole('listbox',{name:'Open sprints · select multiple with Ctrl / Command',exact:true}).locator('option:checked').allTextContents()).length===1,'remaining sprint lost/duplicated');
+ check(await page.getByRole('group',{name:'Open sprints',exact:true}).locator('.multi-select-chip').count()===1,'remaining sprint lost/duplicated');
  // Clearing project classification does not change sprint membership or history.
  await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption('');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();

@@ -13,8 +13,8 @@ async page => {
  await page.getByLabel('Approved numeric GitLab project IDs · comma separated',{exact:true}).fill('42');
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
  for(const number of [7,8]){
-  await page.locator(`[data-item="${item.id}"]`).getByRole('button',{name:/^GitLab links/}).click();
-  await page.getByRole('button',{name:'＋ Link MR or pipeline',exact:true}).click();
+  await page.locator(`[data-item="${item.id}"]`).getByRole('button',{name:item.title,exact:true}).click();
+  await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).click();
   await page.getByRole('combobox',{name:'Approved GitLab project',exact:true}).selectOption('42');
   await page.getByLabel('MR IID or pipeline ID',{exact:true}).fill(String(number));await save();
  }
@@ -42,6 +42,6 @@ async page => {
  await page.getByRole('button',{name:item.title,exact:true}).click();await page.getByLabel('Title',{exact:true}).fill('Retained draft during background refresh');
  await page.waitForTimeout(16000);check(await page.getByLabel('Title',{exact:true}).inputValue()==='Retained draft during background refresh','background poll replaced draft');
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
- for(const theme of ['light','dark']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);for(const width of [1440,768,390]){await page.setViewportSize({width,height:1000});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'layout overflow');await page.locator(`[data-item="${item.id}"]`).getByRole('button',{name:/^GitLab links/}).focus();await page.keyboard.press('Enter');await page.getByText(/Background refresh: about every 30 seconds/).waitFor({timeout:10000});check(await page.locator('dialog').evaluate(d=>d.scrollWidth<=d.clientWidth),'dialog overflow');await page.keyboard.press('Escape');}}
+ for(const theme of ['light','dark']){await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);for(const width of [1440,768,390]){await page.setViewportSize({width,height:1000});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'layout overflow');await page.locator(`[data-item="${item.id}"]`).getByRole('button',{name:/^View GitLab details/}).focus();await page.keyboard.press('Enter');await page.getByText(/Background refresh: about every 30 seconds/).waitFor({timeout:10000});check(await page.locator('dialog').evaluate(d=>d.scrollWidth<=d.clientWidth),'dialog overflow');await page.keyboard.press('Escape');}}
  return 'PASS: automatic initial observation, idle UI update, authenticated targeted hints, replay/collision handling, out-of-order convergence, head-SHA safety, planning/draft preservation, six responsive keyboard layouts.';
 }

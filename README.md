@@ -27,7 +27,8 @@ planning evidence and draft suggestions for a human to review and approve.
   restore archived items before editing them.
 - Viewers read, members plan and review proposals, and admins also configure
   integrations and member display names. When configured, GitLab profile names and
-  avatars enrich assignee cards without changing native membership. Membership and
+  validated instance/Gravatar avatars enrich assignee cards without changing native
+  membership. Membership and
   roles are operator-managed,
   never inferred from GitLab access.
 - Browser changes require membership, CSRF, revisions and idempotency. Planning,
@@ -162,8 +163,9 @@ records have no automatic purge; plan retention and backup policies.
    connector requires HTTPS except loopback fixtures and never follows redirects.
 2. A workspace admin opens **Integration**, approves numeric GitLab project IDs,
    and consents to sharing metadata with **all workspace readers**, including machines.
-3. Members open **GitLab links** on a card and attach an MR IID or pinned pipeline
-   ID in an approved project. Links can be shared across cards.
+3. Members edit a card to associate registered GitLab links with its dropdown, or
+   attach an MR IID or pinned pipeline ID in an approved project. Observed links are
+   shown directly on cards and can be shared across cards.
 
 Observations never change cards or sprint scope. Each link shows its own state,
 last success, last attempt and outcome. An MR pipeline is current only when its

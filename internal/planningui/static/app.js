@@ -68,8 +68,18 @@ function initials(name) { const words = name.trim().split(/\s+/).filter(Boolean)
 function assigneeView(subject) {
  const info = memberInfo(subject); const node = el('span', undefined, 'assignee'); node.setAttribute('aria-label', `Assignee: ${info.name}`); node.title = info.name;
  const avatar = el('span', undefined, 'avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
- if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.loading = 'lazy'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
+ if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
  node.append(avatar, el('span', info.name)); return node;
+}
+function linkDisplayName(link, includeTitle = true) {
+ const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
+ return includeTitle && link.observation?.title ? `${name} · ${link.observation.title}` : name;
+}
+function cardLinkView(link) {
+ const node = el(link.observation?.url ? 'a' : 'span', linkDisplayName(link, false), 'card-link');
+ node.title = link.observation?.title || linkDisplayName(link, false);
+ if (link.observation?.url) { node.href = link.observation.url; node.target = '_blank'; node.rel = 'noopener noreferrer'; }
+ return node;
 }
 function activeSprints() { return board.sprints.filter(s => s.state === 'active'); }
 function projectName(id) { return board.projects.find(p => p.id === id)?.name || 'No project'; }
@@ -131,18 +141,21 @@ function card(item, peers) {
   makeDraggable(c, 'card', item.id, item.title);
   dropZone(c, 'card', (id, after) => ({kind: 'item.move', target: id, destination: item.column_id, before: after ? peers[peers.findIndex(p => p.id === item.id) + 1]?.id || '' : item.id}));
  }
- c.append(top, el('small', projectName(item.project_id), 'muted'));
+ const meta = el('div', undefined, 'card-meta'); meta.append(el('small', projectName(item.project_id), 'card-project'), assigneeView(item.assignee));
+ c.append(top, meta);
  const sprintTags = el('div', undefined, 'tags'); item.sprint_ids.forEach(id => sprintTags.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); c.append(sprintTags);
  const tags = el('div', undefined, 'tags'); item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
- c.append(assigneeView(item.assignee));
  if (item.archived) {
   const controls = el('div', undefined, 'card-controls');
   controls.append(writeButton('Restore item', () => quick({ kind: 'item.restore', target: item.id })));
   c.append(controls);
  }
  const links = board.links.filter(l => l.items.includes(item.id));
- links.forEach(l => c.append(observationSummary('small', l)));
- c.append(button(`GitLab links · ${links.length}`, () => showLinks(item)));
+ if (links.length) {
+  const linkList = el('div', undefined, 'card-links'); linkList.setAttribute('aria-label', 'GitLab links'); links.forEach(link => linkList.append(cardLinkView(link))); c.append(linkList);
+  links.forEach(link => c.append(observationSummary('small', link)));
+  c.append(button(`View GitLab details · ${links.length}`, () => showLinks(item), 'card-link-details'));
+ }
  return c;
 }
 function currentBurndownKey(sprintID) { return [board?.workspace.revision || 0, sprintID, $('project').value, $('assignee').value].join('|'); }
@@ -221,22 +234,62 @@ function field(parent, name, title, value = '', type = 'text', entries) {
  if (entries) options(input, entries, value); else { if (type !== 'textarea') input.type = type; input.value = value; }
  label.append(input); parent.append(label); return input;
 }
+function helpPopover(text, name = 'Help') {
+ const wrapper = el('span', undefined, 'help-popover'); const trigger = button('?', () => toggle(), 'help-trigger'); const content = el('span', text, 'help-popover-content');
+ content.id = `help-${requestKey()}`; content.hidden = true; content.setAttribute('role', 'tooltip'); trigger.setAttribute('aria-label', `Help: ${name}`); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-controls', content.id); trigger.setAttribute('aria-describedby', content.id);
+ let outside;
+ function close(focus = false) { if (content.hidden) return; content.hidden = true; trigger.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); if (focus) trigger.focus(); }
+ function open() { content.hidden = false; trigger.setAttribute('aria-expanded', 'true'); outside = e => { if (!wrapper.contains(e.target)) close(); }; document.addEventListener('click', outside); }
+ function toggle() { if (content.hidden) open(); else close(true); }
+ trigger.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(true); } }); wrapper.append(trigger, content); return wrapper;
+}
+function multiSelect(parent, name, title, entries, selected = [], decorate, helpText) {
+ const group = el('div', undefined, 'multi-select-field'); const label = el('span', title, 'multi-select-label');
+ const heading = el('span', undefined, 'multi-select-heading'); heading.append(label); if (helpText) heading.append(helpPopover(helpText, title));
+ const root = el('div', undefined, 'multi-select'); root.setAttribute('role', 'group'); root.setAttribute('aria-label', title);
+ const values = el('div', undefined, 'multi-select-values'); const menu = el('div', undefined, 'multi-select-menu');
+ const filter = el('input'); filter.type = 'search'; filter.className = 'multi-select-filter'; filter.placeholder = `Filter ${title.toLowerCase()}…`; filter.setAttribute('aria-label', `Filter ${title}`);
+ const list = el('div', undefined, 'multi-select-options'); const empty = el('p', 'No matches.', 'multi-select-empty'); menu.append(filter, list, empty); menu.hidden = true;
+ menu.id = `multi-select-${requestKey()}`; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', `${title} options`);
+ const edit = button('Edit', toggle, 'multi-select-edit'); edit.dataset.multiEdit = 'true'; edit.setAttribute('aria-label', `Edit ${title}`); edit.setAttribute('aria-haspopup', 'true'); edit.setAttribute('aria-expanded', 'false'); edit.setAttribute('aria-controls', menu.id);
+ const header = el('div', undefined, 'multi-select-header'); header.append(heading, edit);
+ const choices = entries.map(([value, text]) => {
+  const option = el('label', undefined, 'multi-select-option'); const input = el('input'); input.type = 'checkbox'; input.name = name; input.value = value; input.checked = selected.includes(value); input.setAttribute('aria-label', text);
+  option.append(input, el('span', text)); list.append(option); input.addEventListener('change', render); return {value, text, input, option};
+ });
+ let outside;
+ function close(focus = false) { if (menu.hidden) return; menu.hidden = true; edit.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); if (focus) edit.focus(); }
+ function open() { menu.hidden = false; edit.setAttribute('aria-expanded', 'true'); outside = e => { if (!group.contains(e.target)) close(); }; document.addEventListener('click', outside); filter.focus(); filter.select(); }
+ function toggle() { if (menu.hidden) open(); else close(true); }
+ function render() {
+  values.replaceChildren(); const chosen = choices.filter(choice => choice.input.checked);
+  if (!chosen.length) values.append(el('span', 'None selected', 'multi-select-empty'));
+  chosen.forEach(choice => { const chip = el('span', undefined, 'multi-select-chip'); chip.append(el('span', choice.text)); if (decorate) decorate(chip, choice.value, choice.text); const remove = button('×', () => { choice.input.checked = false; render(); }, 'multi-select-remove'); remove.dataset.multiRemove = 'true'; remove.setAttribute('aria-label', `Remove ${choice.text}`); chip.append(remove); values.append(chip); });
+  const query = filter.value.trim().toLowerCase(); let visible = 0;
+  choices.forEach(choice => { const match = !query || choice.text.toLowerCase().includes(query); choice.option.hidden = !match; if (match) visible++; }); empty.hidden = visible > 0;
+ }
+ filter.addEventListener('input', render); menu.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(true); } });
+ root.append(values, menu); group.append(header, root); parent.append(group); render(); return {root, edit, close};
+}
 function labelColorPicker(parent, value) {
  const palette = el('fieldset', undefined, 'label-palette'); palette.append(el('legend', 'Label color'));
  const selected = String(value || '').trim().toLowerCase();
  LABEL_PALETTE.forEach(color => { const input = el('input'); input.type = 'radio'; input.name = 'color'; input.value = color; input.checked = color === selected; input.setAttribute('aria-label', color); input.title = color; input.style.backgroundColor = color; palette.append(input); });
  parent.append(palette); return palette;
 }
-function openEditor(title, build, submit, readOnly = false) {
+function openEditor(title, build, submit, readOnly = false, afterSave) {
  $('editor-title').textContent = title; $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
  const revision = board.workspace.revision; let pending, key; build($('fields'));
- if (readOnly) $('fields').querySelectorAll('input,textarea,select').forEach(e => { e.disabled = true; });
+ if (readOnly) {
+  $('fields').querySelectorAll('input,textarea,select').forEach(e => { e.disabled = true; });
+  $('fields').querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach(e => { e.disabled = true; });
+ }
  $('editor-form').onsubmit = async e => {
   e.preventDefault(); if (readOnly || busy) return; $('form-error').textContent = ''; $('save').disabled = true; $('cancel').disabled = true; $('dismiss').disabled = true;
   try {
    const command = { revision, ...submit(new FormData($('editor-form'))) };
    const serialized = JSON.stringify(command); if (pending !== serialized) { key = requestKey(); pending = serialized; }
-   await change(command, key); $('editor').close();
+   await change(command, key); if (afterSave) await afterSave(command); $('editor').close();
   } catch (err) { $('form-error').textContent = `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`; }
   finally { $('save').disabled = false; $('cancel').disabled = false; $('dismiss').disabled = false; }
  };
@@ -307,26 +360,53 @@ async function rejectProposal(id) {
  openEditor('Reject planning proposal', fields => { field(fields, 'reason', 'Rejection rationale', '', 'textarea').required = true; }, data => ({kind:'proposal.reject',target:id,reason:data.get('reason').trim()}));
  $('save').textContent = 'Reject proposal';
 }
+function addGitLabLink(item) {
+ $('editor').close();
+ openEditor('Link engineering object', fields => {
+  field(fields, 'project', 'Approved GitLab project', '', 'text', board.integration.projects.map(id => [String(id), String(id)]));
+  field(fields, 'kind', 'Object kind', 'mr', 'text', [['mr','Merge request'],['pipeline','Pinned pipeline']]);
+  const number = field(fields, 'number', 'MR IID or pipeline ID', '', 'number'); number.min = 1; number.max = Number.MAX_SAFE_INTEGER; number.required = true; number.step = 1;
+  fields.append(helpPopover('Use numeric coordinates from the approved instance. Pipeline links stay pinned to that ID; MR links follow its head pipeline. Adding a link does not fetch it automatically.', 'GitLab links'));
+ }, data => ({kind:'link.attach', target:item.id, link:{project:Number(data.get('project')), kind:data.get('kind'), number:Number(data.get('number'))}}));
+}
+async function reconcileItemLinks(itemID, desiredIDs) {
+ const desired = new Set(desiredIDs);
+ for (const link of board.links.filter(link => link.items.includes(itemID) && !desired.has(link.id))) {
+  await change({kind:'link.detach', target:itemID, destination:link.id});
+ }
+ for (const linkID of desired) {
+  if (board.links.some(link => link.id === linkID && link.items.includes(itemID))) continue;
+  const link = board.links.find(value => value.id === linkID);
+  if (!link) throw new Error('A selected GitLab link is no longer available. Refresh and reopen the card.');
+  await change({kind:'link.attach', target:itemID, link:{project:link.project, kind:link.kind, number:link.number}});
+ }
+}
 function editItem(item) {
- const existing = !!item; item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
+ const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs;
+ item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
  openEditor(existing ? 'Work item' : 'Create work item', fields => {
   const title = field(fields, 'title', 'Title', item.title); title.required = true; title.maxLength = 240;
   const desc = field(fields, 'description', 'Description', item.description, 'textarea'); desc.maxLength = 16000;
-  const grid = el('div', undefined, 'form-grid'); fields.append(grid);
+  const grid = el('div', undefined, 'form-grid item-meta-grid'); fields.append(grid);
   field(grid, 'column_id', 'Board column', item.column_id, 'text', board.columns.map(c => [c.id, c.name]));
   field(grid, 'project_id', 'Project', item.project_id, 'text', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])]);
-  const sprints = field(fields, 'sprint_ids', 'Open sprints · select multiple with Ctrl / Command', '', 'text', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`])); sprints.multiple = true; sprints.size = 4;
-  [...sprints.options].forEach(o => { o.selected = item.sprint_ids.includes(o.value); });
-  fields.append(el('p', 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.', 'help'));
+  field(grid, 'assignee', 'Assignee', item.assignee, 'text', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])]);
+  multiSelect(fields, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
   const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
   if (closed.length) fields.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
-  field(grid, 'assignee', 'Assignee', item.assignee, 'text', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])]);
-  const labels = field(fields, 'labels', 'Labels · select multiple with Ctrl / Command', '', 'text', board.labels.map(label => [label.name, label.name])); labels.multiple = true; labels.size = 4; [...labels.options].forEach(o => { o.selected = item.labels.includes(o.value); }); styleLabelOptions(labels);
-  fields.append(el('p', 'Manage available labels using Labels in the workspace header. Select none to clear labels.', 'help'));
-  const deps = field(fields, 'dependencies', 'Depends on · select multiple with Ctrl / Command', '', 'text', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title])); deps.multiple = true; deps.size = Math.min(5, Math.max(2, board.items.length - 1)); [...deps.options].forEach(o => { o.selected = item.dependencies.includes(o.value); });
+  multiSelect(fields, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels using Labels in the workspace header.');
+  multiSelect(fields, 'dependencies', 'Depends on', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title]), item.dependencies);
+  if (existing) {
+   const itemLinks = board.links.filter(link => link.items.includes(item.id));
+   multiSelect(fields, 'link_ids', 'GitLab links', board.links.map(link => [link.id, linkDisplayName(link)]), itemLinks.map(link => link.id), undefined, 'Select registered merge requests or pipelines to associate with this card. Add a new link when it is not listed.');
+   const linkActions = el('div', undefined, 'actions'); if (itemLinks.length) linkActions.append(button('View observations', () => { $('editor').close(); showLinks(item); })); if (!readOnly) { const add = writeButton('＋ Add GitLab link', () => addGitLabLink(item), 'primary'); add.disabled ||= !board.connector_instance || board.connector_instance !== board.integration.instance || !board.integration.projects.length; linkActions.append(add); } fields.append(linkActions);
+  }
   field(fields, 'reason', 'Decision note (optional)', '', 'textarea').maxLength = 4000;
   if (existing) { fields.append(el('p', `Item revision ${item.revision} · Native ID ${item.id}`, 'help')); if (!item.archived) fields.append(writeButton('Archive item', () => archiveItem(item), 'danger')); }
- }, data => ({ kind: existing ? 'item.update' : 'item.create', target: item.id || '', reason: data.get('reason'), item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } }), board.role === 'viewer' || item.archived);
+ }, data => {
+  if (existing) desiredLinkIDs = data.getAll('link_ids');
+  return { kind: existing ? 'item.update' : 'item.create', target: item.id || '', reason: data.get('reason'), item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } };
+ }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
 }
 function archiveItem(item) {
  $('editor').close();
@@ -455,20 +535,9 @@ function showLinks(item) {
    refreshButton.disabled ||= !ready || !!link.next_refresh && Date.parse(link.next_refresh) > Date.now();
    actions.append(refreshButton);
    if (link.next_refresh && Date.parse(link.next_refresh) > Date.now()) row.append(el('p', `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`, 'help'));
-   if (!item.archived) actions.append(writeButton('Unlink…', () => { $('editor').close(); openEditor('Unlink engineering object', f => f.append(el('p', 'Remove this link from this item? Other attached items retain it. Removing its last attachment also removes its cached observation; audit is retained.')), () => ({kind:'link.detach', target:item.id, destination:link.id})); }));
    row.append(actions); fields.append(row);
   });
   if (!ready) fields.append(el('p', 'Connector unavailable or instance approval needs updating. An admin can review Integration settings.', 'help'));
-  if (!item.archived) {
-   const add = writeButton('＋ Link MR or pipeline', () => {
-    $('editor').close(); openEditor('Link engineering object', f => {
-     field(f, 'project', 'Approved GitLab project', '', 'text', board.integration.projects.map(id => [String(id), String(id)]));
-     field(f, 'kind', 'Object kind', 'mr', 'text', [['mr','Merge request'],['pipeline','Pinned pipeline']]);
-     const number = field(f, 'number', 'MR IID or pipeline ID', '', 'number'); number.min = 1; number.max = Number.MAX_SAFE_INTEGER; number.required = true; number.step = 1;
-     f.append(el('p', 'Use numeric coordinates from the approved instance. Pipeline links stay pinned to that ID; MR links follow its head pipeline. Adding a link does not fetch it automatically.', 'help'));
-    }, data => ({kind:'link.attach', target:item.id, link:{project:Number(data.get('project')), kind:data.get('kind'), number:Number(data.get('number'))}}));
-   }, 'primary'); add.disabled ||= !ready || !board.integration.projects.length; fields.append(add);
-  }
  }, () => ({}), true);
 }
 function setupBoard() {
@@ -482,6 +551,8 @@ function setupBoard() {
  }, () => ({}), true);
 }
 $('editor').addEventListener('cancel', e => { if (busy) e.preventDefault(); });
+$('editor').addEventListener('click', e => { if (!busy && e.target === $('editor')) $('editor').close(); });
+document.addEventListener('pointerdown', e => { const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) editor.close(); });
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) $('editor').close(); };
 $('projects').onclick = manageProjects;
 $('proposals').onclick = () => showProposals();

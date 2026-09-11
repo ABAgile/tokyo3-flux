@@ -6,6 +6,7 @@ async (page) => {
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = async () => { await page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor(); };
  const save = async () => { await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved(); };
+ const chooseMulti = async (name, values) => { await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click(); for (const value of values) await page.getByRole('checkbox',{name:value,exact:true}).check(); await page.keyboard.press('Escape'); };
  const board = () => page.evaluate(async () => (await fetch(`/api/v2/workspaces/${document.querySelector('#workspace').value}/board`)).json());
  const drag = async (source, target, position) => {
   await source.dragTo(target, {targetPosition:position});
@@ -23,14 +24,19 @@ async (page) => {
  for (const name of ['Drag first', 'Drag second']) {
   await page.getByRole('button',{name:'＋ New item',exact:true}).click();
   await page.getByLabel('Title',{exact:true}).fill(name);
-  await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption({label:'Alex Planner'});
-  await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).selectOption(['Bug','Delivery']); await save();
+  await page.getByRole('dialog').getByRole('combobox',{name:'Assignee',exact:true}).selectOption({label:'Alex Planner'});
+  await chooseMulti('Labels', ['Bug', 'Delivery']); await save();
  }
  const initial=await board(); const first=initial.items[0], second=initial.items[1]; const ready=initial.columns[0], doing=initial.columns[1];
  const card = id => page.locator(`[data-item="${id}"]`);
  const column = id => page.locator(`[data-column="${id}"]`);
  const handle = id => card(id);
  check(await card(first.id).getByText('Alex Planner',{exact:true}).count()===1,'raw subject shown instead of name');
+ await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption({label:'Alex Planner'});
+ check(await page.getByRole('button',{name:'Drag first',exact:true}).count()===1,'assignee filter hid assigned work');
+ await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption('none');
+ check(await page.getByRole('button',{name:'Drag first',exact:true}).count()===0,'unassigned assignee filter showed assigned work');
+ await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption('all');
  await drag(handle(second.id), card(first.id), {x:16,y:8}); await saved();
  check((await board()).items[0].id===second.id,'card before-drop did not reorder');
  let box=await card(first.id).boundingBox();
@@ -77,7 +83,7 @@ async (page) => {
  await page.getByLabel('Label name',{exact:true}).fill('Defect'); await save();
  check((await board()).items.every(i=>i.labels.includes('Defect')&&!i.labels.includes('Bug')),'rename lost assignments');
  await page.getByRole('button',{name:'Drag first updated',exact:true}).click();
- check((await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).locator('option:checked').allTextContents()).length===2,'multi-selection not preserved');
+ check(await page.getByRole('group',{name:'Labels',exact:true}).locator('.multi-select-chip').count()===2,'multi-selection not preserved');
  await page.getByRole('button',{name:'Archive item',exact:true}).click();
  await page.getByRole('button',{name:'Archive item',exact:true}).click(); await saved();
  await page.getByRole('button',{name:'Labels',exact:true}).click();
@@ -85,7 +91,7 @@ async (page) => {
  await page.getByRole('button',{name:'Delete label',exact:true}).click(); await saved();
  check((await board()).items.every(i=>!i.labels.includes('Defect')),'delete retained archived assignment');
  await page.getByRole('button',{name:'Drag second',exact:true}).click();
- await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).selectOption([]); await save();
+ await page.getByRole('group',{name:'Labels',exact:true}).getByRole('button',{name:'Remove Delivery',exact:true}).click(); await save();
  check((await board()).items.find(i=>i.id===second.id).labels.length===0,'cannot clear labels');
  // Check viewer affordances independently of the backend authorization tests.
  await page.route('**/board',async route=>{const response=await route.fetch();const data=await response.json();data.role='viewer';await route.fulfill({response,json:data});});
@@ -102,9 +108,11 @@ async (page) => {
    await page.setViewportSize({width,height:1000});
    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`overflow ${theme} ${width}`);
    await page.getByRole('button',{name:'Drag second',exact:true}).focus(); await page.keyboard.press('Enter');
-   await page.getByRole('listbox',{name:'Labels · select multiple with Ctrl / Command',exact:true}).focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('Space');
+   const editLabels = page.getByRole('button',{name:'Edit Labels',exact:true}); await editLabels.focus(); await page.keyboard.press('Enter');
+   const delivery = page.getByRole('checkbox',{name:'Delivery',exact:true}); await delivery.focus(); await page.keyboard.press('Space');
    check(await page.evaluate(()=>document.querySelector('dialog').contains(document.activeElement)),'label keyboard focus');
-   await page.keyboard.press('Escape');
+   await page.keyboard.press('Escape'); check(await editLabels.evaluate(e=>e===document.activeElement),'multi-select focus return');
+   await page.getByRole('button',{name:'Cancel',exact:true}).click();
    check(await page.getByRole('button',{name:'Drag second',exact:true}).evaluate(e=>e===document.activeElement),'editor focus return');
   }
  }

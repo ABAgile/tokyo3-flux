@@ -260,14 +260,39 @@ func safeAvatarURL(baseRaw, raw string) string {
 	}
 	base, err := url.Parse(baseRaw)
 	avatar, avatarErr := url.Parse(raw)
-	if err != nil || avatarErr != nil || avatar.Scheme != base.Scheme || avatar.Host != base.Host || avatar.User != nil || avatar.ForceQuery || avatar.RawQuery != "" || avatar.Fragment != "" || avatar.RawPath != "" || path.Clean(avatar.Path) != avatar.Path {
+	if err != nil || avatarErr != nil || avatar.User != nil || avatar.ForceQuery || avatar.Fragment != "" || avatar.RawPath != "" || path.Clean(avatar.Path) != avatar.Path {
 		return ""
 	}
-	prefix := strings.TrimRight(base.Path, "/") + "/"
-	if !strings.HasPrefix(avatar.Path, prefix) {
+	if avatar.Scheme == base.Scheme && avatar.Host == base.Host && avatar.RawQuery == "" {
+		return avatar.String()
+	}
+	return safeGravatarURL(avatar)
+}
+
+func safeGravatarURL(avatar *url.URL) string {
+	if avatar == nil || avatar.Scheme != "https" || avatar.Port() != "" || !gravatarHost(avatar.Hostname()) {
 		return ""
 	}
-	return avatar.String()
+	const prefix = "/avatar/"
+	hash := strings.TrimPrefix(avatar.Path, prefix)
+	if !strings.HasPrefix(avatar.Path, prefix) || (len(hash) != 32 && len(hash) != 64) {
+		return ""
+	}
+	for _, char := range hash {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return ""
+		}
+	}
+	return "https://" + strings.ToLower(avatar.Hostname()) + prefix + strings.ToLower(hash)
+}
+
+func gravatarHost(host string) bool {
+	switch strings.ToLower(strings.TrimSuffix(host, ".")) {
+	case "gravatar.com", "www.gravatar.com", "secure.gravatar.com":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseBaseURL(raw string) (string, error) {

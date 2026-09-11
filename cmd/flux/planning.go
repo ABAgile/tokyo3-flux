@@ -167,7 +167,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	imageSources := []string{"'self'"}
+	imageSources := []string{"'self'", "https://gravatar.com", "https://www.gravatar.com", "https://secure.gravatar.com"}
 	for _, raw := range []string{os.Getenv("FLUX_GITLAB_URL"), connectorSettings.Client.Instance()} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {

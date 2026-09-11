@@ -36,6 +36,22 @@ func TestConfig(t *testing.T) {
 		t.Fatal("unsafe navigation URL")
 	}
 }
+func TestProfileAvatarURL(t *testing.T) {
+	c, err := New("https://gitlab.example", "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := c.safeAvatarURL("https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80"), "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef"; got != want {
+		t.Fatalf("safeAvatarURL() = %q, want %q", got, want)
+	}
+	if got, want := c.safeAvatarURL("https://gitlab.example/uploads/avatar.png"), "https://gitlab.example/uploads/avatar.png"; got != want {
+		t.Fatalf("same-host safeAvatarURL() = %q, want %q", got, want)
+	}
+	if got := c.safeAvatarURL("https://avatars.gravatar.com/avatar/0123456789abcdef0123456789abcdef"); got != "" {
+		t.Fatalf("safeAvatarURL() accepted untrusted host %q", got)
+	}
+}
+
 func TestMemberProfiles(t *testing.T) {
 	var calls atomic.Int32
 	var server *httptest.Server

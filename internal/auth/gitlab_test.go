@@ -170,9 +170,15 @@ func TestSafeAvatarURL(t *testing.T) {
 		raw, want string
 	}{
 		{base + "/uploads/avatar.png", base + "/uploads/avatar.png"},
+		{"https://gitlab.example.com/uploads/avatar.png", "https://gitlab.example.com/uploads/avatar.png"},
 		{"https://other.example/avatar.png", ""},
 		{base + "/uploads/avatar.png?token=secret", ""},
 		{base + "/../avatar.png", ""},
+		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80&d=identicon", "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef"},
+		{"https://avatars.gravatar.com/avatar/0123456789abcdef0123456789abcdef", ""},
+		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
+		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcde", ""},
+		{"http://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef", ""},
 		{"javascript:alert(1)", ""},
 	} {
 		if got := safeAvatarURL(base, test.raw); got != test.want {

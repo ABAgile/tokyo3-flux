@@ -27,7 +27,7 @@ high-saturation swatches each. Include #dcefe4, #145a42, and #ffcc00 for the def
 and common accent choices; use dark ink on light swatches and white on dark swatches.
 Use semantic tokens for all other UI colors. No external
 fonts or assets are required for the base UI; optional GitLab avatar images use the
-configured instance.
+configured instance or a validated HTTPS Gravatar avatar URL.
 
 ## Components and interaction
 
@@ -37,13 +37,19 @@ configured instance.
 - One shared board belongs to each workspace; projects classify items optionally.
   Project, assignee and label filters sit beside Scope in the planning toolbar
   (including unassigned and named assignees), never in the sidebar and never as a
-  planning boundary. WIP counts the whole workspace column, regardless
-  of filtering. Project management uses the existing dialog/controls, not a new
-  component variant.
-- Cards show project (or No project) and all open sprint memberships as badges.
-  Item editor uses a project select and a labeled multiple-select for open sprints;
-  closed-sprint membership is displayed read-only. Multiple active sprints are
-  allowed. Closing one does not remove assignments to other open sprints.
+  planning boundary. WIP counts the whole workspace column, regardless of filtering.
+  Project management uses the existing dialog/controls, not a new component variant.
+- Cards show project (or No project) and all open sprint memberships as badges;
+  project and assignee share a metadata row, with the assignee aligned right. Item
+  editor uses a project select and labeled dropdown multi-selects for open
+  sprints, labels and dependencies. Selected values are removable chips; the Edit
+  link shares the field heading row and opens a keyboard-accessible, filterable
+  checkbox menu with a token-based shadow. Static field guidance uses a ? popover;
+  modal cards close when clicking outside them. Closed-sprint membership is
+  displayed read-only. The column, project and assignee controls share a row on
+  wide screens and stack
+  below 900px. Multiple active sprints are allowed. Closing one does not remove
+  assignments to other open sprints.
 - Cards use the item title as a header, followed by project, assignee, labels, and
   blocked state. Descriptions remain available in the editor but are not shown on cards.
   The native item ID is not displayed on cards.
@@ -58,8 +64,9 @@ configured instance.
   never changes project or sprint membership. Archived cards and viewers cannot drag.
 - Workspace labels have create/rename/delete and color management (deletion confirms
   removal from all cards, including archived work). Names may use an optional
-  `scope::value` form such as `type::bug` or `priority::high`. Item labels use a
-  native labeled multiple-select and display their chosen palette colors as text badges.
+  `scope::value` form such as `type::bug` or `priority::high`. Item label chips use
+  their chosen palette colors and expose an x removal action; Edit opens their
+  dropdown. Form input labels are semibold; control text remains normal-weight.
   Names are plain text, at most 60 bytes.
 - Assignee cards show an optional 24px circular GitLab avatar and display name when
   profile data is available from the configured read connector or current session.
@@ -68,10 +75,11 @@ configured instance.
   identifier.
   Workspace admins can maintain missing names via Members; subjects remain the
   stored identity.
-- Cards expose a GitLab links button and a separate compact observation summary
-  per MR/pipeline (never a combined success indicator). Link dialogs use existing
-  setup rows, badges, forms and live errors. Provider text, URLs and SHAs wrap within
-  setup rows rather than causing horizontal scrolling. Display last-success time and
+- Cards show associated MR/pipeline links as compact navigation links when observed;
+  the item editor manages associations with a dropdown multi-select and can add a
+  new approved link. Observation details use existing setup rows, badges, forms and
+  live errors. Provider text, URLs and SHAs wrap within setup rows rather than causing
+  horizontal scrolling. Display last-success time and
   explicitly mark unobserved, stale, unavailable, inaccessible, and not-found observations.
   A 404 means missing OR hidden, not proof of deletion. Old-head pipeline success
   is unknown for the current head. Provider errors preserve last-known data.

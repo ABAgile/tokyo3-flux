@@ -207,7 +207,7 @@ func (c *Client) fetchProfiles(ctx context.Context, ids []int64) (map[int64]Memb
 		if name == "" {
 			name = username
 		}
-		profiles[user.ID] = MemberProfile{Name: name, Username: username, AvatarURL: c.safeURL(user.AvatarURL)}
+		profiles[user.ID] = MemberProfile{Name: name, Username: username, AvatarURL: c.safeAvatarURL(user.AvatarURL)}
 	}
 	return profiles, true
 }
@@ -337,6 +337,44 @@ func (c *Client) safeURL(raw string) string {
 		return ""
 	}
 	return u.String()
+}
+func (c *Client) safeAvatarURL(raw string) string {
+	if len(raw) > 2048 {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	base, baseErr := url.Parse(c.instance)
+	if err != nil || baseErr != nil || u.User != nil || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || path.Clean(u.Path) != u.Path {
+		return ""
+	}
+	if u.Scheme == base.Scheme && u.Host == base.Host && u.RawQuery == "" {
+		return u.String()
+	}
+	return safeGravatarURL(u)
+}
+func safeGravatarURL(u *url.URL) string {
+	if u == nil || u.Scheme != "https" || u.Port() != "" || !gravatarHost(u.Hostname()) {
+		return ""
+	}
+	const prefix = "/avatar/"
+	hash := strings.TrimPrefix(u.Path, prefix)
+	if !strings.HasPrefix(u.Path, prefix) || (len(hash) != 32 && len(hash) != 64) {
+		return ""
+	}
+	for _, char := range hash {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return ""
+		}
+	}
+	return "https://" + strings.ToLower(u.Hostname()) + prefix + strings.ToLower(hash)
+}
+func gravatarHost(host string) bool {
+	switch strings.ToLower(strings.TrimSuffix(host, ".")) {
+	case "gravatar.com", "www.gravatar.com", "secure.gravatar.com":
+		return true
+	default:
+		return false
+	}
 }
 func retryDelay(raw string) time.Duration {
 	delay := time.Minute
