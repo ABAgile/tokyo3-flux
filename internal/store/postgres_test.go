@@ -144,7 +144,7 @@ func TestPostgresNativeLifecycle(t *testing.T) {
 	it = b.Items[0]
 	it.ProjectID = projects[0].ID
 	it.Description = "Acceptance criteria"
-	apply(t, s, &b, p.Command{Kind: "item.update", Target: it.ID, Item: &it, Reason: "Clarify scope"})
+	apply(t, s, &b, p.Command{Kind: "item.update", Target: it.ID, Item: &it})
 	apply(t, s, &b, p.Command{Kind: "item.archive", Target: it.ID})
 	if !b.Items[0].Archived {
 		t.Fatal("archive")

@@ -14,9 +14,10 @@ import (
 )
 
 type fakeRepository struct {
-	changes int
-	subject string
-	err     error
+	changes     int
+	commentAdds int
+	subject     string
+	err         error
 }
 
 func (f *fakeRepository) Workspaces(_ context.Context, subject string) ([]Workspace, error) {
@@ -50,6 +51,15 @@ func (f *fakeRepository) Change(_ context.Context, _, subject, _ string, _ Comma
 func (f *fakeRepository) History(_ context.Context, _, subject string, _ int64) ([]Event, error) {
 	f.subject = subject
 	return []Event{}, f.err
+}
+func (f *fakeRepository) Comments(_ context.Context, _, subject, item string) ([]Comment, error) {
+	f.subject = subject
+	return []Comment{{ID: 1, ItemID: item, Author: subject, Body: "existing comment"}}, f.err
+}
+func (f *fakeRepository) AddComment(_ context.Context, _, subject, item, _, body string) (Comment, error) {
+	f.commentAdds++
+	f.subject = subject
+	return Comment{ID: 2, ItemID: item, Author: subject, Body: body}, f.err
 }
 func (f *fakeRepository) Burndown(_ context.Context, _, subject, _, _, _ string) (Burndown, error) {
 	f.subject = subject
@@ -87,6 +97,10 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	}{
 		{name: "anonymous", method: "GET", path: "/board", status: 303},
 		{name: "read", method: "GET", path: "/board", cookie: true, status: 200},
+		{name: "comments", method: "GET", path: "/items/a/comments", cookie: true, status: 200},
+		{name: "comment missing csrf", method: "POST", path: "/items/a/comments", body: `{"body":"hello"}`, cookie: true, status: 403},
+		{name: "comment", method: "POST", path: "/items/a/comments", body: `{"body":"hello"}`, cookie: true, token: csrf, status: 200},
+		{name: "comment unknown field", method: "POST", path: "/items/a/comments", body: `{"body":"hello","author":"spoof"}`, cookie: true, token: csrf, status: 400},
 		{name: "burn down", method: "GET", path: "/burndown?sprint=s1&project=all&assignee=all", cookie: true, status: 200},
 		{name: "merge-request search", method: "GET", path: "/gitlab/merge-requests?project=42&search=latest", cookie: true, status: 200},
 		{name: "merge-request assigned", method: "GET", path: "/gitlab/merge-requests?project=42&scope=assigned_to_me", cookie: true, status: 200},
@@ -130,8 +144,8 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 			}
 		})
 	}
-	if repo.changes != 1 {
-		t.Fatalf("unauthorized changes reached repository: %d", repo.changes)
+	if repo.changes != 1 || repo.commentAdds != 1 {
+		t.Fatalf("unexpected writes reached repository: planning=%d comments=%d", repo.changes, repo.commentAdds)
 	}
 	for _, path := range []string{"/api/v2/session", "/api/v2/workspaces", "/api/v2/workspaces/w/projects", "/api/v2/workspaces/w/gitlab/projects"} {
 		r := httptest.NewRequest("GET", "http://localhost"+path, nil)
@@ -170,6 +184,21 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	machine.ServeHTTP(machineMergeRequests, machineMergeRequest)
 	if machineMergeRequests.Code != http.StatusForbidden {
 		t.Fatalf("machine merge-request search got %d", machineMergeRequests.Code)
+	}
+	machineComments := httptest.NewRecorder()
+	machineCommentRequest := httptest.NewRequest("GET", root+"/items/a/comments", nil)
+	machineCommentRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	machine.ServeHTTP(machineComments, machineCommentRequest)
+	if machineComments.Code != http.StatusOK {
+		t.Fatalf("machine comments read got %d", machineComments.Code)
+	}
+	machineCommentWrite := httptest.NewRecorder()
+	machineCommentWriteRequest := httptest.NewRequest("POST", root+"/items/a/comments", strings.NewReader(`{"body":"machine write"}`))
+	machineCommentWriteRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	machineCommentWriteRequest.Header.Set("Content-Type", "application/json")
+	machine.ServeHTTP(machineCommentWrite, machineCommentWriteRequest)
+	if machineCommentWrite.Code != http.StatusMethodNotAllowed || repo.commentAdds != 1 {
+		t.Fatalf("machine comments write accepted: %d", machineCommentWrite.Code)
 	}
 	for _, kind := range []string{"integration.save", "link.attach", "link.detach", "link.refresh", "proposal.import", "proposal.accept", "proposal.reject"} {
 		r := httptest.NewRequest("POST", root+"/changes", strings.NewReader(`{"kind":"`+kind+`","revision":1}`))

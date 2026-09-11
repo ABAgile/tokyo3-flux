@@ -179,7 +179,11 @@ func PreviewProposal(b Board, proposal Proposal, skipped map[string]string) (Boa
 		return Board{}, preview, err
 	}
 	for _, op := range proposal.Document.Operations {
-		c := Command{Kind: op.Kind, Revision: after.Workspace.Revision, Target: op.Target, Item: op.Item, Destination: op.Destination, Before: op.Before, Reason: proposal.Document.Rationale}
+		reason := proposal.Document.Rationale
+		if op.Kind == "item.create" || op.Kind == "item.update" {
+			reason = ""
+		}
+		c := Command{Kind: op.Kind, Revision: after.Workspace.Revision, Target: op.Target, Item: op.Item, Destination: op.Destination, Before: op.Before, Reason: reason}
 		if err := Apply(&after, c); err != nil {
 			return Board{}, preview, err
 		}

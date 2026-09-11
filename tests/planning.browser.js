@@ -80,7 +80,14 @@ async (page) => {
  await nav('Backlog'); await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
  await chooseMulti('Open sprints', ['Sprint 1 · Planning foundations (active)', 'Sprint 2 · Delivery signals (planned)']);
- await page.getByLabel('Decision note (optional)',{exact:true}).fill('Work spans both sprints');
+ check(await page.getByLabel('Decision note (optional)',{exact:true}).count()===0,'decision note field is still displayed');
+ await page.getByLabel('Add a comment',{exact:true}).fill('Work spans both sprints');
+ await page.getByRole('button',{name:'Add comment',exact:true}).click();
+ await page.locator('.item-comments .comment').filter({hasText:'Work spans both sprints'}).waitFor();
+ check(await page.locator('.item-comments .comment').count()===1,'item comment was not appended');
+ check(await page.locator('.item-comments .comment-head strong').textContent()==='Local fixture user','comment author is missing');
+ check(await page.locator('.item-comments .comment-avatar').count()===1,'comment avatar is missing');
+ check(await page.locator('.item-comments .comment time').count()===1,'comment creation time is missing');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  check(await page.getByRole('button',{name:title,exact:true}).count()===0,'scheduled item remained in backlog');
  await nav('Kanban board');
@@ -90,6 +97,7 @@ async (page) => {
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  await page.getByRole('button',{name:title,exact:true}).click();
  check(await page.getByRole('group',{name:'Open sprints',exact:true}).locator('.multi-select-chip').count()===2,'multi-sprint membership not persisted');
+ await page.locator('.item-comments .comment').filter({hasText:'Work spans both sprints'}).waitFor();
  await page.getByLabel('Title',{exact:true}).fill('Retained stale draft');
  const other=await page.context().newPage(); other.setDefaultTimeout(10000); await other.goto(page.url());
  await other.getByRole('button',{name:title,exact:true}).click();
@@ -146,5 +154,5 @@ async (page) => {
    await page.keyboard.press('Escape');check(await page.getByRole('button',{name:'＋ New item',exact:true}).evaluate(e=>e===document.activeElement),'focus return');
   }
  }
- return 'PASS: workspace board, optional projects and toolbar filtering, shared WIP, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
+ return 'PASS: workspace board, optional projects and toolbar filtering, shared WIP, immutable item comments, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
 }

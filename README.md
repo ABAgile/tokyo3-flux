@@ -16,6 +16,10 @@ planning evidence and draft suggestions for a human to review and approve.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
   memberships and optionally assigns unfinished work to another open sprint.
   Closed-scope metrics describe current cards, not historical completion.
+- Item comments are a separate flat, append-only stream. Each comment retains its
+  author and creation time; members and admins can add comments, viewers can read
+  them, and comments never alter planning revisions, audit snapshots or burn-down
+  history.
 - Each sprint panel can expand a compact native burn-down chart plotting daily remaining
   work, ideal progress and recorded scope from planning audit snapshots. The active
   filter condition sits beside the figure; project and assignee filters can be combined,
@@ -25,8 +29,9 @@ planning evidence and draft suggestions for a human to review and approve.
   Drag cards from their body and columns from their headers; the item editor keeps
   the keyboard-accessible column movement control. Archive instead of deleting work;
   restore archived items before editing them.
-- Viewers read, members plan and review proposals, and admins also configure
-  integrations and member display names. When configured, GitLab profile names and
+- Viewers read, members plan, review proposals and add item comments, and admins
+  also configure integrations, member display names and add item comments. When
+  configured, GitLab profile names and
   validated instance/Gravatar avatars enrich assignee cards without changing native
   membership. Membership and
   roles are operator-managed,
@@ -127,9 +132,10 @@ flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
 
 `flux migrate`, `bootstrap`, `member`, `seed`, `serve`, `read`, `import` and
 `version` are the CLI commands. `flux plan` also namespaces the first five commands.
-Serving requires schema 8 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 9 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
-historical audit index used by burn-down reads. Back up and restore-test
+historical audit index used by burn-down reads; migration 009 adds immutable item
+comments. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -149,7 +155,7 @@ GRANT INSERT, UPDATE ON workspace_integrations, integration_runs, proposals TO f
 GRANT INSERT, DELETE ON approved_gitlab_projects, item_external_links,
   webhook_deliveries TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON external_links TO flux_runtime;
-GRANT INSERT ON imported_items TO flux_runtime;
+GRANT INSERT ON imported_items, item_comments TO flux_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
 ```
 
@@ -323,6 +329,8 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
 | `GET /gitlab/merge-requests?project=ID&scope=recent\|assigned_to_me\|board_members&search=TEXT` | Search merge requests in one currently approved project; browser members/admins only. Numeric search targets an exact project-scoped IID; assignment scopes use workspace GitLab member IDs. |
 | `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
+| `GET /items/{item}/comments` | Read the item’s flat append-only comments, including author and creation time. |
+| `POST /items/{item}/comments` | Add one comment as the authenticated planning member; does not require or change planning revision. |
 | `GET /read/{view}` | Agent pages; `limit`, `offset`, `revision`, optional `target`. |
 | `GET /history?before=ID` | Up to 50 descending planning events. |
 | `GET /proposals?before=SEQUENCE` | Up to 20 review summaries. |
@@ -338,8 +346,11 @@ The web editor offers a fixed 64-swatch palette of solid colors for labels.
 
 Changes require `Content-Type: application/json`, `X-CSRF-Token`, a 16–120-character
 `Idempotency-Key`, and workspace `revision`. Entity edits also require their
-revision. Retry uncertain requests with the same payload/key. Success returns
-`{"revision":N}`; reload the board. Validation errors are 400, conflicts 409,
+revision. Item comments use the same content-type, CSRF and idempotency protections
+but intentionally have no planning revision; retry uncertain comment requests with
+the same payload/key. Planning changes return `{"revision":N}` and should be
+followed by a board reload; comment creation returns the immutable comment JSON.
+Validation errors are 400, conflicts 409,
 permission denials 403 and missing authorized records 404. Authorization-bearing
 mutations are denied even with a browser cookie.
 
@@ -367,11 +378,17 @@ Command kinds and payloads:
   planning revision. Import documents use `imports:[{source,item}]` instead of
   agent operations; the two cannot be mixed.
 
+Item comments are posted as `{"body":"..."}` by members/admins only. They have no
+edit or delete operation, retain the authenticated author and server creation time,
+and are not included in board JSON, planning history, audit snapshots or burn-down
+snapshots. The item editor uses comments instead of a decision-note field.
+
 Labels may use names such as `type::bug` or `priority::high`; each workspace label
 also has a selectable palette color shown on cards. Columns have name, category
 (`todo|doing|done`) and WIP (0 = unlimited). Sprints have name, goal and start/end
 (`YYYY-MM-DD`). Items carry title, description, column_id, optional project_id,
-assignee, labels, dependencies and sprint_ids. `reason` records planning rationale.
+assignee, labels, dependencies and sprint_ids. Planning commands retain `reason`
+only for their explicit rationale fields.
 
 ## Limits and development
 
@@ -381,8 +398,9 @@ Per workspace: 1,000 items including archived work, 200 sprints, 100 projects,
 support up to 366 days. GitLab MR picker responses and board-member assignee scopes
 are capped at 50 results/IDs per request. Each item permits 20
 labels, 50 dependencies and 20 external links. Titles are at most 240 bytes,
-descriptions 16,000 and rationale/goals 4,000. Self-dependencies and cycles are
-rejected; WIP has no administrator bypass.
+descriptions 16,000, comments and rationale/goals 4,000. Comment reads return up to
+500 oldest comments per item. Self-dependencies and cycles are rejected; WIP has no
+administrator bypass.
 
 Mutation bodies are capped at 64 KiB. Proposals allow 1–50 operations/import records
 and 100 evidence references; title/rationale/provenance limits are 120/4000/500

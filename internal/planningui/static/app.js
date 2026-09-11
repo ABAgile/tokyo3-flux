@@ -19,6 +19,7 @@ $('theme').onclick = () => { const next = document.documentElement.dataset.theme
 function el(tag, text, className) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; }
 function button(text, fn, className) { const b = el('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
 function writable() { return board && board.role !== 'viewer' && !busy && !loading; }
+function canComment() { return board && (board.role === 'member' || board.role === 'admin') && !busy && !loading; }
 function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable(); return b; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
@@ -40,7 +41,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
@@ -338,7 +339,7 @@ function openEditor(title, build, submit, readOnly = false, afterSave, afterClos
  $('editor-title').textContent = title; $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
  const revision = board.workspace.revision; let pending, key; build($('fields'));
  if (readOnly) {
-  $('fields').querySelectorAll('input,textarea,select').forEach(e => { e.disabled = true; });
+  $('fields').querySelectorAll('input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])').forEach(e => { e.disabled = true; });
   $('fields').querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach(e => { e.disabled = true; });
  }
  $('editor-form').onsubmit = async e => {
@@ -421,7 +422,7 @@ async function addGitLabLink(item) {
  const currentBoard = board, currentRoot = root;
  const draft = item && $('editor').open ? (() => {
   const data = new FormData($('editor-form'));
-  return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), column_id:String(data.get('column_id') || ''), project_id:String(data.get('project_id') || ''), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids'), reason:String(data.get('reason') || '')};
+  return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), column_id:String(data.get('column_id') || ''), project_id:String(data.get('project_id') || ''), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids')};
  })() : undefined;
  closeEditor(); let projects = [], catalogError = '', resolvedURL = '';
  const returnToCard = () => { if (root !== currentRoot || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) return; const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); const returnDraft = draft ? {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]} : undefined; editItem(latest, returnDraft); };
@@ -493,6 +494,48 @@ async function reconcileItemLinks(itemID, desiredIDs) {
   await change({revision:board.workspace.revision, kind:'link.attach', target:itemID, link:{project:link.project, kind:link.kind, number:link.number}});
  }
 }
+function commentTime(value) {
+ const date = new Date(value); if (Number.isNaN(date.getTime())) return {label:'Unknown time', dateTime:''}; return {label:date.toLocaleString(), dateTime:date.toISOString()};
+}
+function validComments(data) { return Array.isArray(data) && data.every(comment => comment && Number.isSafeInteger(comment.id) && comment.id > 0 && typeof comment.item_id === 'string' && typeof comment.author === 'string' && comment.author && typeof comment.body === 'string' && comment.body && typeof comment.created_at === 'string' && !Number.isNaN(Date.parse(comment.created_at))); }
+function renderCommentList(list, comments) {
+ list.replaceChildren(); if (!comments.length) return;
+ comments.forEach(comment => {
+  const row = el('article', undefined, 'comment'); const info = memberInfo(comment.author); const avatar = el('span', undefined, 'avatar comment-avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
+  if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
+  const content = el('div', undefined, 'comment-content'); const header = el('div', undefined, 'comment-head'); const author = el('strong', info.name); author.title = comment.author; const time = commentTime(comment.created_at); const created = el('time', time.label, 'muted'); if (time.dateTime) created.dateTime = time.dateTime; header.append(author, created); content.append(header, el('p', comment.body, 'comment-body')); row.append(avatar, content); list.append(row);
+ });
+}
+function renderItemComments(fields, item) {
+ const currentBoard = board, currentRoot = root; const section = el('section', undefined, 'item-comments'); const heading = el('div', undefined, 'section-head'); heading.append(el('h3', 'Comments')); const status = el('p', 'Loading comments…', 'help'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const list = el('div', undefined, 'comment-list'); let commentBusy = false; let commentLoad = 0; let addButton, textarea;
+ const setStatus = (text, error = false) => { status.textContent = text; status.className = error ? 'error' : 'help'; status.setAttribute('role', error ? 'alert' : 'status'); };
+ section.append(heading, status, list);
+ if (board.role !== 'member' && board.role !== 'admin') section.append(el('p', 'Viewers can read comments; members and admins can add them.', 'help'));
+ else {
+  const label = el('label', 'Add a comment'); textarea = el('textarea'); textarea.name = 'comment_body'; textarea.maxLength = 4000; textarea.placeholder = 'Share context with the team…'; textarea.dataset.commentControl = 'true'; label.append(textarea); const composer = el('div', undefined, 'comment-composer'); addButton = button('Add comment', addComment, 'primary'); addButton.dataset.commentWrite = 'true'; addButton.disabled = !canComment(); composer.append(label, addButton); section.append(composer);
+ }
+ fields.append(section);
+ async function loadComments() {
+  const loadID = ++commentLoad; setStatus('Loading comments…');
+  try {
+   const data = await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments');
+   if (loadID !== commentLoad || board !== currentBoard || root !== currentRoot || !section.isConnected) return false;
+   if (!validComments(data)) throw new Error('Comments are invalid. Reopen the item to retry.');
+   renderCommentList(list, data); setStatus(data.length ? `${data.length} comment${data.length === 1 ? '' : 's'}.` : 'No comments yet.'); return true;
+  } catch (error) { if (loadID === commentLoad && board === currentBoard && root === currentRoot && section.isConnected) setStatus(error.message, true); return false; }
+ }
+ async function addComment() {
+  if (!addButton || commentBusy || !canComment()) return; const body = textarea.value.trim();
+  if (!body) { setStatus('Comment cannot be empty.', true); textarea.focus(); return; }
+  commentBusy = true; commentLoad++; addButton.disabled = true; setStatus('Adding comment…');
+  try {
+   await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf,'Idempotency-Key':requestKey()}, body:JSON.stringify({body})});
+   if (board !== currentBoard || root !== currentRoot || !section.isConnected) return; textarea.value = ''; await loadComments();
+  } catch (error) { if (board === currentBoard && root === currentRoot && section.isConnected) setStatus(error.message, true); }
+  finally { commentBusy = false; if (addButton && section.isConnected) { addButton.disabled = !canComment(); renderControls(); } }
+ }
+ loadComments();
+}
 function editItem(item, draft) {
  const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs;
  item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
@@ -514,12 +557,12 @@ function editItem(item, draft) {
    const linkActions = el('div', undefined, 'actions'); if (itemLinks.length) linkActions.append(button('View observations', () => { $('editor').close(); showLinks(item); }));
    if (!readOnly) { const add = writeButton('＋ Add GitLab link', () => addGitLabLink(item), 'primary'); add.disabled ||= !board.connector_instance || board.connector_instance !== board.integration.instance || !board.integration.projects.length; linkPicker.header.append(add); }
    if (linkActions.childElementCount) fields.append(linkActions);
+   renderItemComments(fields, item);
   }
-  field(fields, 'reason', 'Decision note (optional)', draft?.reason ?? '', 'textarea').maxLength = 4000;
   if (existing) { fields.append(el('p', `Item revision ${item.revision} · Native ID ${item.id}`, 'help')); if (!item.archived) fields.append(writeButton('Archive item', () => archiveItem(item), 'danger')); }
  }, data => {
   if (existing) desiredLinkIDs = data.getAll('link_ids');
-  return { kind: existing ? 'item.update' : 'item.create', target: item.id || '', reason: data.get('reason'), item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } };
+  return { kind: existing ? 'item.update' : 'item.create', target: item.id || '', item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } };
  }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
 }
 function archiveItem(item) {

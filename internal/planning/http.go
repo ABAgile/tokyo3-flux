@@ -37,6 +37,11 @@ type BurndownRepository interface {
 	Burndown(context.Context, string, string, string, string, string) (Burndown, error)
 }
 
+type CommentRepository interface {
+	Comments(context.Context, string, string, string) ([]Comment, error)
+	AddComment(context.Context, string, string, string, string, string) (Comment, error)
+}
+
 type ProposalRepository interface {
 	Proposals(context.Context, string, string, int64) ([]ProposalSummary, error)
 	Review(context.Context, string, string, string) (ProposalPreview, error)
@@ -82,6 +87,60 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.result(w, r, v, err)
 	})
 	root := "/api/v2/workspaces/{workspace}"
+	commentsRoot := root + "/items/{item}/comments"
+	mux.HandleFunc("GET "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := h.repo.(CommentRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		itemID := r.PathValue("item")
+		if !validItemPathID(itemID) {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := repo.Comments(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID)
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("POST "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {
+		if machine || r.Header.Get("Authorization") != "" {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		repo, ok := h.repo.(CommentRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		itemID := r.PathValue("item")
+		if !validItemPathID(itemID) {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		var input struct {
+			Body string `json:"body"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&input); err != nil {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		if err := dec.Decode(new(any)); err != io.EOF {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		comment, err := repo.AddComment(r.Context(), r.PathValue("workspace"), h.subject(r, false), itemID, r.Header.Get("Idempotency-Key"), input.Body)
+		h.result(w, r, comment, err)
+	})
 	mux.HandleFunc("GET "+root+"/board", func(w http.ResponseWriter, r *http.Request) {
 		v, err := h.repo.Board(r.Context(), r.PathValue("workspace"), h.subject(r, machine))
 		if machine {
@@ -316,6 +375,12 @@ func burndownFilter(value string) (string, error) {
 		return "", nil
 	}
 	return value, nil
+}
+func validItemPathID(value string) bool {
+	return value != "" && len(value) <= 240 && !strings.ContainsAny(value, "\r\n")
+}
+func validCommentIdempotencyKey(value string) bool {
+	return len(value) >= 16 && len(value) <= 120 && !strings.ContainsAny(value, "\r\n")
 }
 func respond(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")

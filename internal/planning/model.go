@@ -20,6 +20,8 @@ var (
 
 const (
 	MaxItems          = 1000
+	MaxCommentLength  = 4000
+	MaxItemComments   = 500
 	DefaultLabelColor = "#dcefe4"
 )
 
@@ -78,6 +80,13 @@ type Item struct {
 	Archived     bool     `json:"archived"`
 	Labels       []string `json:"labels"`
 	Dependencies []string `json:"dependencies"`
+}
+type Comment struct {
+	ID        int64     `json:"id"`
+	ItemID    string    `json:"item_id"`
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
 }
 type Sprint struct {
 	ID       string `json:"id"`
@@ -182,6 +191,9 @@ func Apply(b *Board, c Command) error {
 	}
 	if len(c.Reason) > 4000 {
 		return invalid("rationale is too long")
+	}
+	if (c.Kind == "item.create" || c.Kind == "item.update") && c.Reason != "" {
+		return invalid("item comments must be added separately")
 	}
 	switch c.Kind {
 	case "integration.save", "link.attach", "link.detach":

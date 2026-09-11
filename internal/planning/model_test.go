@@ -28,6 +28,7 @@ func TestApplyValidation(t *testing.T) {
 		{"missing", nil, Command{Kind: "item.archive", Target: "missing"}, ErrNotFound},
 		{"unknown kind", nil, Command{Kind: "sql"}, ErrInvalid},
 		{"missing create", nil, Command{Kind: "item.create"}, ErrInvalid},
+		{"item note replaced by comments", nil, Command{Kind: "item.update", Target: "a", Reason: "old note", Item: &Item{ID: "a", Revision: 1, Title: "A", ColumnID: "ready"}}, ErrInvalid},
 		{"foreign column", nil, Command{Kind: "item.move", Target: "a", Destination: "foreign"}, ErrInvalid},
 		{"WIP full", func(b *Board) { b.Items[1].ColumnID = "doing" }, Command{Kind: "item.move", Target: "a", Destination: "doing"}, ErrInvalid},
 		{"archived move", func(b *Board) { b.Items[0].Archived = true }, Command{Kind: "item.move", Target: "a", Destination: "doing"}, ErrInvalid},
