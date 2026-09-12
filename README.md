@@ -20,6 +20,12 @@ planning evidence and draft suggestions for a human to review and approve.
   author and creation time; members and admins can add comments, viewers can read
   them, and comments never alter planning revisions, audit snapshots or burn-down
   history.
+- Descriptions and comments use a GitLab-like Markdown editor with a compact single-row icon bar
+  fused to the input. Preview mode shows only text Edit; editing starts with text Preview followed
+  by flat, denser formatting icons with 28px hit areas. Related tools are separated by vertical
+  rules; the bar fits the standard editor width and can scroll horizontally on narrow screens.
+  It covers headings, emphasis, strikethrough, links, inline and fenced code, quotes, lists,
+  task lists and table insertion. The UI renders safe HTML; raw HTML and unsafe links remain text.
 - Each sprint panel can expand a compact native burn-down chart plotting daily remaining
   work, ideal progress and recorded scope from planning audit snapshots. The active
   filter condition sits beside the figure; project and assignee filters can be combined,
@@ -378,17 +384,20 @@ Command kinds and payloads:
   planning revision. Import documents use `imports:[{source,item}]` instead of
   agent operations; the two cannot be mixed.
 
-Item comments are posted as `{"body":"..."}` by members/admins only. They have no
-edit or delete operation, retain the authenticated author and server creation time,
-and are not included in board JSON, planning history, audit snapshots or burn-down
-snapshots. The item editor uses comments instead of a decision-note field.
+Item comments are posted as `{"body":"..."}` by members/admins only. The body is Markdown
+source rendered by the safe UI renderer. Comments have no edit or delete operation, retain
+the authenticated author and server creation time, and are not included in board JSON,
+planning history, audit snapshots or burn-down snapshots. The item editor uses comments
+instead of a decision-note field.
+
+Items carry title, Markdown description, column_id, optional project_id, assignee, labels,
+dependencies and sprint_ids. Planning commands retain `reason` only for their explicit
+rationale fields.
 
 Labels may use names such as `type::bug` or `priority::high`; each workspace label
 also has a selectable palette color shown on cards. Columns have name, category
 (`todo|doing|done`) and WIP (0 = unlimited). Sprints have name, goal and start/end
-(`YYYY-MM-DD`). Items carry title, description, column_id, optional project_id,
-assignee, labels, dependencies and sprint_ids. Planning commands retain `reason`
-only for their explicit rationale fields.
+(`YYYY-MM-DD`).
 
 ## Limits and development
 

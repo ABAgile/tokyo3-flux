@@ -45,9 +45,16 @@ a validated HTTPS Gravatar avatar URL.
   board-member merge requests. The approved project and MR dropdowns remain the final search
   fallback before storing the structured project/IID coordinate; exact MR IID entry remains a
   fallback. Static field guidance uses a ? popover; modal cards close when clicking outside them.
-  Closed-sprint membership is displayed read-only. Item context uses a flat append-only comment list
-  with the author and creation time; members and admins can add comments, viewers can read them, and
-  no comment can be edited or deleted. Comment entries use a compact GitLab-like activity timeline:
+  Closed-sprint membership is displayed read-only. Descriptions and comments use a GitLab-like
+  Markdown editor with a compact single-row icon bar fused to the top of its input. Preview mode
+  has only a text Edit control; edit mode starts with text Preview followed by flat, denser
+  formatting icons with 28px hit areas. Related tools are separated by vertical rules. The bar
+  stays on one line, fits the standard editor width and may scroll on very narrow screens.
+  Descriptions open in Preview;
+  comments open in Write. Safe rendered HTML is used for previews; raw HTML is never executed.
+  Item context uses a flat append-only comment list with the author and creation time; members
+  and admins can add comments, viewers can read them, and no comment can be edited or deleted.
+  Comment entries use a compact GitLab-like activity timeline:
   a 24px member avatar at left, author/time metadata and a bordered body at right, with a connector
   between entries. The member/admin composer follows the list so newly appended comments remain in
   chronological flow. Comments are stored and loaded separately from planning revisions, audit
@@ -128,6 +135,6 @@ a validated HTTPS Gravatar avatar URL.
   validation/conflict, offer explicit refresh, and show successful saves.
 - Viewer mode disables write actions. Archive view and history preserve completed work. Loading,
   no-work, no-workspace, unavailable, and stale-revision states must be explicit. Render user
-  content as text, not HTML.
+  Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system. Verify both themes at 1440px,
   768px, and 390px and keyboard-only planning workflows.

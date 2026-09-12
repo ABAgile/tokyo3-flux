@@ -4,6 +4,7 @@ async (page) => {
  page.setDefaultTimeout(10000);
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = async () => { await page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor(); };
+ const save = async () => { await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved(); };
  const chooseMulti = async (name, values) => { await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click(); for (const value of values) await page.getByRole('checkbox',{name:value,exact:true}).check(); await page.keyboard.press('Escape'); };
  const nav = async name => { await page.getByRole('navigation').getByRole('button',{name}).click(); };
  const title = 'Browser spanning item';
@@ -30,7 +31,7 @@ async (page) => {
  await page.getByRole('button',{name:'＋ New project',exact:true}).click();
  await page.getByLabel('Project name').fill('Cross-project stream');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
- for (const [label, color] of [['type::review', '#ffcc00'], ['priority::high', '#145a42']]) {
+ for (const [label, color] of [['type::review', '#ffcc00'], ['priority::review', '#145a42']]) {
   await page.getByRole('button',{name:'Labels',exact:true}).click();
   await page.getByRole('button',{name:'＋ New label',exact:true}).click();
   await page.getByLabel('Label name',{exact:true}).fill(label);
@@ -41,8 +42,28 @@ async (page) => {
  await page.getByRole('button',{name:'＋ New item',exact:true}).click();
  check(await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).inputValue() === '', 'new item required a project');
  await page.getByLabel('Title',{exact:true}).fill(title);
- await page.getByLabel('Description',{exact:true}).fill('One item across projects and sprints. <script>alert("never HTML")</script>');
- await chooseMulti('Labels', ['type::review', 'priority::high']);
+ const description = page.getByLabel('Description',{exact:true}); const descriptionEditor = description.locator('..');
+ check(await descriptionEditor.locator('.markdown-preview').isVisible(),'description does not open in Preview');
+ const editDescription = descriptionEditor.getByRole('button',{name:'Edit description',exact:true}); check(await editDescription.count()===1,'preview mode should only show the edit button'); check(await editDescription.textContent()==='Edit','preview mode should show the Edit text'); check(await descriptionEditor.locator('.markdown-toolbar > :not([hidden])').count()===1,'preview mode should hide formatting controls');
+ await editDescription.click();
+ await description.fill('One item across projects and sprints. **Bold acceptance** and [safe link](https://example.com).\n\n- [x] Preview works\n\n| Feature | Value |\n| :--- | ---: |\n| Safe HTML | yes |\n\n<script>alert("never HTML")</script>\n\n[unsafe](javascript:alert(1))');
+ const previewDescription = descriptionEditor.getByRole('button',{name:'Preview description',exact:true}); check(await previewDescription.count()===1,'editing mode is missing the preview button'); check(await previewDescription.textContent()==='Preview','editing mode should show the Preview text');
+ check(await descriptionEditor.locator('.markdown-toolbar button').first().getAttribute('aria-label')==='Preview description','preview button is not first in the editing toolbar');
+ check(await descriptionEditor.locator('.markdown-divider:not([hidden])').count()===5,'Markdown tool groups are not separated');
+ check(await descriptionEditor.locator('.markdown-editor').evaluate(editor => editor.firstElementChild?.classList.contains('markdown-toolbar') && editor.children[1]?.tagName === 'TEXTAREA'),'toolbar is not fused to the input');
+ check(await descriptionEditor.locator('.markdown-toolbar').evaluate(toolbar => toolbar.scrollWidth === toolbar.clientWidth),'Markdown toolbar scrolls at the standard editor width');
+ check(await descriptionEditor.locator('.markdown-tool').first().evaluate(tool => tool.getBoundingClientRect().width >= 28),'Markdown icons are too small to click');
+ check(await descriptionEditor.getByRole('button',{name:'Task list',exact:true}).count()===1,'Markdown toolbar is missing task lists');
+ await description.evaluate(input => input.setSelectionRange(input.value.length, input.value.length)); await descriptionEditor.getByRole('button',{name:'Insert table',exact:true}).click();
+ check((await description.inputValue()).includes('| Header 1 | Header 2 |'),'insert table did not add Markdown');
+ await previewDescription.click();
+ check(await descriptionEditor.locator('.markdown-preview strong').textContent()==='Bold acceptance','description Markdown was not rendered');
+ check(await descriptionEditor.locator('.markdown-preview a').count()===1,'safe Markdown link was not rendered');
+ check(await descriptionEditor.locator('.markdown-preview .markdown-task input:checked').count()===1,'task-list Markdown was not rendered');
+ check(await descriptionEditor.locator('.markdown-preview table').count()>=2,'table Markdown was not rendered');
+ check((await descriptionEditor.locator('.markdown-preview').textContent()).includes('[unsafe](javascript:alert(1))'),'unsafe Markdown link was rendered as HTML');
+ check(await descriptionEditor.locator('script').count()===0,'description raw HTML was executed');
+ await chooseMulti('Labels', ['type::review', 'priority::review']);
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:title,exact:true}).waitFor();
@@ -74,16 +95,17 @@ async (page) => {
  await page.getByRole('button',{name:"Define the team's acceptance criteria",exact:true}).click();
  await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'});
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
- await page.getByRole('status').filter({hasText:'WIP limit'}).waitFor();
+ await page.getByRole('alert').filter({hasText:'WIP limit'}).waitFor();
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
  // A single card can belong to both sprints without duplication.
  await nav('Backlog'); await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
  await chooseMulti('Open sprints', ['Sprint 1 · Planning foundations (active)', 'Sprint 2 · Delivery signals (planned)']);
  check(await page.getByLabel('Decision note (optional)',{exact:true}).count()===0,'decision note field is still displayed');
- await page.getByLabel('Add a comment',{exact:true}).fill('Work spans both sprints');
+ const comment = page.getByLabel('Add a comment',{exact:true}); const commentEditor = comment.locator('..'); check(await comment.isVisible(),'comment composer does not open in Write'); check(await commentEditor.locator('.markdown-preview').isHidden(),'comment composer unexpectedly opens in Preview'); check(await commentEditor.locator('.markdown-toolbar button').first().getAttribute('aria-label')==='Preview comment','comment editor does not start with Preview'); check(await commentEditor.locator('.markdown-toolbar button').first().textContent()==='Preview','comment mode should show the Preview text'); await comment.fill('Work spans **both sprints**.');
  await page.getByRole('button',{name:'Add comment',exact:true}).click();
  await page.locator('.item-comments .comment').filter({hasText:'Work spans both sprints'}).waitFor();
+ check(await page.locator('.item-comments .comment-body strong').textContent()==='both sprints','comment Markdown was not rendered');
  check(await page.locator('.item-comments .comment').count()===1,'item comment was not appended');
  check(await page.locator('.item-comments .comment-head strong').textContent()==='Local fixture user','comment author is missing');
  check(await page.locator('.item-comments .comment-avatar').count()===1,'comment avatar is missing');
