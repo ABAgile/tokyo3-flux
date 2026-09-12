@@ -7,6 +7,7 @@ async (page) => {
  const saved = async () => { await page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor(); };
  const save = async () => { await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved(); };
  const chooseMulti = async (name, values) => { await page.getByRole('button',{name:`Edit ${name}`,exact:true}).click(); for (const value of values) await page.getByRole('checkbox',{name:value,exact:true}).check(); await page.keyboard.press('Escape'); };
+ const nav = async name => { await page.getByRole('navigation').getByRole('button',{name}).click(); };
  const board = () => page.evaluate(async () => (await fetch(`/api/v2/workspaces/${document.querySelector('#workspace').value}/board`)).json());
  const drag = async (source, target, position) => {
   await source.dragTo(target, {targetPosition:position});
@@ -14,13 +15,16 @@ async (page) => {
  await page.getByRole('heading',{name:'Kanban board',exact:true}).waitFor();
  check((await board()).items.length===0,'requires an empty test workspace');
  for (const name of ['Bug', 'Delivery']) {
-  await page.getByRole('button',{name:'Labels',exact:true}).click();
+  await nav('Labels');
   await page.getByRole('button',{name:'＋ New label',exact:true}).click();
   await page.getByLabel('Label name',{exact:true}).fill(name); await save();
  }
- await page.getByRole('button',{name:'Members',exact:true}).click();
+ await nav('Members');
+ await page.getByRole('heading',{name:'Members',exact:true}).waitFor();
  await page.getByRole('button',{name:'Edit name',exact:true}).click();
  await page.getByLabel('Display name',{exact:true}).fill('Alex Planner'); await save();
+ await nav('Kanban board');
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
  for (const name of ['Drag first', 'Drag second']) {
   await page.getByRole('button',{name:'＋ New item',exact:true}).click();
   await page.getByLabel('Title',{exact:true}).fill(name);
@@ -57,7 +61,7 @@ async (page) => {
  box=await column(ready.id).boundingBox();
  await drag(column(doing.id).locator('.column-head'),column(ready.id),{x:box.width-8,y:16}); await saved();
  check((await board()).columns[0].id===ready.id,'list after-drop failed');
- await page.reload(); await page.getByRole('button',{name:'Drag first',exact:true}).waitFor();
+ await page.reload(); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await page.getByRole('button',{name:'Drag first',exact:true}).waitFor();
  check(await column(doing.id).locator(`[data-item="${first.id}"]`).count()===1,'drop did not survive reload');
  check(await card(first.id).getAttribute('draggable')==='true','card body is not draggable');
  check(await column(doing.id).locator('.column-head').getAttribute('draggable')==='true','column header is not draggable');
@@ -78,30 +82,34 @@ async (page) => {
  await page.getByRole('button',{name:'Refresh',exact:true}).click();
  await page.getByRole('button',{name:'Drag first updated',exact:true}).waitFor();
  // Rename applies to existing assignments; archive then delete also updates archived work.
- await page.getByRole('button',{name:'Labels',exact:true}).click();
+ await nav('Labels');
  await page.locator('.setup-row').filter({has:page.getByText('Bug',{exact:true})}).getByRole('button',{name:'Rename',exact:true}).click();
  await page.getByLabel('Label name',{exact:true}).fill('Defect'); await save();
  check((await board()).items.every(i=>i.labels.includes('Defect')&&!i.labels.includes('Bug')),'rename lost assignments');
+ await nav('Kanban board');
  await page.getByRole('button',{name:'Drag first updated',exact:true}).click();
  check(await page.getByRole('group',{name:'Labels',exact:true}).locator('.multi-select-chip').count()===2,'multi-selection not preserved');
  await page.getByRole('button',{name:'Archive item',exact:true}).click();
  await page.getByRole('button',{name:'Archive item',exact:true}).click(); await saved();
- await page.getByRole('button',{name:'Labels',exact:true}).click();
+ await nav('Labels');
  await page.locator('.setup-row').filter({has:page.getByText('Defect',{exact:true})}).getByRole('button',{name:'Delete…',exact:true}).click();
  await page.getByRole('button',{name:'Delete label',exact:true}).click(); await saved();
  check((await board()).items.every(i=>!i.labels.includes('Defect')),'delete retained archived assignment');
+ await nav('Kanban board');
  await page.getByRole('button',{name:'Drag second',exact:true}).click();
  await page.getByRole('group',{name:'Labels',exact:true}).getByRole('button',{name:'Remove Delivery',exact:true}).click(); await save();
  check((await board()).items.find(i=>i.id===second.id).labels.length===0,'cannot clear labels');
  // Check viewer affordances independently of the backend authorization tests.
  await page.route('**/board',async route=>{const response=await route.fetch();const data=await response.json();data.role='viewer';await route.fulfill({response,json:data});});
- await page.reload(); await page.getByRole('button',{name:'Drag second',exact:true}).waitFor();
+ await page.reload(); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await page.getByRole('button',{name:'Drag second',exact:true}).waitFor();
  check(await card(second.id).getByRole('button',{name:/^Drag card/}).count()===0,'explicit card drag handle remains');
  check(await card(second.id).getAttribute('draggable')==='false','viewer draggable');
  check(await column(doing.id).locator('.column-head').getAttribute('draggable')==='false','viewer column draggable');
- check(await page.getByRole('button',{name:'Labels',exact:true}).isDisabled(),'viewer label management enabled');
+ await nav('Labels');
+ check(await page.getByRole('button',{name:'＋ New label',exact:true}).isDisabled(),'viewer label creation enabled');
+ await nav('Kanban board');
  await page.unroute('**/board'); await page.reload();
- await page.getByRole('button',{name:'Drag second',exact:true}).waitFor();
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await page.getByRole('button',{name:'Drag second',exact:true}).waitFor();
  for(const theme of ['light','dark']) {
   await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);
   for(const width of [1440,768,390]) {

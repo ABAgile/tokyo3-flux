@@ -6,9 +6,9 @@ UI; the transitional cockpit is retired.
 ## Direction
 
 A calm, compact planning workspace: left navigation, workspace heading, sprint goals and scope
-summary, then a Kanban board or backlog. Sprint panels can reveal their burn-down chart without
-leaving the planning context. Native planning state is primary; do not show invented GitLab or agent
-status. Display a clear local-demo indicator when fixture authentication is enabled.
+summary, then a Kanban board with backlog as a scope option. The home view defaults to Active
+sprints. Sprint panels can reveal their burn-down chart without leaving the planning context. Native
+planning state is primary; do not show invented GitLab or agent status.
 
 ## Tokens
 
@@ -29,22 +29,31 @@ a validated HTTPS Gravatar avatar URL.
 ## Components and interaction
 
 - Sidebar 208px on desktop, top navigation below 900px. Main padding 32px on desktop, 16px below
-  900px. Board columns use a responsive grid, minimum 240px; wrap columns rather than causing
+  900px. Navigation icons use a fixed 24px column so menu labels align. The workspace control has
+  an icon-only Refresh action beside its label. The sidebar footer is right-aligned. The theme
+  control is an icon beside a single account cell; identity and Sign out appear on separate lines.
+  Board columns use a responsive grid with a minimum 240px width; wrap columns rather than causing
   page-level horizontal scroll.
 - One shared board belongs to each workspace; projects classify items optionally. Project, assignee
   and label filters sit beside Scope in the planning toolbar (including unassigned and named
-  assignees), never in the sidebar and never as a planning boundary. WIP counts the whole workspace
-  column, regardless of filtering. Project management uses the existing dialog/controls, not a new
+  assignees), never in the sidebar and never as a planning boundary. Scope lists Active sprints,
+  Backlog, and All open work in that order. WIP counts the whole workspace column, regardless of
+  filtering. Project management uses the existing dialog/controls, not a new
   component variant.
 - Cards show project (or No project) and all open sprint memberships as badges; project and assignee
-  share a metadata row, with the assignee aligned right. Item editor uses a project select and
-  labeled dropdown multi-selects for open sprints, labels and dependencies. Selected values are
-  removable chips; the Edit link shares the field heading row and opens a keyboard-accessible,
-  filterable checkbox menu with a token-based shadow. GitLab link creation sits beside Edit and
-  first offers a canonical MR URL paste, followed by quick scopes for recent, assigned-to-me, and
-  board-member merge requests. The approved project and MR dropdowns remain the final search
-  fallback before storing the structured project/IID coordinate; exact MR IID entry remains a
-  fallback. Static field guidance uses a ? popover; modal cards close when clicking outside them.
+  share a metadata row, with the assignee aligned right. At 1000px and above, the item editor puts
+  title and description on the left and selection controls on the right; it stacks below that width.
+  Wide layouts place comments below the description in the left pane; stacked layouts place them
+  after the controls. Project and assignee use the same filterable single-selection dropdown as
+  the other selection fields. The control pane orders Assignee, Labels, Project, Open sprints,
+  Depends on and GitLab links, followed by a divider and the native `Move to` select.
+  Selection fields start in display mode; their Edit link reveals the native select or checkbox
+  menu.
+  Multi-select values remain removable chips while editing, with a token-based shadow. GitLab links
+  have a paste-URL field below the picker; Enter or Get resolves and appends an approved MR link.
+  Add link opens the quick-scope and search fallback. Static field guidance uses an opaque ? popover
+  with a line-colored shadow; the work-item header popover shows Card ID and Revision on separate
+  lines. Modal cards close when clicking outside them.
   Closed-sprint membership is displayed read-only. Descriptions and comments use a GitLab-like
   Markdown editor with a compact single-row icon bar fused to the top of its input. Preview mode
   has only a text Edit control; edit mode starts with text Preview followed by flat, denser
@@ -58,21 +67,24 @@ a validated HTTPS Gravatar avatar URL.
   a 24px member avatar at left, author/time metadata and a bordered body at right, with a connector
   between entries. The member/admin composer follows the list so newly appended comments remain in
   chronological flow. Comments are stored and loaded separately from planning revisions, audit
-  snapshots, and burn-down history; the item editor has no decision-note field. The column, project
-  and assignee controls share a row on wide screens and stack below 900px. Multiple active sprints
-  are allowed. Closing one does not remove assignments to other open sprints.
+  snapshots, and burn-down history; the item editor has no decision-note field. Multiple active
+  sprints are allowed. Closing one does not remove assignments to other open sprints. The footer
+  keeps Save, Archive and Cancel visible while item fields scroll.
 - Cards use the item title as a header, followed by project, assignee, labels, and blocked state.
   Descriptions remain available in the editor but are not shown on cards. The native item ID is not
   displayed on cards. Cards and board columns use a restrained accent-border hover cue. Card
-  ordering uses drag-and-drop; there are no separate up/down controls. The item editor’s labeled
-  column select remains the keyboard movement mechanism. Cards are draggable from their body
+  ordering uses drag-and-drop; there are no separate up/down controls. The item editor’s `Move to`
+  select remains the keyboard movement mechanism. Cards are draggable from their body
   context, and columns are draggable from their headers, moving cards before/after cards or to a
   column’s end and reordering columns before/after another column. Drops use the same
   revision-checked commands; no optimistic rearrangement. Accent outlines mark drop targets, with
   top/bottom borders marking insertion. Filtering never changes project or sprint membership.
   Archived cards and viewers cannot drag.
-- Workspace labels have create/rename/delete and color management (deletion confirms removal from
-  all cards, including archived work). Names may use an optional `scope::value` form such as
+- Projects and GitLab integration share a Projects maintenance view; project editing uses its
+  existing dialog, while integration approval opens an inline form. Members have a dedicated Members
+  view with admin-only name editing. Workspace labels have a dedicated Labels maintenance view with
+  a compact responsive grid for create/rename/delete and color management. Deletion confirms removal
+  from all cards, including archived work. Names may use an optional `scope::value` form such as
   `type::bug` or `priority::high`. Item label chips use their chosen palette colors and expose an x
   removal action; Edit opens their dropdown. Form input labels are semibold; control text remains
   normal-weight. Names are plain text, at most 60 bytes.
@@ -84,7 +96,8 @@ a validated HTTPS Gravatar avatar URL.
 - Cards show each associated merge request once as a compact direct GitLab link (`MR !IID`) plus a
   Details link to Linked GitLab observations. Each MR observation includes its corresponding latest
   head pipeline status. The observations dialog exposes direct MR and pipeline links; the item
-  editor manages associations with a dropdown multi-select and can add a new approved link.
+  editor manages associations with a dropdown multi-select, a paste-URL field and a button for
+  the approved-link search fallback.
   Observation details use existing setup rows, badges, forms and live errors. Provider text, URLs
   and SHAs wrap within setup rows rather than causing horizontal scrolling. Display precise
   successful-refresh and latest-attempt times and explicitly mark unobserved, stale, unavailable,
@@ -114,8 +127,9 @@ a validated HTTPS Gravatar avatar URL.
   the exact historical diff, not a recomputed current diff. All controls use the existing
   dialog/form patterns; viewers cannot import/review-write.
 - Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close actions, and a
-  read-only burn-down toggle. The chart expands inside the same panel on the Kanban board, backlog
-  and Sprint planning displays; collapse state does not alter planning data. Below 900px, the goal
+  read-only burn-down toggle. The chart expands inside the same panel on the Kanban board and Sprint
+  planning displays; collapse state does not alter planning data. Selecting a closed sprint in the
+  board Scope filter shows its corresponding read-only panel. Below 900px, the goal
   spans the full panel width above metrics/actions. Closing requires a rationale and an explicit
   additional carry-over choice (none, or another open sprint). Existing other sprint memberships are
   retained.
@@ -127,8 +141,8 @@ a validated HTTPS Gravatar avatar URL.
   semantic tokens, places the active filter condition beside a compact figure on wide screens, and
   has an accessible horizontal daily-values table behind a native disclosure. It wraps below 900px
   without page-level horizontal scrolling.
-- Modal dialogs have a 640px maximum width and a 16px viewport margin; textareas start at 120px
-  high.
+- Modal dialogs have a 640px maximum width and a 16px viewport margin; the item editor expands to
+  960px on wide screens. Textareas start at 120px high.
 - Use native labeled forms and modal dialogs with focus return. All controls have visible focus;
   errors and save/conflict status are announced with live regions.
 - Never optimistic-save silently: disable submit during requests, retain form input on

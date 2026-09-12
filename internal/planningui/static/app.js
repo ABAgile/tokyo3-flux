@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let session, workspaces = [], board, root, view = 'board', busy = false, loading = false;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
+let integrationFormOpen = false, integrationCatalog = [], integrationCatalogError = '', integrationCatalogLoading = false;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
 const theme = localStorage.getItem('flux-plan-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = theme;
@@ -15,18 +16,21 @@ const LABEL_PALETTE = Object.freeze([
  '#748ffc', '#5c7cfa', '#4c6ef5', '#4263eb', '#364fc7', '#3f37c9', '#3730a3', '#2b2d6e',
  '#c77dff', '#b26fff', '#9d4edd', '#8338ec', '#7209b7', '#6a0dad', '#5a189a', '#3c096c'
 ]);
-$('theme').onclick = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; localStorage.setItem('flux-plan-theme', next); };
 function el(tag, text, className) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; }
+function updateThemeControl() { const dark = document.documentElement.dataset.theme === 'dark'; $('theme').firstElementChild.textContent = dark ? '☀' : '☾'; $('theme').title = dark ? 'Switch to light theme' : 'Switch to dark theme'; }
+$('theme').onclick = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; localStorage.setItem('flux-plan-theme', next); updateThemeControl(); };
+updateThemeControl();
 function button(text, fn, className) { const b = el('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
 function writable() { return board && board.role !== 'viewer' && !busy && !loading; }
+function gitLabWritable() { return writable() && !!board.connector_instance && board.connector_instance === board.integration.instance && !!board.integration.projects.length; }
 function canComment() { return board && (board.role === 'member' || board.role === 'admin') && !busy && !loading; }
-function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable(); return b; }
+function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable() || integrationFormOpen; return b; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
 async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
 function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownRequests.clear(); burndownErrors.clear(); }
 async function refresh() {
- if (!root || busy) return;
+ if (!root || busy || integrationFormOpen) return;
  const generation = ++loadGeneration; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
  try { const next = await api(root + '/board'); if (generation !== loadGeneration) return false; board = next; resetBurndown(); history = []; historyBefore = 0; if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
  catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
@@ -41,7 +45,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); $('refresh').disabled = busy || loading; $('workspace').disabled = busy || loading; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
@@ -132,7 +136,7 @@ function sprintPanel(s) {
  for (const [n, label] of [[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked now']]) { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(n)), el('span', label)); metrics.append(metric); }
  const actions = el('div', undefined, 'actions');
  const expanded = burndownExpanded.has(s.id); const toggle = button(expanded ? 'Hide burn down' : 'Show burn down', () => { if (expanded) burndownExpanded.delete(s.id); else burndownExpanded.add(s.id); render(); [...document.querySelectorAll('[data-burndown-toggle]')].find(element => element.dataset.burndownToggle === s.id)?.focus(); }, 'quiet'); toggle.dataset.burndownToggle = s.id; toggle.setAttribute('aria-expanded', String(expanded)); if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`); toggle.disabled = busy || loading; actions.append(toggle);
- actions.append(button('View scope', () => { view = 'board'; render(); $('scope').value = s.id; renderContent(); }));
+ actions.append(button('View scope', () => { view = 'board'; $('scope').value = s.id; render(); }));
  if (s.state !== 'closed') actions.append(writeButton('Edit sprint', () => editSprint(s)));
  if (s.state === 'planned') actions.append(writeButton('Start sprint', () => quick({ kind: 'sprint.start', target: s.id }), 'primary'));
  if (s.state === 'active') actions.append(writeButton('Close sprint', () => closeSprint(s)));
@@ -142,20 +146,23 @@ function sprintPanel(s) {
 function render() {
  renderControls();
  if (!board) { $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('content').replaceChildren(el('p', 'Choose an available workspace to begin. Projects are optional.', 'empty')); return; }
- $('breadcrumb').textContent = board.workspace.name + ' / Shared planning';
  const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
  const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
  const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
- const titles = { board: 'Kanban board', backlog: 'Backlog', sprints: 'Sprint planning', archive: 'Archived work', history: 'Planning history' };
- $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : 'Plan intentionally. Keep work moving.';
+ const titles = { board: 'Kanban board', sprints: 'Sprints', projects: 'Projects', labels: 'Labels', members: 'Members', archive: 'Archive', history: 'History' };
+ const subtitles = { projects: 'Organize workspace projects and GitLab integration.', labels: 'Maintain labels used to classify work.', members: 'Review workspace members and maintain display names.' };
+ $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : subtitles[view] || 'Plan intentionally. Keep work moving.';
  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
- const active = activeSprints(); $('sprint-summary').replaceChildren(...(view === 'board' || view === 'backlog' ? (active.length ? active.map(sprintPanel) : [el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty')]) : []));
- const selected = $('scope').value; options($('scope'), [['all', 'All open work'], ['active', 'Active sprints'], ['backlog', 'Backlog'], ...board.sprints.map(s => [s.id, `${s.name} (${s.state})`])], selected); if (!$('scope').value) $('scope').value = 'all';
- $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'sprints' || view === 'history'; document.querySelector('.toolbar').hidden = view === 'history';
+ const active = activeSprints();
+ const selected = $('scope').value; options($('scope'), [['active', 'Active sprints'], ['backlog', 'Backlog'], ['all', 'All open work'], ...board.sprints.map(s => [s.id, `${s.name} (${s.state})`])], selected); if (!$('scope').value) $('scope').value = 'active';
+ const selectedSprint = board.sprints.find(s => s.id === $('scope').value); const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
+ $('sprint-summary').setAttribute('aria-label', selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints');
+ $('sprint-summary').replaceChildren(...(view === 'board' ? (summarySprints.length ? summarySprints.map(sprintPanel) : [el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty')]) : []));
+ $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'sprints' || view === 'history'; document.querySelector('.toolbar').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
  renderContent();
 }
 function filteredItems() {
- const query = $('search').value.toLowerCase(); const scope = view === 'backlog' ? 'backlog' : $('scope').value; const sprint = board.sprints.find(s => s.id === scope);
+ const query = $('search').value.toLowerCase(); const scope = $('scope').value; const sprint = board.sprints.find(s => s.id === scope);
  return board.items.filter(i => {
   if (view === 'archive') { if (!i.archived) return false; } else if (i.archived && sprint?.state !== 'closed') return false;
   if (view !== 'archive') { if (scope === 'active' && !activeSprints().some(s => i.sprint_ids.includes(s.id))) return false; if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false; if (sprint && !scopeItems(sprint).some(v => v.id === i.id)) return false; }
@@ -238,10 +245,13 @@ async function requestBurndown(sprintID, force = false) {
  const generation = burndownGeneration; const currentBoard = board, currentRoot = root; const token = {}; burndownRequests.set(key, token); $('content').setAttribute('aria-busy', 'true');
  try { const query = new URLSearchParams({sprint:sprintID, project:$('project').value, assignee:$('assignee').value}); const next = await api(currentRoot + '/burndown?' + query); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!next || !Array.isArray(next.points) || !next.sprint) throw new Error('Burn-down data is invalid. Refresh to retry.'); if (next.revision !== currentBoard.workspace.revision) throw new Error('Planning changed while loading. Refresh to review.'); burndownData.set(key, next); burndownErrors.delete(key); }
  catch (e) { if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; burndownErrors.set(key, e.message); }
- finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'backlog' || view === 'sprints') render(); }
+ finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'sprints') render(); }
 }
 function renderContent() {
  if (!board) return; const content = $('content'); content.replaceChildren();
+ if (view === 'projects') { renderProjects(content); return; }
+ if (view === 'labels') { renderLabels(content); return; }
+ if (view === 'members') { renderMembers(content); return; }
  if (view === 'sprints') {
   $('count').textContent = '';
   const head = el('div', undefined, 'section-head'); head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary')); content.append(head);
@@ -250,7 +260,7 @@ function renderContent() {
  if (view === 'history') { renderHistory(content); return; }
  const items = filteredItems(); $('count').textContent = `${items.length} items · workspace revision ${board.workspace.revision}`;
  if (view === 'board') { const grid = el('div', undefined, 'board'); for (const col of board.columns) { const section = el('section', undefined, 'column'); section.setAttribute('aria-label', col.name); const head = el('div', undefined, 'column-head'); const peers = items.filter(i => i.column_id === col.id); const total = board.items.filter(i => !i.archived && i.column_id === col.id).length; head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} WIP` : 'No limit'}`)); makeDraggable(head, 'list', col.id, col.name); section.dataset.column = col.id; dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(c => c.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) section.append(el('p', 'No work here', 'empty')); grid.append(section); } content.append(grid); }
- else { const list = el('div', undefined, 'list'); appendCards(list, items); if (!items.length) list.append(el('p', view === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.', 'empty')); content.append(list); }
+ else { const list = el('div', undefined, 'list'); appendCards(list, items); if (!items.length) list.append(el('p', view === 'board' && $('scope').value === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.', 'empty')); content.append(list); }
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
@@ -390,7 +400,7 @@ function multiSelect(parent, name, title, entries, selected = [], decorate, help
  menu.id = `multi-select-${requestKey()}`; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', `${title} options`);
  const edit = button('Edit', toggle, 'multi-select-edit'); edit.dataset.multiEdit = 'true'; edit.setAttribute('aria-label', `Edit ${title}`); edit.setAttribute('aria-haspopup', 'true'); edit.setAttribute('aria-expanded', 'false'); edit.setAttribute('aria-controls', menu.id);
  const header = el('div', undefined, 'multi-select-header'); header.append(heading, edit); header.addEventListener('click', event => { if (!menu.hidden && !edit.contains(event.target)) close(); });
- let choices = [], controls;
+ let choices = [], controls, editing = false;
  function currentValues() { return choices.filter(choice => choice.input.checked).map(choice => choice.value); }
  function replaceEntries(nextEntries, selectedValues = []) {
   let selectedSet = new Set(selectedValues.map(String)); if (single && selectedValues.length > 1) selectedSet = new Set([String(selectedValues[0])]);
@@ -415,13 +425,13 @@ function multiSelect(parent, name, title, entries, selected = [], decorate, help
   try { Promise.resolve(handler(query, controls)).catch(error => setStatus(error.message || String(error))); } catch (error) { setStatus(error.message || String(error)); }
  }
  let outside;
- function close(focus = false) { if (menu.hidden) return; menu.hidden = true; edit.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); if (focus) edit.focus(); }
- function open() { menu.hidden = false; edit.setAttribute('aria-expanded', 'true'); outside = e => { if (!group.contains(e.target)) close(); }; document.addEventListener('click', outside); filter.focus(); filter.select(); invoke(onOpen, filter.value.trim()); }
+ function close(focus = false) { if (menu.hidden) return; menu.hidden = true; editing = false; edit.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); render(); if (focus) edit.focus(); }
+ function open() { editing = true; menu.hidden = false; edit.setAttribute('aria-expanded', 'true'); outside = e => { if (!group.contains(e.target)) close(); }; document.addEventListener('click', outside); render(); filter.focus(); filter.select(); invoke(onOpen, filter.value.trim()); }
  function toggle() { if (menu.hidden) open(); else close(true); }
  function render() {
   values.replaceChildren(); const chosen = choices.filter(choice => choice.input.checked);
   if (!chosen.length) values.append(el('span', 'None selected', 'multi-select-empty'));
-  chosen.forEach(choice => { const chip = el('span', undefined, 'multi-select-chip'); chip.append(el('span', choice.text)); if (decorate) decorate(chip, choice.value, choice.text); const remove = button('×', () => { choice.input.checked = false; render(); if (onChange) onChange(currentValues()); }, 'multi-select-remove'); remove.dataset.multiRemove = 'true'; remove.setAttribute('aria-label', `Remove ${choice.text}`); chip.append(remove); values.append(chip); });
+  chosen.forEach(choice => { const chip = el('span', undefined, 'multi-select-chip'); chip.append(el('span', choice.text)); if (decorate) decorate(chip, choice.value, choice.text); const remove = button('×', () => { choice.input.checked = false; render(); if (onChange) onChange(currentValues()); }, 'multi-select-remove'); remove.dataset.multiRemove = 'true'; remove.hidden = !editing; remove.setAttribute('aria-label', `Remove ${choice.text}`); chip.append(remove); values.append(chip); });
   const query = filter.value.trim().toLowerCase(); let visible = 0;
   choices.forEach(choice => { const match = !query || choice.text.toLowerCase().includes(query); choice.option.hidden = !match; if (match) visible++; }); empty.hidden = visible > 0 || !status.hidden;
  }
@@ -442,7 +452,7 @@ function closeEditor() {
 }
 function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
  editorReturn = afterClose;
- $('editor-title').textContent = title; $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
+ $('editor-title').textContent = title; $('editor-form').classList.toggle('item-editor-form', ['Work item', 'Create work item'].includes(title)); $('editor-form').querySelectorAll('[data-item-footer]').forEach(e => e.remove()); $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
  const revision = board.workspace.revision; let pending, key; build($('fields'));
  if (readOnly) {
   $('fields').querySelectorAll('input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])').forEach(e => { e.disabled = true; });
@@ -524,27 +534,59 @@ async function rejectProposal(id) {
  openEditor('Reject planning proposal', fields => { field(fields, 'reason', 'Rejection rationale', '', 'textarea').required = true; }, data => ({kind:'proposal.reject',target:id,reason:data.get('reason').trim()}));
  $('save').textContent = 'Reject proposal';
 }
+function itemEditorDraft() {
+ const data = new FormData($('editor-form'));
+ return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), column_id:String(data.get('column_id') || ''), project_id:String(data.get('project_id') || ''), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids')};
+}
+function resolveGitLabMRURL(value, currentBoard, projects) {
+ const raw = String(value || '').trim(); if (!raw) throw new Error('Paste a GitLab merge-request URL first.');
+ if (!currentBoard.connector_instance || currentBoard.connector_instance !== currentBoard.integration.instance) throw new Error('GitLab link creation is not configured for this workspace.');
+ if (!currentBoard.integration.projects.length) throw new Error('No approved GitLab projects are available for linking.');
+ let target, instance, projectPath;
+ try { target = new URL(raw); instance = new URL(currentBoard.connector_instance); projectPath = decodeURIComponent(target.pathname); } catch { throw new Error('Enter a valid GitLab merge-request URL.'); }
+ if (raw.length > 2048 || /[\r\n]/.test(raw) || target.origin !== instance.origin || target.username || target.password) throw new Error('Use a URL from the configured GitLab instance.');
+ const basePath = instance.pathname.replace(/\/+$/, ''); const prefix = basePath ? basePath + '/' : '/'; if (!target.pathname.startsWith(prefix)) throw new Error('That URL is outside the configured GitLab instance.');
+ const tail = projectPath.slice(prefix.length); const marker = '/-/merge_requests/'; const markerAt = tail.lastIndexOf(marker); const iid = markerAt < 0 ? '' : tail.slice(markerAt + marker.length); projectPath = markerAt > 0 ? projectPath.slice(prefix.length, prefix.length + markerAt) : '';
+ if (markerAt <= 0 || !/^[1-9][0-9]*$/.test(iid) || !Number.isSafeInteger(Number(iid))) throw new Error('Use a canonical GitLab merge-request URL.');
+ const approved = new Set(currentBoard.integration.projects.map(String)); const project = projects.find(value => approved.has(String(value.id)) && typeof value.path_with_namespace === 'string' && value.path_with_namespace.trim() === projectPath);
+ if (!project) throw new Error('That merge-request project is not in the approved GitLab project catalog.');
+ return {project:Number(project.id), kind:'mr', number:Number(iid)};
+}
+async function attachItemGitLabLink(item, link) {
+ const currentBoard = board, currentRoot = root; const draft = itemEditorDraft(); const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); closeEditor();
+ try { await change({revision:currentBoard.workspace.revision, kind:'link.attach', target:item.id, link}); }
+ catch (error) { if (root === currentRoot && board) { const latest = board.items.find(value => value.id === item.id); if (latest) editItem(latest, draft); notice(error.message, true); } return; }
+ if (root !== currentRoot || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) return;
+ const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); editItem(latest, {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]});
+}
+function inlineGitLabPaste(parent, item, readOnly) {
+ const currentBoard = board, currentRoot = root; const row = el('div', undefined, 'gitlab-paste-row'); const input = el('input'); input.type = 'text'; input.inputMode = 'url'; input.placeholder = 'Paste GitLab MR URL, then press Enter or click Get'; input.maxLength = 2048; input.setAttribute('aria-label', 'GitLab MR URL'); const get = button('Get', resolve, 'primary'); get.dataset.gitlabWrite = 'true'; get.disabled = readOnly || !gitLabWritable(); row.append(input, get);
+ const status = el('p', '', 'help'); status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; };
+ let pending = false;
+ async function resolve() {
+  if (pending || get.disabled) return; const raw = input.value.trim(); if (!raw) { setStatus('Paste a GitLab merge-request URL first.', true); input.focus(); return; }
+  pending = true; get.disabled = true; setStatus('Resolving GitLab merge request…');
+  try { const projects = await loadGitLabProjects(currentRoot); if (!row.isConnected || board !== currentBoard || root !== currentRoot) return; const link = resolveGitLabMRURL(raw, currentBoard, projects); await attachItemGitLabLink(item, link); }
+  catch (error) { if (row.isConnected) { setStatus(error.message, true); input.focus(); } }
+  finally { pending = false; if (row.isConnected) get.disabled = !gitLabWritable(); }
+ }
+ input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); resolve(); } }); parent.append(row, status);
+}
 async function addGitLabLink(item) {
  const currentBoard = board, currentRoot = root;
- const draft = item && $('editor').open ? (() => {
-  const data = new FormData($('editor-form'));
-  return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), column_id:String(data.get('column_id') || ''), project_id:String(data.get('project_id') || ''), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids')};
- })() : undefined;
- closeEditor(); let projects = [], catalogError = '', resolvedURL = '';
+ const draft = item && $('editor').open ? itemEditorDraft() : undefined;
+ closeEditor(); let projects = [], catalogError = '';
  const returnToCard = () => { if (root !== currentRoot || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) return; const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); const returnDraft = draft ? {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]} : undefined; editItem(latest, returnDraft); };
  try { projects = await loadGitLabProjects(currentRoot); } catch (e) { catalogError = e.message; }
  if (board !== currentBoard || root !== currentRoot) return;
- openEditor('Add GitLab link', fields => {
-  $('editor-title').append(' ', helpPopover('Paste a canonical MR URL first, or choose a quick scope for recent, assigned-to-you, or board-member MRs. Use the project and MR search only when those shortcuts do not find the link. Flux retrieves the latest pipeline status from the linked MR.', 'GitLab links'));
-  let mrPicker, manualMR, pasteInput, pasteStatus; let searchTimer; let searchGeneration = 0;
-  const setPasteStatus = (text, error = false) => { if (!pasteStatus) return; pasteStatus.textContent = text || ''; pasteStatus.className = error ? 'error' : 'help'; pasteStatus.hidden = !text; };
-  const pasteRow = el('div', undefined, 'gitlab-paste-row'); const pasteLabel = el('label', 'Paste GitLab MR Link'); pasteInput = el('input'); pasteInput.type = 'text'; pasteInput.inputMode = 'url'; pasteInput.name = 'mr_url'; pasteInput.placeholder = 'https://gitlab.example/group/project/-/merge_requests/123'; pasteInput.maxLength = 2048; pasteInput.setAttribute('aria-label', 'Paste GitLab MR Link'); pasteLabel.append(pasteInput); pasteRow.append(pasteLabel, button('Get', resolvePastedURL, 'primary')); fields.append(pasteRow);
-  pasteStatus = el('p', '', 'help'); pasteStatus.hidden = true; pasteStatus.setAttribute('role', 'status'); pasteStatus.setAttribute('aria-live', 'polite'); fields.append(pasteStatus, el('hr', undefined, 'dialog-divider'));
+ openEditor('Add link', fields => {
+  $('editor-title').append(' ', helpPopover('Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.', 'GitLab links'));
+  let mrPicker, manualMR; let searchTimer; let searchGeneration = 0;
   if (catalogError) {
    const error = el('p', `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`, 'error'); error.setAttribute('role', 'alert'); fields.append(error);
   }
   const projectPicker = multiSelect(fields, 'project', 'Approved GitLab project', approvedGitLabProjectEntries(projects), [], undefined, 'Choose one approved project. The project list is provided by the configured GitLab connector and is searchable.', {single:true, onChange: values => {
-   searchGeneration++; if (searchTimer) clearTimeout(searchTimer); if (pasteInput) { pasteInput.value = ''; resolvedURL = ''; setPasteStatus(''); } if (!mrPicker) return;
+   searchGeneration++; if (searchTimer) clearTimeout(searchTimer); if (!mrPicker) return;
    mrPicker.filter.value = ''; mrPicker.setEntries([], []); if (manualMR) manualMR.value = ''; mrPicker.setStatus(values.length ? 'Open the merge-request picker to load results.' : 'Select an approved project first.');
   }});
   const scope = field(fields, 'scope', 'Quick scope', 'recent', 'text', [['recent','Recent merge requests'],['assigned_to_me','Assigned to me'],['board_members','Assigned to board members']]);
@@ -560,29 +602,13 @@ async function addGitLabLink(item) {
     } catch (e) { if (generation === searchGeneration && board === currentBoard && root === currentRoot) controls.setStatus(e.message); }
    }, 250);
   };
-  mrPicker = multiSelect(fields, 'merge_request', 'Merge request', [], [], undefined, 'After trying a URL or quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.', {single:true, onFilter:queueMergeRequestSearch, onOpen:queueMergeRequestSearch, onChange: values => { if (!values.length) return; if (manualMR) manualMR.value = ''; if (pasteInput) { pasteInput.value = ''; resolvedURL = ''; setPasteStatus(''); } }}); mrPicker.filter.maxLength = 120;
+  mrPicker = multiSelect(fields, 'merge_request', 'Merge request', [], [], undefined, 'After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.', {single:true, onFilter:queueMergeRequestSearch, onOpen:queueMergeRequestSearch, onChange: values => { if (!values.length) return; if (manualMR) manualMR.value = ''; }}); mrPicker.filter.maxLength = 120;
   manualMR = field(fields, 'manual_mr_iid', 'MR IID (optional fallback)', '', 'number'); manualMR.min = 1; manualMR.max = Number.MAX_SAFE_INTEGER; manualMR.step = 1;
-  manualMR.addEventListener('input', () => { if (!manualMR.value || !resolvedURL) return; pasteInput.value = ''; resolvedURL = ''; setPasteStatus(''); });
-  function resolvePastedURL() {
-   const raw = pasteInput.value.trim(); if (!raw) { resolvedURL = ''; setPasteStatus('Paste a GitLab merge-request URL first.', true); return false; }
-   let target, instance, projectPath;
-   try { target = new URL(raw); instance = new URL(currentBoard.connector_instance); projectPath = decodeURIComponent(target.pathname); } catch { resolvedURL = ''; setPasteStatus('Enter a valid GitLab merge-request URL.', true); return false; }
-   if (raw.length > 2048 || /[\r\n]/.test(raw) || target.origin !== instance.origin || target.username || target.password) { resolvedURL = ''; setPasteStatus('Use a URL from the configured GitLab instance.', true); return false; }
-   const basePath = instance.pathname.replace(/\/+$/, ''); const prefix = basePath ? basePath + '/' : '/'; if (!target.pathname.startsWith(prefix)) { resolvedURL = ''; setPasteStatus('That URL is outside the configured GitLab instance.', true); return false; }
-   const tail = projectPath.slice(prefix.length); const marker = '/-/merge_requests/'; const markerAt = tail.lastIndexOf(marker); const iid = markerAt < 0 ? '' : tail.slice(markerAt + marker.length); projectPath = markerAt > 0 ? projectPath.slice(prefix.length, prefix.length + markerAt) : '';
-   if (markerAt <= 0 || !/^[1-9][0-9]*$/.test(iid) || !Number.isSafeInteger(Number(iid))) { resolvedURL = ''; setPasteStatus('Use a canonical GitLab merge-request URL.', true); return false; }
-   const approved = new Set(currentBoard.integration.projects.map(String)); const project = projects.find(value => approved.has(String(value.id)) && typeof value.path_with_namespace === 'string' && value.path_with_namespace.trim() === projectPath);
-   if (!project) { resolvedURL = ''; setPasteStatus('That merge-request project is not in the approved GitLab project catalog.', true); return false; }
-   projectPicker.close(); if (!projectPicker.select(String(project.id))) { resolvedURL = ''; setPasteStatus('Select the approved project before resolving this URL.', true); return false; }
-   pasteInput.value = raw; manualMR.value = iid; resolvedURL = raw; setPasteStatus(`Resolved ${projectPath} · MR !${iid}. Save to link it.`); return true;
-  }
-  pasteInput.addEventListener('input', () => { if (pasteInput.value.trim() === resolvedURL) return; resolvedURL = ''; setPasteStatus(''); }); pasteInput.addEventListener('change', resolvePastedURL); pasteInput.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); resolvePastedURL(); } });
   scope.addEventListener('change', () => { const wasOpen = mrPicker.isOpen(); searchGeneration++; if (searchTimer) clearTimeout(searchTimer); mrPicker.filter.value = ''; mrPicker.setEntries([], []); mrPicker.setStatus(projectPicker.selected().length ? 'Open the merge-request picker to load results.' : 'Select an approved project first.'); if (wasOpen) queueMergeRequestSearch('', mrPicker); });
   if (!projects.length && !catalogError && !board.integration.projects.length) fields.append(el('p', 'No approved GitLab projects are available for linking.', 'help'));
  }, data => {
-  const rawProject = String(data.get('project') || ''); const selectedMR = String(data.get('merge_request') || ''); const manualIID = String(data.get('manual_mr_iid') || ''); const pastedURL = String(data.get('mr_url') || '').trim(); const rawNumber = selectedMR || manualIID;
+  const rawProject = String(data.get('project') || ''); const selectedMR = String(data.get('merge_request') || ''); const manualIID = String(data.get('manual_mr_iid') || ''); const rawNumber = selectedMR || manualIID;
   if (!/^[1-9][0-9]*$/.test(rawProject) || !Number.isSafeInteger(Number(rawProject))) throw new Error('Choose an approved GitLab project.');
-  if (pastedURL && pastedURL !== resolvedURL) throw new Error('Resolve the pasted GitLab MR URL before saving.');
   if (selectedMR && manualIID) throw new Error('Select a merge request or enter its IID manually, not both.');
   if (!/^[1-9][0-9]*$/.test(rawNumber) || !Number.isSafeInteger(Number(rawNumber))) throw new Error('Select a merge request or enter a positive MR IID.');
   return {kind:'link.attach', target:item.id, link:{project:Number(rawProject), kind:'mr', number:Number(rawNumber)}};
@@ -646,26 +672,32 @@ function editItem(item, draft) {
  const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs;
  item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
  openEditor(existing ? 'Work item' : 'Create work item', fields => {
-  const title = field(fields, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240;
-  markdownEditor(fields, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
-  const grid = el('div', undefined, 'form-grid item-meta-grid'); fields.append(grid);
-  field(grid, 'column_id', 'Board column', draft?.column_id ?? item.column_id, 'text', board.columns.map(c => [c.id, c.name]));
-  field(grid, 'project_id', 'Project', draft?.project_id ?? item.project_id, 'text', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])]);
-  field(grid, 'assignee', 'Assignee', draft?.assignee ?? item.assignee, 'text', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])]);
-  multiSelect(fields, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), draft?.sprint_ids ?? item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
+  if (existing) $('editor-title').append(' ', helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'));
+  const layout = el('div', undefined, 'item-editor-layout'); const primary = el('div', undefined, 'item-editor-primary'); const controls = el('div', undefined, 'item-editor-controls'); layout.append(primary, controls); fields.append(layout);
+  const title = field(primary, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240;
+  markdownEditor(primary, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
+  multiSelect(controls, 'assignee', 'Assignee', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], [draft?.assignee ?? item.assignee], undefined, undefined, {single:true});
+  multiSelect(controls, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), draft?.labels ?? item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.');
+  multiSelect(controls, 'project_id', 'Project', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])], [draft?.project_id ?? item.project_id], undefined, undefined, {single:true});
+  multiSelect(controls, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), draft?.sprint_ids ?? item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
   const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
-  if (closed.length) fields.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
-  multiSelect(fields, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), draft?.labels ?? item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels using Labels in the workspace header.');
-  multiSelect(fields, 'dependencies', 'Depends on', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title]), draft?.dependencies ?? item.dependencies);
+  if (closed.length) controls.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
+  multiSelect(controls, 'dependencies', 'Depends on', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title]), draft?.dependencies ?? item.dependencies);
   if (existing) {
    const itemLinks = board.links.filter(link => link.items.includes(item.id));
-   const linkPicker = multiSelect(fields, 'link_ids', 'GitLab links', board.links.map(link => [link.id, linkDisplayName(link)]), draft?.link_ids ?? itemLinks.map(link => link.id), undefined, 'Select registered merge requests to associate with this card. Add a new link beside Edit when it is not listed.');
-   const linkActions = el('div', undefined, 'actions'); if (itemLinks.length) linkActions.append(button('View observations', () => { $('editor').close(); showLinks(item); }));
-   if (!readOnly) { const add = writeButton('＋ Add GitLab link', () => addGitLabLink(item), 'primary'); add.disabled ||= !board.connector_instance || board.connector_instance !== board.integration.instance || !board.integration.projects.length; linkPicker.header.append(add); }
-   if (linkActions.childElementCount) fields.append(linkActions);
-   renderItemComments(fields, item);
+   const linkPicker = multiSelect(controls, 'link_ids', 'GitLab links', board.links.map(link => [link.id, linkDisplayName(link)]), draft?.link_ids ?? itemLinks.map(link => link.id), undefined, 'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.');
+   if (!readOnly) inlineGitLabPaste(linkPicker.group, item, readOnly);
+   const linkActions = el('div', undefined, 'actions');
+   if (!readOnly) { const add = writeButton('Add link', () => addGitLabLink(item)); add.dataset.gitlabWrite = 'true'; add.disabled = !gitLabWritable(); linkActions.append(add); }
+   else if (itemLinks.length) linkActions.append(button('View observations', () => { $('editor').close(); showLinks(item); }));
+   if (linkActions.childElementCount) controls.append(linkActions);
   }
-  if (existing) { fields.append(el('p', `Item revision ${item.revision} · Native ID ${item.id}`, 'help')); if (!item.archived) fields.append(writeButton('Archive item', () => archiveItem(item), 'danger')); }
+  controls.append(el('hr', undefined, 'item-editor-divider'));
+  field(controls, 'column_id', 'Move to', draft?.column_id ?? item.column_id, 'text', board.columns.map(c => [c.id, c.name]));
+  if (existing && !item.archived && !readOnly) {
+   const archive = writeButton('Archive item', () => archiveItem(item), 'danger'); archive.dataset.itemFooter = 'true'; archive.dataset.write = 'true'; archive.classList.add('archive-footer'); $('editor-form').querySelector('.dialog-foot').insertBefore(archive, $('cancel'));
+  }
+  if (existing) renderItemComments(primary, item);
  }, data => {
   if (existing) desiredLinkIDs = data.getAll('link_ids');
   return { kind: existing ? 'item.update' : 'item.create', target: item.id || '', item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } };
@@ -714,12 +746,22 @@ function editProject(project) {
   fields.append(el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
  }, data => ({kind: 'project.save', target: project?.id || '', project: {...(project || {}), name: data.get('name').trim()}}));
 }
-function manageProjects() {
- openEditor('Workspace projects', fields => {
-  board.projects.forEach(p => { const row = el('div', undefined, 'section-head'); row.append(el('strong', p.name), writeButton('Edit project', () => editProject(p))); fields.append(row); });
-  if (!board.projects.length) fields.append(el('p', 'No projects yet. Items can remain unclassified.', 'help'));
-  fields.append(writeButton('＋ New project', () => editProject(), 'primary'));
- }, () => ({}), true);
+function renderProjects(content) {
+ const sections = el('div', undefined, 'maintenance-sections');
+ const projects = el('section', undefined, 'maintenance-section'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject); projects.append(projectHead, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
+ if (!board.projects.length) projects.append(el('p', 'No projects yet. Items can remain unclassified.', 'empty')); else { const list = el('div', undefined, 'maintenance-list'); board.projects.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const edit = writeButton('Edit project', () => editProject(project)); edit.dataset.write = 'true'; row.append(info, edit); list.append(row); }); projects.append(list); }
+ const integration = el('section', undefined, 'maintenance-section');
+ const integrationHead = el('div', undefined, 'section-head');
+ integrationHead.append(el('h2', 'GitLab integration'));
+ if (integrationFormOpen) {
+  integration.append(integrationHead, renderIntegrationForm());
+ } else {
+  const review = writeButton('Review integration', reviewIntegration); review.dataset.write = 'true'; integrationHead.append(review);
+  const configured = board.connector_instance || 'Not configured'; const approved = board.integration?.projects?.length || 0;
+  integration.append(integrationHead, el('p', `Operator-configured GitLab instance: ${configured}`, 'help'), el('p', `${approved} approved GitLab project${approved === 1 ? '' : 's'}.`, 'help'));
+  if (!board.connector_instance) integration.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.', 'help'));
+ }
+ sections.append(projects, integration); content.append(sections);
 }
 function editLabel(label) {
  $('editor').close(); const originalName = typeof label === 'string' ? label : label?.name || ''; const originalColor = typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
@@ -729,24 +771,22 @@ function editLabel(label) {
   fields.append(el('p', 'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.', 'help'));
  }, data => ({kind: 'label.save', target: originalName, name: data.get('name').trim(), color: data.get('color') || originalColor}));
 }
-function manageLabels() {
- openEditor('Workspace labels', fields => {
-  board.labels.forEach(label => { const row = el('div', undefined, 'setup-row'); const actions = el('div', undefined, 'actions');
-   actions.append(writeButton('Rename', () => editLabel(label)), writeButton('Delete…', () => { $('editor').close(); openEditor('Delete label', f => { f.append(el('p', `Remove “${label.name}” from the workspace and all ${board.items.filter(i => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`)); }, () => ({kind: 'label.delete', target: label.name})); $('save').textContent = 'Delete label'; }, 'danger'));
-   row.append(labelBadge(label.name), actions); fields.append(row);
-  });
-  if (!board.labels.length) fields.append(el('p', 'No labels yet. Create reusable labels for this workspace.', 'help'));
-  fields.append(writeButton('＋ New label', () => editLabel(), 'primary'));
- }, () => ({}), true);
+function deleteLabel(label) {
+ $('editor').close(); openEditor('Delete label', fields => { fields.append(el('p', `Remove “${label.name}” from the workspace and all ${board.items.filter(i => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`)); }, () => ({kind: 'label.delete', target: label.name})); $('save').textContent = 'Delete label';
 }
-function manageMembers() {
- openEditor('Workspace members', fields => {
-  fields.append(el('p', 'Names identify assignees; changing a display name never changes membership or permissions. Only workspace admins can edit names.', 'help'));
-  board.members.forEach(m => { const row = el('div', undefined, 'setup-row'); row.append(el('strong', memberName(m.subject)), el('small', `${m.subject} · ${m.role}`, 'muted'));
-   if (board.role === 'admin') row.append(writeButton('Edit name', () => { $('editor').close(); openEditor('Member display name', f => { const input = field(f, 'name', 'Display name', m.name || (m.subject === session.subject ? session.name : '') || ''); input.required = true; input.maxLength = 120; }, data => ({kind: 'member.name', target: m.subject, name: data.get('name').trim()})); }));
-   fields.append(row);
-  });
- }, () => ({}), true);
+function renderLabels(content) {
+ $('count').textContent = board.labels.length ? `${board.labels.length} label${board.labels.length === 1 ? '' : 's'}` : '';
+ const heading = el('div', undefined, 'section-head'); const newLabel = writeButton('＋ New label', () => editLabel(), 'primary'); newLabel.dataset.write = 'true'; heading.append(el('h2', 'Workspace labels'), newLabel); content.append(heading, el('p', 'Create, rename and remove the reusable labels used to classify work in this workspace.', 'help'));
+ if (!board.labels.length) { content.append(el('p', 'No labels yet. Create reusable labels for this workspace.', 'empty')); return; }
+ const list = el('div', undefined, 'label-maintenance-list'); board.labels.forEach(label => { const row = el('article', undefined, 'setup-row label-maintenance-row'); const summary = el('div', undefined, 'label-maintenance-summary'); const usage = board.items.filter(item => item.labels.includes(label.name)).length; summary.append(labelBadge(label.name), el('small', `${usage} card${usage === 1 ? '' : 's'}`, 'muted')); const actions = el('div', undefined, 'actions'); const rename = writeButton('Rename', () => editLabel(label)); rename.dataset.write = 'true'; const remove = writeButton('Delete…', () => deleteLabel(label), 'danger'); remove.dataset.write = 'true'; actions.append(rename, remove); row.append(summary, actions); list.append(row); }); content.append(list);
+}
+function editMemberName(member) {
+ $('editor').close(); openEditor('Member display name', fields => { const input = field(fields, 'name', 'Display name', member.name || (member.subject === session.subject && session.name) || ''); input.required = true; input.maxLength = 120; }, data => ({kind: 'member.name', target: member.subject, name: data.get('name').trim()}));
+}
+function renderMembers(content) {
+ const heading = el('div', undefined, 'section-head'); heading.append(el('h2', 'Workspace members')); content.append(heading, el('p', 'Names identify assignees; changing a display name never changes membership or permissions. Only workspace admins can edit names.', 'help'));
+ if (!board.members.length) { content.append(el('p', 'No workspace members yet.', 'empty')); return; }
+ const list = el('div', undefined, 'maintenance-list'); board.members.forEach(member => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', memberName(member.subject)), el('small', `${member.subject} · ${member.role}`, 'muted')); if (board.role === 'admin') { const edit = writeButton('Edit name', () => editMemberName(member)); edit.dataset.write = 'true'; row.append(info, edit); } else row.append(info); list.append(row); }); content.append(list);
 }
 function observationTiming(link) {
  const timestamp = value => { if (!value) return 'none yet'; const date = new Date(value); return Number.isNaN(date.getTime()) ? 'unavailable' : date.toLocaleString(); };
@@ -789,33 +829,61 @@ function mergeRequestEntries(mergeRequests, selected) {
  selected.forEach(value => { if (!seen.has(value)) entries.push([value, `MR !${value} (currently selected)`]); });
  return entries;
 }
-async function editIntegration() {
- const currentBoard = board, currentRoot = root; const selected = board.integration.projects.map(String); let projects = [], catalogError = '';
- if (board.role === 'admin' && board.connector_instance) {
-  notice('Loading available GitLab projects…');
-  try { projects = await loadGitLabProjects(currentRoot); } catch (e) { catalogError = e.message; }
+function reviewIntegration() {
+ if (!board || busy || loading || integrationFormOpen) return;
+ integrationFormOpen = true; integrationCatalog = []; integrationCatalogError = '';
+ integrationCatalogLoading = false;
+ if (board.role === 'admin' && board.connector_instance) loadIntegrationCatalog(); else render();
+}
+async function loadIntegrationCatalog() {
+ if (!board || !integrationFormOpen || integrationCatalogLoading) return;
+ const currentBoard = board, currentRoot = root; integrationCatalogLoading = true; integrationCatalogError = '';
+ render(); notice('Loading available GitLab projects…');
+ try { integrationCatalog = await loadGitLabProjects(currentRoot); } catch (e) { integrationCatalogError = e.message; }
+ integrationCatalogLoading = false;
+ if (board === currentBoard && root === currentRoot && integrationFormOpen && view === 'projects') { notice(''); render(); }
+}
+function renderIntegrationForm() {
+ const currentBoard = board; const readOnly = currentBoard.role !== 'admin';
+ const selected = currentBoard.integration.projects.map(String);
+ const form = el('form', undefined, 'inline-maintenance-form');
+ form.append(el('p', `Operator-configured instance: ${currentBoard.connector_instance || 'Not configured'}`, 'help'));
+ form.append(el('p', `Existing approval: ${currentBoard.integration.instance || 'None'}`, 'help'));
+ multiSelect(form, 'projects', 'Approved GitLab projects', integrationProjectEntries(integrationCatalog, selected), selected, undefined, 'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.');
+ if (integrationCatalogLoading) form.append(el('p', 'Loading available GitLab projects…', 'help'));
+ if (integrationCatalogError) {
+  const error = el('p', `Could not load the GitLab project list. ${integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`, 'error'); error.setAttribute('role', 'alert'); form.append(error);
+  const retry = button('Retry loading projects', loadIntegrationCatalog); retry.disabled = readOnly || integrationCatalogLoading; form.append(retry);
+ } else if (currentBoard.connector_instance && !integrationCatalogLoading && !integrationCatalog.length) {
+  form.append(el('p', 'No GitLab projects are visible to the configured read connector.', 'help'));
  }
- if (board !== currentBoard || root !== currentRoot) return;
- openEditor('GitLab integration approval', fields => {
-  fields.append(el('p', `Operator-configured instance: ${board.connector_instance || 'Not configured'}`, 'help'));
-  fields.append(el('p', `Existing approval: ${board.integration.instance || 'None'}`, 'help'));
-  multiSelect(fields, 'projects', 'Approved GitLab projects', integrationProjectEntries(projects, selected), selected, undefined, 'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.');
-  if (catalogError) {
-   const error = el('p', `Could not load the GitLab project list. ${catalogError} Existing approvals remain available so they are not removed accidentally.`, 'error'); error.setAttribute('role', 'alert'); fields.append(error);
-   fields.append(writeButton('Retry loading projects', () => { $('editor').close(); editIntegration(); }));
-  } else if (board.connector_instance && !projects.length) {
-   fields.append(el('p', 'No GitLab projects are visible to the configured read connector.', 'help'));
+ form.append(el('p', 'Every workspace member, including viewers and authorized machine readers, can see engineering metadata from these projects. Revoking a project or changing the instance removes its links and cached observations; cards and audit remain. No selected projects disables the integration.', 'help'));
+ const consent = field(form, 'consent', 'I approve this metadata visibility and any removals', 'yes', 'checkbox'); consent.required = true; consent.parentElement.classList.add('consent');
+ if (!currentBoard.connector_instance) form.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.', 'help'));
+ const error = el('p', '', 'error'); error.hidden = true; error.setAttribute('role', 'alert'); form.append(error);
+ const actions = el('div', undefined, 'dialog-foot inline-maintenance-actions'); const cancel = button('Cancel', () => { integrationFormOpen = false; integrationCatalog = []; integrationCatalogError = ''; integrationCatalogLoading = false; render(); }); actions.append(cancel);
+ let save;
+ if (!readOnly) { save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.disabled = integrationCatalogLoading; actions.append(save); }
+ form.append(actions);
+ if (readOnly || integrationCatalogLoading) {
+  form.querySelectorAll('input,select,textarea').forEach(input => { input.disabled = true; });
+  form.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach(input => { input.disabled = true; });
+ }
+ form.addEventListener('submit', async event => {
+  event.preventDefault(); if (readOnly || !save || busy || integrationCatalogLoading) return;
+  const parts = new FormData(form).getAll('projects');
+  try {
+   if (parts.length > 100) throw new Error('Select at most 100 GitLab projects.');
+   if (parts.some(value => !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))) throw new Error('Choose only positive numeric GitLab projects.');
+   if (new Set(parts).size !== parts.length) throw new Error('A GitLab project may only be selected once.');
+   integrationFormOpen = false; save.disabled = true; cancel.disabled = true;
+   await change({revision:board.workspace.revision, kind:'integration.save', integration:{instance:board.connector_instance, projects:parts.map(Number)}});
+   integrationCatalog = []; integrationCatalogError = ''; integrationCatalogLoading = false; render();
+  } catch (submitError) {
+   integrationFormOpen = true; error.textContent = `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`; error.hidden = false; save.disabled = false; cancel.disabled = false; renderControls();
   }
-  fields.append(el('p', 'Every workspace member, including viewers and authorized machine readers, can see engineering metadata from these projects. Revoking a project or changing the instance removes its links and cached observations; cards and audit remain. No selected projects disables the integration.', 'help'));
-  const consent = field(fields, 'consent', 'I approve this metadata visibility and any removals', 'yes', 'checkbox'); consent.required = true;
-  if (!board.connector_instance) fields.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.', 'help'));
- }, data => {
-  const parts = data.getAll('projects');
-  if (parts.length > 100) throw new Error('Select at most 100 GitLab projects.');
-  if (parts.some(v => !/^[1-9][0-9]*$/.test(v) || !Number.isSafeInteger(Number(v)))) throw new Error('Choose only positive numeric GitLab projects.');
-  if (new Set(parts).size !== parts.length) throw new Error('A GitLab project may only be selected once.');
-  return {kind:'integration.save', integration:{instance:board.connector_instance, projects:parts.map(Number)}};
- }, board.role !== 'admin');
+ });
+ return form;
 }
 function showLinks(item) {
  const ready = board.connector_instance && board.connector_instance === board.integration.instance;
@@ -844,7 +912,7 @@ function showLinks(item) {
    if (link.next_refresh && Date.parse(link.next_refresh) > Date.now()) row.append(el('p', `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`, 'help'));
    row.append(actions); fields.append(row);
   });
-  if (!ready) fields.append(el('p', 'Connector unavailable or instance approval needs updating. An admin can review Integration settings.', 'help'));
+  if (!ready) fields.append(el('p', 'Connector unavailable or instance approval needs updating. An admin can review Projects settings.', 'help'));
  }, () => ({}), true);
 }
 function setupBoard() {
@@ -861,29 +929,29 @@ $('editor').addEventListener('cancel', e => { e.preventDefault(); if (!busy) clo
 $('editor').addEventListener('click', e => { if (!busy && e.target === $('editor')) closeEditor(); });
 document.addEventListener('pointerdown', e => { const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
-$('projects').onclick = manageProjects;
 $('proposals').onclick = () => showProposals();
-$('labels').onclick = manageLabels; $('members').onclick = manageMembers; $('integration').onclick = editIntegration;
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh;
-$('scope').onchange = $('label').onchange = $('search').oninput = renderContent;
+$('scope').onchange = render;
+$('label').onchange = $('search').oninput = renderContent;
 $('project').onchange = $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
-document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
+document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
- board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'all'; $('search').value = ''; render();
+ integrationFormOpen = false; integrationCatalog = []; integrationCatalogError = ''; integrationCatalogLoading = false;
+ board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
  await refresh();
 }
 $('workspace').onchange = chooseWorkspace;
 let observationPoll = false;
 setInterval(async () => {
- if (!board?.refresh_seconds || busy || loading || drag || document.hidden || $('editor').open || observationPoll) return;
+ if (!board?.refresh_seconds || busy || loading || integrationFormOpen || drag || document.hidden || $('editor').open || observationPoll) return;
  const current = board, path = root; observationPoll = true;
  try {
   const next = await api(path + '/board');
-  if (board !== current || root !== path || busy || loading || drag || $('editor').open) return;
+  if (board !== current || root !== path || busy || loading || integrationFormOpen || drag || $('editor').open) return;
   if (next.workspace.revision !== board.workspace.revision || next.role !== board.role) { notice('Planning or permissions changed elsewhere. Use Refresh to review.'); return; }
   board.links = next.links; renderContent();
- } catch (e) { if (board === current && !busy && !$('editor').open) notice('Observation cache could not be reloaded. Use Refresh to retry.', true); }
+ } catch (e) { if (board === current && !busy && !integrationFormOpen && !$('editor').open) notice('Observation cache could not be reloaded. Use Refresh to retry.', true); }
  finally { observationPoll = false; }
 }, 15000);
 // Local freshness/cooldowns require no additional network requests.
@@ -892,4 +960,4 @@ setInterval(() => {
  document.querySelectorAll('[data-refresh-link]').forEach(node => { const link = board.links.find(l => l.id === node.dataset.refreshLink); node.disabled = !writable() || !link || !board.connector_instance || board.connector_instance !== board.integration.instance || !!link.next_refresh && Date.parse(link.next_refresh) > Date.now(); });
 }, 10000);
 renderControls();
-(async () => { try { session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; $('mode').textContent = session.demo ? 'LOCAL DEMO · synthetic login' : 'Native planning'; workspaces = await api('/api/v2/workspaces'); options($('workspace'), workspaces.map(w => [w.id, w.name])); if (!workspaces.length) { notice('No workspace membership. Ask an operator to grant your login subject access: ' + session.subject); render(); return; } await chooseWorkspace(); } catch (e) { notice(e.message, true); renderControls(); } })();
+(async () => { try { session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; workspaces = await api('/api/v2/workspaces'); options($('workspace'), workspaces.map(w => [w.id, w.name])); if (!workspaces.length) { notice('No workspace membership. Ask an operator to grant your login subject access: ' + session.subject); render(); return; } await chooseWorkspace(); } catch (e) { notice(e.message, true); renderControls(); } })();

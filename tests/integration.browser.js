@@ -5,9 +5,11 @@ async page => {
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = () => page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor({timeout:15000});
  const save = async () => {await page.getByRole('button',{name:'Save changes',exact:true}).click();await saved();};
+ const nav = async name => { await page.getByRole('navigation').getByRole('button',{name}).click(); };
  const board = () => page.evaluate(async () => (await fetch(`/api/v2/workspaces/${document.querySelector('#workspace').value}/board`)).json());
  const initial = await board(); const a=initial.items[0], b=initial.items[1];
  const card = item => page.locator(`[data-item="${item.id}"]`);
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
  await card(a).waitFor(); check(await card(a).locator('.avatar img').count()===1,'GitLab profile avatar not displayed');
  const openEditor = item => card(item).getByRole('button',{name:item.title,exact:true}).click();
  const openObservations = item => card(item).getByRole('button',{name:/^View GitLab details/}).click();
@@ -23,12 +25,16 @@ async page => {
   const row=page.getByRole('dialog').locator('.setup-row').filter({has:page.getByText(new RegExp(`^(MR !|Pipeline #)${number} · project`))});
   await row.getByRole('button',{name:'Refresh observation',exact:true}).click(); await saved();
  };
- await page.getByRole('button',{name:'Integration',exact:true}).click();
+ await nav('Projects');
+ await page.getByRole('heading',{name:'Projects',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Review integration',exact:true}).click();
+ check(await page.locator('.inline-maintenance-form').count()===1 && !await page.getByRole('dialog').isVisible(),'integration review opened a dialog');
  await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
  await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  check((await board()).integration.projects.length===0,'approval bypassed consent');
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
+ await nav('Kanban board');
  await openEditor(a);await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).click();await page.getByRole('button',{name:'Cancel',exact:true}).click();check(await page.getByRole('heading',{name:'Work item',exact:true}).count()===1,'closing MR dialog did not return to card editor');await close();
  await attach(a,7,true);await attach(a,8);await attach(a,9);
  await openEditor(b);await page.getByRole('button',{name:'Edit GitLab links',exact:true}).click();await page.getByRole('checkbox',{name:'MR !7 · project 42',exact:true}).check();await page.keyboard.press('Escape');await save();
@@ -46,7 +52,7 @@ async page => {
  check(await card(a).getByRole('button',{name:/^View GitLab details/}).count()===1,'card observation details link missing');
  await close();await openObservations(b);check(await page.getByRole('dialog').getByRole('link',{name:'MR !7',exact:true}).count()===1,'shared MR direct link missing');check(await page.getByRole('dialog').getByRole('link',{name:'Pipeline #1007',exact:true}).count()===1,'latest pipeline direct link missing');check(await page.getByRole('dialog').getByText(/Last successful refresh:/).count()===1,'precise refresh timing missing');check(await page.getByRole('dialog').getByText(/Latest refresh attempt:/).count()===1,'latest attempt timing missing');check(await page.getByRole('dialog').getByText(/pipeline success/).count()===1,'shared observation missing');
  check(await page.getByRole('button',{name:'Refresh observation',exact:true}).isDisabled(),'cooldown not shown');await close();
- await page.reload();await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
+ await page.reload(); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
  check((await board()).links.find(l=>l.kind==='mr'&&l.number===7).observation.pipeline.state==='success','observation not persisted');
  for (const theme of ['light','dark']) {
   await page.evaluate(t=>document.documentElement.dataset.theme=t,theme);
@@ -61,15 +67,16 @@ async page => {
  }
  // Read-only controls are tested separately from server-side machine/role denial.
  await page.route('**/board',async route=>{const response=await route.fetch();const data=await response.json();data.role='viewer';await route.fulfill({response,json:data});});
- await page.reload();await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
+ await page.reload(); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
  await openEditor(a);check(await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).isDisabled(),'viewer linking enabled');
  check(await page.getByRole('button',{name:'Edit GitLab links',exact:true}).isDisabled(),'viewer link associations enabled'); await close();
  await openObservations(a);check(await page.getByRole('button',{name:'Refresh observation',exact:true}).first().isDisabled(),'viewer refresh enabled');
  await close();await page.unroute('**/board');await page.reload();
- await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await card(a).getByRole('button',{name:/^View GitLab details/}).waitFor({timeout:10000});
  await openEditor(b);await page.getByRole('button',{name:/^Remove MR !7 · project 42/}).click();await save();
  check((await board()).links.find(l=>l.kind==='mr'&&l.number===7).items.length===1,'unlink removed another item’s shared observation');
- await page.getByRole('button',{name:'Integration',exact:true}).click();
+ await nav('Projects');
+ await page.getByRole('button',{name:'Review integration',exact:true}).click();
  await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
  await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).uncheck();
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();

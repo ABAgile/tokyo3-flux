@@ -1,17 +1,21 @@
 # Flux
 
 Flux is a project-management application with workspace-wide Kanban boards,
-backlogs, optional projects, labels, dependencies and concurrent sprints.
+a backlog scope, optional projects, labels, dependencies and concurrent sprints.
 GitLab supplies read-only merge-request and pipeline observations. Pi can read
 planning evidence and draft suggestions for a human to review and approve.
 
 ## Planning model
 
 - A workspace owns its board, membership, ordering, WIP limits and sprints.
-  Projects optionally classify work; filtering never partitions WIP or permissions.
+  Projects optionally classify work; filtering never partitions WIP or permissions. The home board
+  defaults to Active sprints, with backlog available from Scope. The Projects, Members and Labels
+  views maintain workspace configuration, with GitLab integration grouped under Projects and its
+  approval form shown inline after Review integration.
 - Each item has one column, an optional project, assignee, labels, dependencies
   and zero or more open sprint memberships. Labels may use `scope::value` names and
-  workspace-selected colors from the fixed 64-swatch palette. Unfinished unscheduled
+  workspace-selected colors from the fixed 64-swatch palette; maintain them from the
+  dedicated Labels view. Unfinished unscheduled
   work is backlog.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
   memberships and optionally assigns unfinished work to another open sprint.
@@ -32,9 +36,17 @@ planning evidence and draft suggestions for a human to review and approve.
   and daily values are available as a horizontal table. Future dates and missing history
   are left unavailable rather than guessed.
 - Cards show the title as their header and omit descriptions and the native item ID.
-  Drag cards from their body and columns from their headers; the item editor keeps
-  the keyboard-accessible column movement control. Archive instead of deleting work;
-  restore archived items before editing them.
+  Drag cards from their body and columns from their headers. On wide screens, item editing keeps
+  title and description on the left, with selection controls on the right. Wide layouts put
+  comments below the description in the left pane; stacked layouts put them after the controls.
+  The control pane orders Assignee, Labels, Project, Open sprints, Depends on and GitLab links,
+  then separates the native Move to select with a divider. Project and Assignee use the same
+  single-selection dropdown as the other fields. Selection fields start in display mode and Edit
+  reveals the control. GitLab links accept a pasted MR URL below the picker; Enter or Get appends
+  the resolved link, while Add link provides the search fallback. The footer keeps Save, Archive
+  and Cancel visible while fields
+  scroll. Archive instead of
+  deleting work; restore archived items before editing them.
 - Viewers read, members plan, review proposals and add item comments, and admins
   also configure integrations, member display names and add item comments. When
   configured, GitLab profile names and
@@ -178,10 +190,10 @@ records have no automatic purge; plan retention and backup policies.
    to sharing metadata with **all workspace readers**, including machines. The
    picker only exposes projects visible to that connector; existing approvals are
    retained if the catalog is temporarily unavailable.
-3. Members edit a card to associate registered GitLab links with its dropdown, or
-   use **Add GitLab link** beside that dropdown to paste a canonical MR URL or
-   choose quick scopes for recent, assigned-to-you, or board-member merge requests.
-   Pasted URLs are checked against the configured instance and approved project
+3. Members edit a card to associate registered GitLab links with its dropdown. The
+   paste field below it accepts a canonical MR URL; Enter or **Get** appends the
+   resolved link. **Add link** opens quick scopes and search for links not found by
+   URL. Pasted URLs are checked against the configured instance and approved project
    catalog; Flux stores only the project/IID coordinate. The project/MR search and
    exact MR IID remain fallbacks. Flux does not infer the newest MR from a card.
    Observed MR links are shown once per card as direct GitLab links, with a Details

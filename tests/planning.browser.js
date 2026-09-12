@@ -9,6 +9,23 @@ async (page) => {
  const nav = async name => { await page.getByRole('navigation').getByRole('button',{name}).click(); };
  const title = 'Browser spanning item';
  await page.getByRole('heading',{name:'Kanban board',exact:true}).waitFor();
+ const initialScopeLabels = await page.getByRole('combobox',{name:'Scope',exact:true}).locator('option').allTextContents();
+ check(await page.getByRole('combobox',{name:'Scope',exact:true}).inputValue()==='active','home scope is not Active sprints');
+ check(initialScopeLabels.slice(0,3).join('|')==='Active sprints|Backlog|All open work','scope options are in the wrong order');
+ check(await page.getByRole('navigation').getByRole('button',{name:'Backlog',exact:true}).count()===0,'standalone backlog view is still visible');
+ check(await page.locator('.topbar').count()===0,'header topbar is still visible');
+ check(await page.locator('#mode').count()===0,'sidebar planning badge is still visible');
+ check(await page.locator('.workspace-label-row #refresh').count()===1 && await page.locator('#refresh span[aria-hidden="true"]').textContent()==='↻','refresh is not an icon beside Workspace');
+ check(await page.locator('#breadcrumb').count()===0,'workspace eyebrow is still visible');
+ check(await page.locator('.sidebar-account #identity').count()===1 && await page.locator('.sidebar-account a[href="/auth/logout"]').count()===1,'identity is not beside sign out');
+ check(await page.locator('.sidebar-session > #theme').count()===1 && await page.locator('.sidebar-session > .sidebar-account').count()===1,'theme and account are not combined');
+ check(await page.locator('#theme span[aria-hidden="true"]').count()===1,'theme switch is not an icon');
+ const themeIcon = page.locator('#theme span[aria-hidden="true"]'); const initialThemeIcon = await themeIcon.textContent(); await page.locator('#theme').click(); check(await themeIcon.textContent() !== initialThemeIcon,'theme icon did not toggle'); await page.locator('#theme').click();
+ check(await page.locator('nav button > span:last-child').evaluateAll(nodes => new Set(nodes.map(node => Math.round(node.getBoundingClientRect().left))).size === 1),'navigation labels are not aligned');
+ check(await page.locator('nav button > span:last-child').allTextContents().then(labels => labels.indexOf('Labels') > labels.indexOf('Members')),'Labels is not after Members');
+ check(await page.getByText('Native planning, independent of GitLab.',{exact:true}).count()===0,'native planning sidebar help text is still visible');
+ check(await page.getByText('YOUR WORK. YOUR SOURCE OF TRUTH.',{exact:true}).count()===0,'sidebar slogan is still visible');
+ check(await page.locator('.sidebar-foot').evaluate(foot => getComputedStyle(foot).textAlign === 'right'),'sidebar footer is not right aligned');
  const sprintBox = page.locator('#sprint-summary .sprint-panel').first();
  await sprintBox.getByRole('button',{name:'Show burn down',exact:true}).click();
  await sprintBox.getByRole('heading',{name:'Remaining work',exact:true}).waitFor();
@@ -27,25 +44,39 @@ async (page) => {
  await page.getByRole('combobox',{name:'Assignee',exact:true}).selectOption('all');
  await page.locator('#sprint-summary .burndown-svg').waitFor();
  // Project classification is optional and managed without creating a new board.
- await page.getByRole('button',{name:'Projects',exact:true}).click();
+ await nav('Projects');
+ await page.getByRole('heading',{name:'Projects',exact:true}).waitFor();
  await page.getByRole('button',{name:'＋ New project',exact:true}).click();
  await page.getByLabel('Project name').fill('Cross-project stream');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  for (const [label, color] of [['type::review', '#ffcc00'], ['priority::review', '#145a42']]) {
-  await page.getByRole('button',{name:'Labels',exact:true}).click();
+  await nav('Labels');
+  await page.getByRole('heading',{name:'Labels',exact:true}).waitFor();
+  check(await page.locator('.toolbar').isHidden(),'label maintenance still shows work filters');
   await page.getByRole('button',{name:'＋ New label',exact:true}).click();
   await page.getByLabel('Label name',{exact:true}).fill(label);
   check(await page.getByRole('radio').count()===64,'label palette does not have 64 colors');
   await page.getByRole('radio',{name:color,exact:true}).check();
   await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  }
+ await nav('Kanban board');
  await page.getByRole('button',{name:'＋ New item',exact:true}).click();
- check(await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).inputValue() === '', 'new item required a project');
+ const itemDialog = page.getByRole('dialog'); const projectField = itemDialog.getByRole('group',{name:'Project',exact:true}); const assigneeField = itemDialog.getByRole('group',{name:'Assignee',exact:true});
+ check(await itemDialog.getByRole('combobox',{name:'Move to',exact:true}).isVisible(), 'Move to select is missing');
+ check(await projectField.locator('input[name="project_id"]:checked').inputValue() === '', 'new item required a project');
+ for (const field of [projectField, assigneeField]) {
+  check(await field.getByRole('button',{name:`Edit ${await field.locator('.multi-select-label').textContent()}`,exact:true}).count()===1,'selection field is missing display mode');
+  check(await field.locator('.multi-select-menu').isHidden(),'selection menu is not initially hidden');
+  check(await field.locator('input[type="checkbox"]:checked').count()===1,'single selection field has multiple values');
+ }
+ await projectField.getByRole('button',{name:'Edit Project',exact:true}).click();
+ check(await projectField.locator('.multi-select-menu').isVisible(),'Edit Project did not reveal its selection box');
+ await page.keyboard.press('Escape');
  await page.getByLabel('Title',{exact:true}).fill(title);
  const description = page.getByLabel('Description',{exact:true}); const descriptionEditor = description.locator('..');
  check(await descriptionEditor.locator('.markdown-preview').isVisible(),'description does not open in Preview');
  const editDescription = descriptionEditor.getByRole('button',{name:'Edit description',exact:true}); check(await editDescription.count()===1,'preview mode should only show the edit button'); check(await editDescription.textContent()==='Edit','preview mode should show the Edit text'); check(await descriptionEditor.locator('.markdown-toolbar > :not([hidden])').count()===1,'preview mode should hide formatting controls');
- await editDescription.click();
+ await editDescription.click(); check(await description.evaluate(input => getComputedStyle(input).boxShadow !== 'none'),'Markdown edit focus border is missing');
  await description.fill('One item across projects and sprints. **Bold acceptance** and [safe link](https://example.com).\n\n- [x] Preview works\n\n| Feature | Value |\n| :--- | ---: |\n| Safe HTML | yes |\n\n<script>alert("never HTML")</script>\n\n[unsafe](javascript:alert(1))');
  const previewDescription = descriptionEditor.getByRole('button',{name:'Preview description',exact:true}); check(await previewDescription.count()===1,'editing mode is missing the preview button'); check(await previewDescription.textContent()==='Preview','editing mode should show the Preview text');
  check(await descriptionEditor.locator('.markdown-toolbar button').first().getAttribute('aria-label')==='Preview description','preview button is not first in the editing toolbar');
@@ -65,6 +96,7 @@ async (page) => {
  check(await descriptionEditor.locator('script').count()===0,'description raw HTML was executed');
  await chooseMulti('Labels', ['type::review', 'priority::review']);
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:title,exact:true}).waitFor();
  check(await page.getByRole('heading',{name:/No project ·/}).count()===0, 'project grouping should be removed');
@@ -81,25 +113,38 @@ async (page) => {
  await page.getByRole('combobox',{name:'Label',exact:true}).selectOption('all');
  // The item editor keeps keyboard-accessible column movement, and WIP counts all projects together.
  await page.getByRole('button',{name:title,exact:true}).click();
- const metaRows = await page.locator('.item-meta-grid > label').evaluateAll(labels => labels.map(label => label.getBoundingClientRect().top));
- check((page.viewportSize()?.width ?? 1280) < 900 || new Set(metaRows).size === 1,'item metadata controls are not on one row');
+ const itemLayout = page.locator('.item-editor-layout');
+ check(await itemLayout.locator('.item-editor-primary').getByLabel('Title',{exact:true}).count()===1,'title is not in the primary editor pane');
+ check(await itemLayout.locator('.item-editor-primary .markdown-field').count()===1,'description is not in the primary editor pane');
+ check(await itemLayout.locator('.item-editor-controls select[name="column_id"]').count()===1,'Move to select is not in the control pane');
+ check(await itemLayout.locator('.item-editor-controls .multi-select-field').count()===6,'selection controls are not in the control pane');
+ const controlOrder = await itemLayout.locator('.item-editor-controls').evaluate(controls => [...controls.children].flatMap(child => { if (child.classList.contains('multi-select-field')) return [child.querySelector('.multi-select-label')?.textContent.trim()]; if (child.matches('label')) return [child.textContent.trim()]; return []; })); check(controlOrder.join('|') === 'Assignee|Labels|Project|Open sprints|Depends on|GitLab links|Move to','item controls are in the wrong order'); check(await itemLayout.locator('.item-editor-divider').count()===1,'Move to divider is missing');
+ check(await page.locator('.item-editor-form .dialog-foot').getByRole('button',{name:'Archive item',exact:true}).count()===1,'archive action is not in the fixed footer');
+ check(await page.locator('.item-editor-form #fields').evaluate(fields => getComputedStyle(fields).overflowY === 'auto'),'item fields do not scroll independently');
+ check(await itemLayout.locator('.item-editor-primary > .item-comments').count()===1,'comments are not in the primary pane');
+ const linksField = itemLayout.locator('.multi-select-field').filter({hasText:'GitLab links'}); const gitLabURL = linksField.getByLabel('GitLab MR URL',{exact:true}); check(await gitLabURL.count()===1,'GitLab paste control is not below the links picker'); check(await gitLabURL.getAttribute('placeholder')==='Paste GitLab MR URL, then press Enter or click Get','GitLab paste usage is not described by the placeholder'); check(await linksField.getByRole('button',{name:'Get',exact:true}).count()===1,'GitLab paste Get control is missing'); const addLink = itemLayout.getByRole('button',{name:'Add link',exact:true}); check(await addLink.count()===1,'Add link action is missing'); check(await addLink.evaluate(button => !button.classList.contains('primary')),'Add link should use the secondary button style'); check(await itemLayout.getByRole('button',{name:/^＋ Add GitLab link$/}).count()===0,'old Add GitLab link action is still present'); check(await itemLayout.locator('.item-editor-controls .help').filter({hasText:'Item revision'}).count()===0,'item revision still consumes control-pane space');
+ const itemInfo = page.getByRole('button',{name:'Help: Work item details',exact:true}); check(await itemInfo.count()===1,'work-item details popover is missing'); await itemInfo.click(); const itemTooltip = page.getByRole('tooltip').filter({hasText:'Card ID'}); await itemTooltip.waitFor(); const itemTooltipText = await itemTooltip.textContent(); check(itemTooltipText.includes('Card ID:') && itemTooltipText.includes('Revision:') && itemTooltipText.includes('\n') && itemTooltipText.indexOf('Card ID:') < itemTooltipText.indexOf('Revision:'),'card ID and revision are not ordered on separate lines'); check(await itemTooltip.evaluate(tooltip => { const form=tooltip.closest('form').getBoundingClientRect(); return tooltip.getBoundingClientRect().right <= form.right + 1 && getComputedStyle(tooltip).boxShadow !== 'none'; }),'work-item popover is unreadable or overflows the card');
+ const layoutColumns = await itemLayout.evaluate(layout => { const primary = layout.querySelector('.item-editor-primary').getBoundingClientRect(); const controls = layout.querySelector('.item-editor-controls').getBoundingClientRect(); const description = layout.querySelector('.item-editor-primary .markdown-field').getBoundingClientRect(); const comments = layout.querySelector('.item-comments').getBoundingClientRect(); return {primary, controls, descriptionBottom:description.bottom, comments}; });
+ const viewportWidth = page.viewportSize()?.width ?? 1280;
+ check(viewportWidth < 1000 || (layoutColumns.primary.left < layoutColumns.controls.left && Math.abs(layoutColumns.comments.left - layoutColumns.primary.left) < 1 && layoutColumns.comments.top >= layoutColumns.descriptionBottom),'wide item editor does not place comments below the description');
+ check(viewportWidth >= 1000 || (layoutColumns.descriptionBottom <= layoutColumns.controls.top && layoutColumns.controls.bottom <= layoutColumns.comments.top),'stacked item editor does not place controls between description and comments');
  await page.getByRole('button',{name:'Help: Open sprints',exact:true}).click();
- await page.getByRole('tooltip').filter({hasText:'Select no open sprint'}).waitFor();
+ const sprintTooltip = page.getByRole('tooltip').filter({hasText:'Select no open sprint'}); await sprintTooltip.waitFor(); check(await sprintTooltip.evaluate(tooltip => { const form=tooltip.closest('form').getBoundingClientRect(); return tooltip.getBoundingClientRect().right <= form.right + 1; }),'field help popover overflows the card');
  await page.getByRole('dialog').click({position:{x:10,y:10},force:true}); await page.getByRole('dialog').waitFor({state:'hidden'});
  await page.getByRole('button',{name:title,exact:true}).click();
- await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'}); await save();
- await page.reload(); await page.getByRole('button',{name:title,exact:true}).waitFor();
+ await page.getByRole('combobox',{name:'Move to',exact:true}).selectOption({label:'In progress'}); await save();
+ await page.reload(); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await page.getByRole('button',{name:title,exact:true}).waitFor();
  await page.getByRole('button',{name:title,exact:true}).click();
- check(await page.getByRole('combobox',{name:'Board column',exact:true}).locator('option:checked').textContent()==='In progress','move did not persist');
+ check(await page.getByRole('combobox',{name:'Move to',exact:true}).locator('option:checked').textContent()==='In progress','move did not persist');
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
  await page.getByRole('button',{name:"Define the team's acceptance criteria",exact:true}).click();
- await page.getByRole('combobox',{name:'Board column',exact:true}).selectOption({label:'In progress'});
+ await page.getByRole('combobox',{name:'Move to',exact:true}).selectOption({label:'In progress'});
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
  await page.getByRole('alert').filter({hasText:'WIP limit'}).waitFor();
  await page.getByRole('button',{name:'Cancel',exact:true}).click();
  // A single card can belong to both sprints without duplication.
- await nav('Backlog'); await page.getByRole('button',{name:title,exact:true}).click();
- await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
+ await nav('Kanban board'); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('backlog'); await page.getByRole('button',{name:title,exact:true}).click();
+ await chooseMulti('Project', ['Cross-project stream']);
  await chooseMulti('Open sprints', ['Sprint 1 · Planning foundations (active)', 'Sprint 2 · Delivery signals (planned)']);
  check(await page.getByLabel('Decision note (optional)',{exact:true}).count()===0,'decision note field is still displayed');
  const comment = page.getByLabel('Add a comment',{exact:true}); const commentEditor = comment.locator('..'); check(await comment.isVisible(),'comment composer does not open in Write'); check(await commentEditor.locator('.markdown-preview').isHidden(),'comment composer unexpectedly opens in Preview'); check(await commentEditor.locator('.markdown-toolbar button').first().getAttribute('aria-label')==='Preview comment','comment editor does not start with Preview'); check(await commentEditor.locator('.markdown-toolbar button').first().textContent()==='Preview','comment mode should show the Preview text'); await comment.fill('Work spans **both sprints**.');
@@ -113,6 +158,7 @@ async (page) => {
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  check(await page.getByRole('button',{name:title,exact:true}).count()===0,'scheduled item remained in backlog');
  await nav('Kanban board');
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption({label:'Cross-project stream'});
  check(await page.getByRole('button',{name:title,exact:true}).count()===1,'project filtering duplicates or hides card');
  await page.getByText('1 shown · 3/3 WIP',{exact:true}).waitFor();
@@ -133,7 +179,7 @@ async (page) => {
  await page.getByRole('button',{name:'Refresh',exact:true}).click();
  await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).waitFor();
  // Concurrent active workspace sprints are allowed; close only the first one.
- await nav('Sprints'); await page.getByRole('button',{name:'Start sprint',exact:true}).click(); await saved();
+ await nav('Sprints'); await page.getByRole('heading',{name:'Sprints',exact:true}).waitFor(); await page.getByRole('button',{name:'Start sprint',exact:true}).click(); await saved();
  check(await page.getByText('ACTIVE SPRINT',{exact:true}).count()===2,'concurrent active sprints rejected');
  const first=page.getByRole('article').filter({has:page.getByRole('heading',{name:'Sprint 1 · Planning foundations',exact:true})});
  await first.getByRole('button',{name:'Close sprint',exact:true}).click();
@@ -142,20 +188,21 @@ async (page) => {
  await page.getByRole('dialog').getByRole('button',{name:'Close sprint',exact:true}).click(); await saved();
  check(await page.getByText('CLOSED SPRINT',{exact:true}).count()===1,'closed sprint missing');
  check(await page.getByText('ACTIVE SPRINT',{exact:true}).count()===1,'other sprint altered');
- await nav('Kanban board'); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('active');
- await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).click();
+ await nav('Kanban board'); const scope = page.getByRole('combobox',{name:'Scope',exact:true}); await scope.selectOption({label:'Sprint 1 · Planning foundations (closed)'});
+ await page.getByText('CLOSED SPRINT',{exact:true}).waitFor(); check(await page.getByRole('heading',{name:'Sprint 1 · Planning foundations',exact:true}).count()===1,'closed sprint panel is missing from sprint info');
+ await scope.selectOption('active'); await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).click();
  await page.getByText('Closed sprint history (read-only): Sprint 1 · Planning foundations',{exact:true}).waitFor();
  check(await page.getByRole('group',{name:'Open sprints',exact:true}).locator('.multi-select-chip').count()===1,'remaining sprint lost/duplicated');
  // Clearing project classification does not change sprint membership or history.
- await page.getByRole('dialog').getByRole('combobox',{name:'Project',exact:true}).selectOption('');
+ await chooseMulti('Project', ['No project']);
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).click();
  await page.getByRole('button',{name:'Archive item',exact:true}).click();
  await page.getByRole('heading',{name:'Archive work item',exact:true}).waitFor();
  await page.getByRole('button',{name:'Archive item',exact:true}).click(); await saved();
- await nav('Archive'); await page.getByRole('button',{name:'Restore item',exact:true}).click(); await saved();
- await nav('History'); await page.getByText('item · restore',{exact:true}).waitFor();
+ await nav('Archive'); await page.getByRole('heading',{name:'Archive',exact:true}).waitFor(); await page.getByRole('button',{name:'Restore item',exact:true}).click(); await saved();
+ await nav('History'); await page.getByRole('heading',{name:'History',exact:true}).waitFor(); await page.getByText('item · restore',{exact:true}).waitFor();
  await page.getByText('Close first sprint; retain next sprint assignment',{exact:true}).waitFor();
  await nav('Kanban board'); await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
@@ -176,5 +223,5 @@ async (page) => {
    await page.keyboard.press('Escape');check(await page.getByRole('button',{name:'＋ New item',exact:true}).evaluate(e=>e===document.activeElement),'focus return');
   }
  }
- return 'PASS: workspace board, optional projects and toolbar filtering, shared WIP, immutable item comments, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
+ return 'PASS: workspace board, optional projects and toolbar filtering, shared WIP, immutable item comments, GitLab link controls, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
 }

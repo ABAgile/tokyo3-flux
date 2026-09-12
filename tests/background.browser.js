@@ -5,14 +5,18 @@ async page => {
  const check=(ok,message)=>{if(!ok)throw new Error(message);};
  const saved=()=>page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor({timeout:15000});
  const save=async()=>{await page.getByRole('button',{name:'Save changes',exact:true}).click();await saved();};
+ const nav=async name=>{await page.getByRole('navigation').getByRole('button',{name}).click();};
  const board=()=>page.evaluate(async()=> (await fetch(`/api/v2/workspaces/${document.querySelector('#workspace').value}/board`)).json());
  const until=async predicate=>{const deadline=Date.now()+60000;while(Date.now()<deadline){if(predicate(await board()))return;await page.waitForTimeout(500);}throw new Error('background observation did not converge');};
  const initial=await board();const item=initial.items[0];
  check(initial.refresh_seconds===30,'worker configuration missing');
- await page.getByRole('button',{name:'Integration',exact:true}).click();
+ await nav('Projects');
+ await page.getByRole('button',{name:'Review integration',exact:true}).click();
  await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
  await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
+ await nav('Kanban board');
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');
  for(const number of [7,8]){
   await page.locator(`[data-item="${item.id}"]`).getByRole('button',{name:item.title,exact:true}).click();
   await page.getByRole('button',{name:'＋ Add GitLab link',exact:true}).click();
