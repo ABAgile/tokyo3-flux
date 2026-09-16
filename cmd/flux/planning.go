@@ -16,6 +16,7 @@ import (
 	"time"
 
 	fluxauth "abagile.com/tokyo3/flux/internal/auth"
+	"abagile.com/tokyo3/flux/internal/blobstore"
 	"abagile.com/tokyo3/flux/internal/integration"
 	"abagile.com/tokyo3/flux/internal/planning"
 	"abagile.com/tokyo3/flux/internal/planningui"
@@ -113,6 +114,19 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	var blobConfig blobstore.Config
+	if cmd == "serve" {
+		natsMaterial := app.NATS()
+		var configErr error
+		blobConfig, configErr = blobstore.ConfigFromEnv("FLUX", blobstore.NATSConfig{
+			URL: natsMaterial.URL, CertFile: natsMaterial.CertFile,
+			KeyFile: natsMaterial.KeyFile, CAFile: natsMaterial.CAFile,
+			Credentials: os.Getenv("FLUX_NATS_CREDS"),
+		})
+		if configErr != nil {
+			return configErr
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	db, err := store.Open(ctx, material)
@@ -142,7 +156,12 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	rt := app.Setup(context.Background())
 	defer rt.Shutdown()
-	api := planning.NewHTTP(db, sessions, machineSubject, *demo, rt.Log)
+	attachments, err := blobstore.New(blobConfig)
+	if err != nil {
+		return err
+	}
+	defer attachments.Close()
+	api := planning.NewHTTP(db, sessions, machineSubject, *demo, rt.Log, attachments)
 	routes := http.NewServeMux()
 	if connectorSettings.WebhookSecret != "" {
 		hook, err := integration.NewWebhook(connectorSettings.WebhookSecret, connectorSettings.Client.Instance(), db.EnqueueWebhook, rt.Log)

@@ -27,7 +27,7 @@ function canComment() { return board && (board.role === 'member' || board.role =
 function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable() || integrationFormOpen; return b; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
-async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
+async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); if (r.status === 204) return null; let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
 function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownRequests.clear(); burndownErrors.clear(); }
 async function refresh() {
  if (!root || busy || integrationFormOpen) return;
@@ -47,6 +47,9 @@ async function change(command, key = requestKey()) {
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
 function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
+function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
+document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
+document.addEventListener('drop', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
  node.dataset.dragType = type; node.draggable = writable(); node.setAttribute('aria-label', `Drag ${type} ${name}`);
@@ -96,6 +99,54 @@ function cardLinkView(link) {
  node.title = link.observation?.title || linkDisplayName(link, false);
  if (url) { node.href = url; node.target = '_blank'; node.rel = 'noopener noreferrer'; }
  return node;
+}
+function attachmentSize(size) {
+ if (!Number.isFinite(size) || size < 0) return 'unknown size';
+ if (size < 1024) return `${size} B`;
+ const units = ['KiB', 'MiB', 'GiB']; let value = size; let index = -1;
+ while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
+ return `${value >= 10 || Number.isInteger(value) ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
+}
+function attachmentHref(item, attachment, base = root) {
+ return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
+}
+function attachmentKind(attachment) {
+ const type = String(attachment.content_type || '');
+ if (type.startsWith('image/')) return 'IMG';
+ if (type.startsWith('video/')) return 'VID';
+ if (type.startsWith('audio/')) return 'AUD';
+ if (type === 'application/pdf') return 'PDF';
+ if (type.includes('zip') || type.includes('tar') || type.includes('gzip')) return 'ZIP';
+ const extension = String(attachment.name || '').split('.').at(-1)?.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
+ return extension || 'FILE';
+}
+function attachmentFileMark(attachment) {
+ const mark = el('span', attachmentKind(attachment), 'attachment-file-mark'); mark.setAttribute('aria-hidden', 'true'); return mark;
+}
+function attachmentPaperclip() { const icon = el('span', '📎', 'attachment-paperclip'); icon.setAttribute('aria-hidden', 'true'); return icon; }
+function attachmentLinkView(item, attachment, base = root) {
+ const link = el('a', attachment.name, 'attachment-link'); link.href = attachmentHref(item, attachment, base);
+ link.setAttribute('aria-label', attachment.name); link.setAttribute('download', ''); link.title = `${attachment.name} · ${attachmentSize(attachment.size)}`; return link;
+}
+function attachmentTileLink(item, attachment, base = root, metadata = attachmentSize(attachment.size)) {
+ const link = attachmentLinkView(item, attachment, base); link.classList.add('attachment-tile-link');
+ const copy = el('span', undefined, 'attachment-tile-copy'); copy.append(el('span', attachment.name, 'attachment-name'), el('span', metadata, 'attachment-meta')); link.replaceChildren(attachmentFileMark(attachment), copy); return link;
+}
+function attachmentTile(item, attachment, base, metadata, onRemove) {
+ const tile = el('div', undefined, 'attachment-tile'); tile.append(attachmentTileLink(item, attachment, base, metadata));
+ if (onRemove) {
+  const actions = el('details', undefined, 'attachment-actions'); const toggle = el('summary', '⋯', 'attachment-actions-toggle'); toggle.setAttribute('aria-label', `Attachment actions for ${attachment.name}`); toggle.title = 'Attachment actions';
+  const menu = el('div', undefined, 'attachment-actions-menu'); menu.setAttribute('role', 'menu'); const remove = button('Remove attachment', onRemove, 'attachment-remove'); remove.setAttribute('role', 'menuitem'); remove.dataset.write = 'true'; menu.append(remove); actions.append(toggle, menu); tile.append(actions);
+ }
+ return tile;
+}
+function validAttachments(data) {
+ return Array.isArray(data) && data.every(attachment => attachment && Number.isSafeInteger(attachment.id) &&
+  attachment.id > 0 && typeof attachment.item_id === 'string' && typeof attachment.name === 'string' &&
+  attachment.name && typeof attachment.content_type === 'string' && attachment.content_type &&
+  typeof attachment.digest === 'string' && /^sha256:[0-9a-f]{64}$/.test(attachment.digest) &&
+  Number.isSafeInteger(attachment.size) && attachment.size >= 0 && typeof attachment.uploader === 'string' &&
+  attachment.uploader && typeof attachment.created_at === 'string' && !Number.isNaN(Date.parse(attachment.created_at)));
 }
 function pipelineLinkURL(link, pipeline) {
  if (typeof pipeline?.url === 'string' && pipeline.url) return pipeline.url;
@@ -192,6 +243,12 @@ function card(item, peers) {
  if (links.length) {
   const linkList = el('div', undefined, 'card-links'); linkList.setAttribute('aria-label', 'GitLab links'); links.forEach(link => linkList.append(cardLinkView(link)));
   const details = button('Details', () => showLinks(item), 'card-link-details'); details.setAttribute('aria-label', `View GitLab details · ${links.length}`); details.title = 'Show linked GitLab observations'; linkList.append(details); c.append(linkList);
+ }
+ const attachments = item.attachments || [];
+ if (attachments.length) {
+  const attachmentList = el('details', undefined, 'card-attachments'); const count = `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`; attachmentList.setAttribute('aria-label', count);
+  const attachmentHead = el('summary', undefined, 'card-attachments-head'); const attachmentToggle = el('span', undefined, 'card-attachments-toggle'); attachmentToggle.setAttribute('aria-hidden', 'true'); attachmentHead.append(attachmentPaperclip(), el('span', 'Attachments', 'card-attachments-label'), el('span', String(attachments.length), 'card-attachments-count'), attachmentToggle);
+  const attachmentOptions = el('div', undefined, 'card-attachment-list'); attachments.forEach(attachment => { const link = attachmentTileLink(item, attachment); link.classList.add('card-attachment-option'); attachmentOptions.append(link); }); attachmentList.append(attachmentHead, attachmentOptions); c.append(attachmentList);
  }
  return c;
 }
@@ -668,6 +725,70 @@ function renderItemComments(fields, item) {
  }
  loadComments();
 }
+function renderItemAttachments(fields, item, readOnly) {
+ const currentBoard = board, currentRoot = root;
+ const section = el('section', undefined, 'item-attachments'); section.setAttribute('aria-label', 'Attachments');
+ const heading = el('div', undefined, 'section-head');
+ const headingTitle = el('div', undefined, 'attachment-heading');
+ const count = el('span', '0', 'attachment-count'); count.setAttribute('aria-hidden', 'true');
+ headingTitle.append(attachmentPaperclip(), el('h3', 'Attachments'), count);
+ const status = el('p', '', 'help'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+ const list = el('div', undefined, 'attachment-grid'); let attachmentBusy = false;
+ const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; status.setAttribute('role', error ? 'alert' : 'status'); };
+ function renderList() {
+  list.replaceChildren(); const attachments = Array.isArray(item.attachments) ? item.attachments : []; count.textContent = String(attachments.length);
+  if (!attachments.length) { list.append(el('p', 'No attachments yet.', 'empty')); return; }
+  attachments.forEach(attachment => { list.append(attachmentTile(item, attachment, currentRoot, `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`, readOnly ? undefined : () => removeAttachment(attachment))); });
+ }
+ async function removeAttachment(attachment) {
+  if (attachmentBusy || !writable()) return; attachmentBusy = true; setStatus(`Removing ${attachment.name}…`);
+  try {
+   await api(attachmentHref(item, attachment, currentRoot), {method:'DELETE', headers:{'X-CSRF-Token':session.csrf}});
+   if (board !== currentBoard || root !== currentRoot || !section.isConnected) return;
+   item.attachments = (item.attachments || []).filter(value => value.id !== attachment.id); const current = board.items.find(value => value.id === item.id); if (current) current.attachments = item.attachments; renderList(); renderContent(); setStatus(item.attachments.length ? 'Attachment removed.' : 'No attachments yet.');
+  } catch (error) { if (section.isConnected) setStatus(error.message, true); }
+  finally { attachmentBusy = false; if (section.isConnected) renderControls(); }
+ }
+ if (!readOnly) {
+  const upload = el('div', undefined, 'attachment-upload'); const hint = el('span', 'Drop files here', 'attachment-drop-hint'); hint.hidden = true;
+  const input = el('input'); input.type = 'file'; input.className = 'attachment-file-input'; input.id = `attachment-file-${requestKey()}`; input.tabIndex = -1; input.setAttribute('aria-label', 'Attachment file');
+  const add = button('Add attachment', () => input.click(), 'attachment-add'); add.dataset.write = 'true'; add.setAttribute('aria-controls', input.id); add.title = 'Choose a file to attach'; upload.append(add, hint, input); heading.append(headingTitle, upload);
+  async function uploadFile(file) {
+   add.focus(); if (attachmentBusy || !writable()) return false;
+   if ((item.attachments || []).length >= 100) { setStatus('This card already has the maximum of 100 attachments.', true); return false; }
+   if (!file || typeof file.name !== 'string' || !file.name || !Number.isFinite(file.size) || file.size < 0) { setStatus('Choose a file first.', true); return false; }
+   if (file.size > 20 * 1024 * 1024) { setStatus('Attachments must be 20 MiB or smaller.', true); return false; }
+   attachmentBusy = true; add.disabled = true; setStatus(`Uploading ${file.name}…`); let uploaded = false;
+   const form = new FormData(); form.append('file', file);
+   try {
+    const data = await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/attachments', {method:'POST', headers:{'X-CSRF-Token':session.csrf,'Idempotency-Key':requestKey()}, body:form});
+    if (!validAttachments([data]) || data.item_id !== item.id) throw new Error('Attachment response is invalid. Refresh to retry.');
+    if (board !== currentBoard || root !== currentRoot || !section.isConnected) return false;
+    item.attachments = [...(item.attachments || []).filter(value => value.id !== data.id), data]; const current = board.items.find(value => value.id === item.id); if (current) current.attachments = item.attachments; renderList(); renderContent(); setStatus('Attachment uploaded.'); uploaded = true;
+   } catch (error) { if (section.isConnected) setStatus(error.message, true); }
+   finally { attachmentBusy = false; if (section.isConnected) { add.disabled = !writable(); renderControls(); if (!add.disabled) add.focus(); } }
+   return uploaded;
+  }
+  async function uploadFiles(files) {
+   if (attachmentBusy || !writable()) return; const selected = Array.from(files || []).filter(Boolean); input.value = '';
+   if (!selected.length) { setStatus('Choose a file first.', true); add.focus(); return; }
+   let uploaded = 0;
+   for (const file of selected) { if (!await uploadFile(file)) break; uploaded++; }
+   if (uploaded > 1 && section.isConnected) setStatus(`${uploaded} attachments uploaded.`);
+  }
+  input.addEventListener('change', () => { void uploadFiles(input.files ? [input.files[0]] : []); });
+  input.addEventListener('cancel', event => { event.preventDefault(); event.stopPropagation(); if (section.isConnected) add.focus(); });
+  const clearAttachmentDrop = () => { section.classList.remove('attachment-drop-active'); hint.hidden = true; };
+  const showAttachmentDrop = event => {
+   if (!isFileTransfer(event.dataTransfer)) return; event.preventDefault(); event.stopPropagation();
+   if (writable() && !attachmentBusy) { event.dataTransfer.dropEffect = 'copy'; section.classList.add('attachment-drop-active'); hint.hidden = false; } else { event.dataTransfer.dropEffect = 'none'; clearAttachmentDrop(); }
+  };
+  section.addEventListener('dragenter', showAttachmentDrop); section.addEventListener('dragover', showAttachmentDrop);
+  section.addEventListener('dragleave', event => { if (!event.relatedTarget || !(event.relatedTarget instanceof Node) || !section.contains(event.relatedTarget)) clearAttachmentDrop(); });
+  section.addEventListener('drop', event => { if (!isFileTransfer(event.dataTransfer)) return; event.preventDefault(); event.stopPropagation(); clearAttachmentDrop(); if (writable() && !attachmentBusy) void uploadFiles(event.dataTransfer.files); });
+ } else heading.append(headingTitle);
+ section.append(heading, status, list); fields.append(section); renderList();
+}
 function editItem(item, draft) {
  const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs;
  item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
@@ -697,7 +818,7 @@ function editItem(item, draft) {
   if (existing && !item.archived && !readOnly) {
    const archive = writeButton('Archive item', () => archiveItem(item), 'danger'); archive.dataset.itemFooter = 'true'; archive.dataset.write = 'true'; archive.classList.add('archive-footer'); $('editor-form').querySelector('.dialog-foot').insertBefore(archive, $('cancel'));
   }
-  if (existing) renderItemComments(primary, item);
+  if (existing) { renderItemAttachments(primary, item, readOnly); renderItemComments(primary, item); }
  }, data => {
   if (existing) desiredLinkIDs = data.getAll('link_ids');
   return { kind: existing ? 'item.update' : 'item.create', target: item.id || '', item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } };
@@ -925,9 +1046,9 @@ function setupBoard() {
   }); fields.append(writeButton('＋ Add column', () => editColumn(), 'primary'));
  }, () => ({}), true);
 }
-$('editor').addEventListener('cancel', e => { e.preventDefault(); if (!busy) closeEditor(); });
+$('editor').addEventListener('cancel', e => { e.preventDefault(); if (e.target === $('editor') && !busy) closeEditor(); });
 $('editor').addEventListener('click', e => { if (!busy && e.target === $('editor')) closeEditor(); });
-document.addEventListener('pointerdown', e => { const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
+document.addEventListener('pointerdown', e => { document.querySelectorAll('.attachment-actions[open],.card-attachments[open]').forEach(menu => { if (!menu.contains(e.target)) menu.open = false; }); const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
 $('proposals').onclick = () => showProposals();
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh;

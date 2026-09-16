@@ -118,7 +118,7 @@ func (d ProposalDocument) Validate(b Board) error {
 		}
 		switch op.Kind {
 		case "item.update":
-			if op.Item == nil || op.Item.Revision != op.ExpectedRevision || op.Item.ID != op.Target || op.Destination != "" || op.Before != "" {
+			if op.Item == nil || len(op.Item.Attachments) > 0 || op.Item.Revision != op.ExpectedRevision || op.Item.ID != op.Target || op.Destination != "" || op.Before != "" {
 				return invalid("invalid item update")
 			}
 		case "item.move":
@@ -158,7 +158,7 @@ func (d ProposalDocument) Validate(b Board) error {
 	}
 	seen = map[string]bool{}
 	for _, entry := range d.Imports {
-		if !ValidImportSource(entry.Source) || seen[entry.Source] || entry.Item.ID != "" || entry.Item.Revision != 0 || entry.Item.Archived || len(entry.Item.Dependencies) > 0 {
+		if !ValidImportSource(entry.Source) || seen[entry.Source] || len(entry.Item.Attachments) > 0 || entry.Item.ID != "" || entry.Item.Revision != 0 || entry.Item.Archived || len(entry.Item.Dependencies) > 0 {
 			return invalid("invalid or duplicate import source; imports cannot invent native identities/dependencies")
 		}
 		seen[entry.Source] = true

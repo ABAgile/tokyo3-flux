@@ -1,16 +1,23 @@
 package planning
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"abagile.com/tokyo3/flux/internal/blobstore"
 	"github.com/abagile/tokyo3-base/session"
 )
 
@@ -42,6 +49,20 @@ type CommentRepository interface {
 	AddComment(context.Context, string, string, string, string, string) (Comment, error)
 }
 
+type AttachmentRepository interface {
+	Attachment(context.Context, string, string, string, int64) (Attachment, error)
+	AddAttachment(context.Context, string, string, string, string, string, Attachment) (Attachment, error)
+	RemoveAttachment(context.Context, string, string, string, int64) (Attachment, error)
+}
+
+// AttachmentStore supplies bounded attachment bytes; lifecycle closing is
+// owned by the application that constructs it.
+type AttachmentStore interface {
+	Put(context.Context, string, io.Reader, string) (blobstore.ObjectInfo, error)
+	Open(context.Context, string) (blobstore.Object, error)
+	Delete(context.Context, string) error
+}
+
 type ProposalRepository interface {
 	Proposals(context.Context, string, string, int64) ([]ProposalSummary, error)
 	Review(context.Context, string, string, string) (ProposalPreview, error)
@@ -53,10 +74,16 @@ type HTTP struct {
 	machineSubject string
 	demo           bool
 	log            *slog.Logger
+	blobs          AttachmentStore
 }
 
-func NewHTTP(repo Repository, sessions *session.Manager, machineSubject string, demo bool, log *slog.Logger) *HTTP {
-	return &HTTP{repo, sessions, machineSubject, demo, log}
+func NewHTTP(repo Repository, sessions *session.Manager, machineSubject string, demo bool, log *slog.Logger, blobs ...AttachmentStore) *HTTP {
+	var attachmentStore AttachmentStore
+	if len(blobs) > 0 {
+		attachmentStore = blobs[0]
+	}
+	return &HTTP{repo: repo, sessions: sessions, machineSubject: machineSubject,
+		demo: demo, log: log, blobs: attachmentStore}
 }
 
 func (h *HTTP) Handler(machine bool) http.Handler {
@@ -88,6 +115,16 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 	})
 	root := "/api/v2/workspaces/{workspace}"
 	commentsRoot := root + "/items/{item}/comments"
+	attachmentsRoot := root + "/items/{item}/attachments"
+	mux.HandleFunc("GET "+attachmentsRoot+"/{attachment}", func(w http.ResponseWriter, r *http.Request) {
+		h.downloadAttachment(w, r, machine)
+	})
+	mux.HandleFunc("POST "+attachmentsRoot, func(w http.ResponseWriter, r *http.Request) {
+		h.uploadAttachment(w, r, machine)
+	})
+	mux.HandleFunc("DELETE "+attachmentsRoot+"/{attachment}", func(w http.ResponseWriter, r *http.Request) {
+		h.deleteAttachment(w, r, machine)
+	})
 	mux.HandleFunc("GET "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {
 		repo, ok := h.repo.(CommentRepository)
 		if !ok {
@@ -321,6 +358,335 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
+func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
+	if machine || r.Header.Get("Authorization") != "" {
+		h.failure(w, r, ErrForbidden)
+		return
+	}
+	if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
+		h.failure(w, r, ErrForbidden)
+		return
+	}
+	repo, ok := h.repo.(AttachmentRepository)
+	if !ok || h.blobs == nil {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	itemID := r.PathValue("item")
+	if !validItemPathID(itemID) || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
+		h.failure(w, r, ErrInvalid)
+		return
+	}
+	workspaceID := r.PathValue("workspace")
+	subject := h.subject(r, false)
+	if err := h.attachmentWritePreflight(r.Context(), workspaceID, subject, itemID); err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" {
+		h.failure(w, r, ErrInvalid)
+		return
+	}
+	bodyLimit := int64(MaxAttachmentBytes) + 1<<20
+	if r.ContentLength > bodyLimit {
+		h.failure(w, r, fmt.Errorf("%w: attachment request is too large", ErrInvalid))
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, bodyLimit)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		h.failure(w, r, ErrInvalid)
+		return
+	}
+	if r.MultipartForm == nil {
+		h.failure(w, r, ErrInvalid)
+		return
+	}
+	defer r.MultipartForm.RemoveAll()
+	files := r.MultipartForm.File["file"]
+	if len(files) != 1 {
+		h.failure(w, r, fmt.Errorf("%w: upload one file in the file field", ErrInvalid))
+		return
+	}
+	header := files[0]
+	if header.Size < 0 || header.Size > MaxAttachmentBytes {
+		h.failure(w, r, blobstore.ErrTooLarge)
+		return
+	}
+	name, err := attachmentFilename(header.Filename)
+	if err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	file, err := header.Open()
+	if err != nil {
+		h.failure(w, r, fmt.Errorf("%w: attachment could not be read", ErrInvalid))
+		return
+	}
+	defer file.Close()
+	sample := make([]byte, 512)
+	sampleSize, sampleErr := io.ReadFull(file, sample)
+	if sampleErr != nil && sampleErr != io.EOF && sampleErr != io.ErrUnexpectedEOF {
+		h.failure(w, r, fmt.Errorf("%w: attachment could not be read", ErrInvalid))
+		return
+	}
+	contentType := attachmentContentType(header.Header.Get("Content-Type"), sample[:sampleSize])
+	// The filesystem root already is the attachment namespace; keep the
+	// generated key flat so FLUX_BLOBSTORE_PATH is not duplicated as a folder.
+	key := NewID()
+	info, err := h.blobs.Put(r.Context(), key,
+		io.MultiReader(bytes.NewReader(sample[:sampleSize]), file), contentType)
+	if err != nil {
+		if errors.Is(err, blobstore.ErrTooLarge) {
+			h.failure(w, r, err)
+		} else {
+			h.failure(w, r, ErrAttachmentUnavailable)
+		}
+		return
+	}
+	if info.Key != key || info.Size < 0 || info.Size > MaxAttachmentBytes || !validAttachmentDigest(info.Digest) {
+		h.removeBlob(key)
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	attachment, err := repo.AddAttachment(r.Context(), workspaceID, subject, itemID, key,
+		r.Header.Get("Idempotency-Key"), Attachment{
+			ItemID: itemID, Name: name, ContentType: contentType, Size: info.Size,
+			Digest: info.Digest,
+		})
+	if err != nil {
+		h.removeBlob(key)
+		h.failure(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if attachment.StorageKey != "" && attachment.StorageKey != key {
+		status = http.StatusOK
+		h.removeBlob(key)
+	}
+	attachment.StorageKey = ""
+	respond(w, status, attachment)
+}
+
+func (h *HTTP) downloadAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
+	if h.blobs == nil {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	repo, ok := h.repo.(AttachmentRepository)
+	if !ok {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	itemID := r.PathValue("item")
+	id, err := parseAttachmentID(r.PathValue("attachment"))
+	if !validItemPathID(itemID) || err != nil {
+		h.failure(w, r, ErrInvalid)
+		return
+	}
+	attachment, err := repo.Attachment(r.Context(), r.PathValue("workspace"),
+		h.subject(r, machine), itemID, id)
+	if err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	if !ValidAttachmentName(attachment.Name) || !SafeAttachmentMIME(attachment.ContentType) ||
+		attachment.Size < 0 || attachment.Size > MaxAttachmentBytes || !validAttachmentDigest(attachment.Digest) {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	object, err := h.openAttachmentObject(r.Context(), attachment.StorageKey, attachment.Size)
+	if err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	if r.Method != http.MethodHead {
+		if err = verifyAttachmentObject(object, attachment.Digest); err != nil {
+			_ = object.Reader.Close()
+			h.failure(w, r, err)
+			return
+		}
+		_ = object.Reader.Close()
+		object, err = h.openAttachmentObject(r.Context(), attachment.StorageKey, attachment.Size)
+		if err != nil {
+			h.failure(w, r, err)
+			return
+		}
+	}
+	defer object.Reader.Close()
+	contentDisposition := mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name})
+	if contentDisposition == "" {
+		contentDisposition = `attachment; filename="download"`
+	}
+	w.Header().Set("Content-Type", attachmentResponseContentType(attachment.ContentType))
+	w.Header().Set("Content-Disposition", contentDisposition)
+	w.Header().Set("Content-Length", strconv.FormatInt(attachment.Size, 10))
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	hash := sha256.New()
+	written, copyErr := io.CopyN(w, io.TeeReader(object.Reader, hash), attachment.Size)
+	verifyErr := error(nil)
+	if object.Verify != nil {
+		verifyErr = object.Verify()
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if copyErr != nil || written != attachment.Size || verifyErr != nil || actualDigest != attachment.Digest {
+		h.log.Warn("attachment download failed", "request_id", NewID(), "attachment_id", id)
+	}
+}
+
+func (h *HTTP) openAttachmentObject(ctx context.Context, key string, size int64) (blobstore.Object, error) {
+	object, err := h.blobs.Open(ctx, key)
+	if err != nil {
+		return blobstore.Object{}, ErrAttachmentUnavailable
+	}
+	if object.Reader == nil || object.Size != size {
+		if object.Reader != nil {
+			_ = object.Reader.Close()
+		}
+		return blobstore.Object{}, ErrAttachmentUnavailable
+	}
+	return object, nil
+}
+
+func verifyAttachmentObject(object blobstore.Object, expectedDigest string) error {
+	hash := sha256.New()
+	written, copyErr := io.CopyN(io.Discard, io.TeeReader(object.Reader, hash), object.Size)
+	verifyErr := error(nil)
+	if object.Verify != nil {
+		verifyErr = object.Verify()
+	}
+	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
+	if copyErr != nil || written != object.Size || verifyErr != nil || actualDigest != expectedDigest {
+		return ErrAttachmentUnavailable
+	}
+	return nil
+}
+
+func (h *HTTP) deleteAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
+	if machine || r.Header.Get("Authorization") != "" {
+		h.failure(w, r, ErrForbidden)
+		return
+	}
+	if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
+		h.failure(w, r, ErrForbidden)
+		return
+	}
+	if h.blobs == nil {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	repo, ok := h.repo.(AttachmentRepository)
+	if !ok {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	itemID := r.PathValue("item")
+	id, err := parseAttachmentID(r.PathValue("attachment"))
+	if !validItemPathID(itemID) || err != nil {
+		h.failure(w, r, ErrInvalid)
+		return
+	}
+	attachment, err := repo.RemoveAttachment(r.Context(), r.PathValue("workspace"),
+		h.subject(r, false), itemID, id)
+	if err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	if err = h.blobs.Delete(r.Context(), attachment.StorageKey); err != nil {
+		h.failure(w, r, ErrAttachmentUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *HTTP) attachmentWritePreflight(ctx context.Context, workspaceID, subject, itemID string) error {
+	board, err := h.repo.Board(ctx, workspaceID, subject)
+	if err != nil {
+		return err
+	}
+	if board.Role != "member" && board.Role != "admin" {
+		return ErrForbidden
+	}
+	for _, item := range board.Items {
+		if item.ID != itemID {
+			continue
+		}
+		if item.Archived {
+			return fmt.Errorf("%w: restore an archived item before adding attachments", ErrInvalid)
+		}
+		return nil
+	}
+	return ErrNotFound
+}
+
+func (h *HTTP) removeBlob(key string) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.blobs.Delete(cleanupCtx, key); err != nil {
+		h.log.Warn("attachment cleanup failed", "request_id", NewID())
+	}
+}
+
+func parseAttachmentID(value string) (int64, error) {
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, ErrInvalid
+	}
+	return id, nil
+}
+
+func attachmentFilename(value string) (string, error) {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	name := filepath.Base(value)
+	if !ValidAttachmentName(name) {
+		return "", fmt.Errorf("%w: attachment name must be 1–255 bytes", ErrInvalid)
+	}
+	return name, nil
+}
+
+func validAttachmentDigest(value string) bool {
+	if len(value) != len("sha256:")+sha256.Size*2 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	_, err := hex.DecodeString(value[len("sha256:"):])
+	return err == nil && value[len("sha256:"):] == strings.ToLower(value[len("sha256:"):])
+}
+
+func attachmentResponseContentType(value string) string {
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil || mediaType == "" || strings.ContainsAny(value, "\r\n") || !SafeAttachmentMIME(mediaType) {
+		return "application/octet-stream"
+	}
+	return mediaType
+}
+
+func attachmentContentType(value string, sample []byte) string {
+	detected := http.DetectContentType(sample)
+	if normalized, _, err := mime.ParseMediaType(detected); err == nil {
+		detected = normalized
+	}
+	if mediaType, _, err := mime.ParseMediaType(value); err == nil && mediaType != "" &&
+		len(mediaType) <= MaxAttachmentMIME && !strings.ContainsAny(mediaType, "\r\n") &&
+		SafeAttachmentMIME(mediaType) {
+		if mediaType != "application/octet-stream" || detected == "application/octet-stream" {
+			return mediaType
+		}
+		if SafeAttachmentMIME(detected) {
+			return detected
+		}
+		return "application/octet-stream"
+	}
+	if SafeAttachmentMIME(detected) {
+		mediaType, _, _ := mime.ParseMediaType(detected)
+		return mediaType
+	}
+	return "application/octet-stream"
+}
+
 func (h *HTTP) subject(r *http.Request, machine bool) string {
 	if machine {
 		return h.machineSubject
@@ -353,6 +719,12 @@ func (h *HTTP) failure(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrNotFound):
 		status = 404
 		message = ErrNotFound.Error()
+	case errors.Is(err, ErrAttachmentUnavailable):
+		status = http.StatusServiceUnavailable
+		message = ErrAttachmentUnavailable.Error()
+	case errors.Is(err, blobstore.ErrTooLarge):
+		status = 400
+		message = "attachment exceeds the configured size limit"
 	case errors.Is(err, ErrGitLabUnavailable):
 		status = http.StatusServiceUnavailable
 		message = ErrGitLabUnavailable.Error()

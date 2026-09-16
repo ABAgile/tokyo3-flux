@@ -41,8 +41,17 @@ a validated HTTPS Gravatar avatar URL.
   filtering. Project management uses the existing dialog/controls, not a new
   component variant.
 - Cards show project (or No project) and all open sprint memberships as badges; project and assignee
-  share a metadata row, with the assignee aligned right. At 1000px and above, the item editor puts
-  title and description on the left and selection controls on the right; it stacks below that width.
+  share a metadata row, with the assignee aligned right. Cards show attachments in a compact Asana-like
+  collapsed file dropdown at the bottom of the card, separated by a divider and using a fixed-size
+  open/close cue with a paperclip/count cue; opening it reveals a vertical quick-download list with
+  file-type marks, truncated names and sizes, saving card space without page-level scroll; the
+  dropdown and editor action menus close when clicking elsewhere. The item editor uses the same compact
+  file tiles and an Asana-like Add attachment action that opens
+  the file picker and uploads the selected file; files can also be dropped onto the section. Editor
+  tiles expose removal from an overflow action menu, and cancelling the picker leaves the card open.
+  Members and admins can upload or remove files from active cards; viewers can download them. The attachment section appears before comments. At 1000px
+  and above, the item editor puts title and description on the left and selection controls on the
+  right; it stacks below that width.
   Wide layouts place comments below the description in the left pane; stacked layouts place them
   after the controls. Project and assignee use the same filterable single-selection dropdown as
   the other selection fields. The control pane orders Assignee, Labels, Project, Open sprints,

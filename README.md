@@ -23,7 +23,10 @@ planning evidence and draft suggestions for a human to review and approve.
 - Item comments are a separate flat, append-only stream. Each comment retains its
   author and creation time; members and admins can add comments, viewers can read
   them, and comments never alter planning revisions, audit snapshots or burn-down
-  history.
+  history. Cards may also carry bounded file attachments, shown as a compact Asana-like collapsed
+  dropdown with a vertical quick-download list; the editor supports file-picker and drag-and-drop
+  uploads plus overflow-menu removal. Metadata is in PostgreSQL and bytes are stored by the configured
+  filesystem or NATS Object Store backend.
 - Descriptions and comments use a GitLab-like Markdown editor with a compact single-row icon bar
   fused to the input. Preview mode shows only text Edit; editing starts with text Preview followed
   by flat, denser formatting icons with 28px hit areas. Related tools are separated by vertical
@@ -38,8 +41,8 @@ planning evidence and draft suggestions for a human to review and approve.
 - Cards show the title as their header and omit descriptions and the native item ID.
   Drag cards from their body and columns from their headers. On wide screens, item editing keeps
   title and description on the left, with selection controls on the right. Wide layouts put
-  comments below the description in the left pane; stacked layouts put them after the controls.
-  The control pane orders Assignee, Labels, Project, Open sprints, Depends on and GitLab links,
+  the Asana-like attachments section and then comments below the description in the left pane;
+  stacked layouts put controls, attachments and comments in that order. The control pane orders Assignee, Labels, Project, Open sprints, Depends on and GitLab links,
   then separates the native Move to select with a divider. Project and Assignee use the same
   single-selection dropdown as the other fields. Selection fields start in display mode and Edit
   reveals the control. GitLab links accept a pasted MR URL below the picker; Enter or Get appends
@@ -86,8 +89,7 @@ or create classifications in the UI. To add sample work to an **empty** workspac
 docker compose exec flux flux seed --workspace WORKSPACE_ID --subject GITLAB_NUMERIC_USER_ID
 ```
 
-Bootstrap and seed are explicit, not startup actions. The named `db` volume
-persists across `docker compose down`; do not remove it to restart the application.
+Bootstrap and seed are explicit, not startup actions. The named `db` and `attachments` volumes persist across `docker compose down`; do not remove them to restart the application.
 Compose uses development credentials and one non-SSL database URL, with no DB host
 port and loopback HTTP publication. Use separate credentials and HTTPS in production.
 
@@ -135,6 +137,15 @@ database or starting workers. PostgreSQL is required.
 | `FLUX_API_SUBJECT` | Explicitly authorized subject for machine access. |
 | `FLUX_API_URL` | CLI/Pi client API origin; HTTPS except for loopback fixtures. |
 | `FLUX_WORKSPACE` | Default workspace ID for CLI/Pi clients. |
+| `FLUX_BLOBSTORE` | Attachment backend: `filesystem` (default) or `nats`. |
+| `FLUX_BLOBSTORE_PATH` | Local attachment root; defaults to `attachments`. |
+| `FLUX_ATTACHMENT_MAX_BYTES` | Maximum attachment size in bytes; defaults to 20 MiB. |
+| `FLUX_BLOBSTORE_NATS_BUCKET` | NATS Object Store bucket; defaults to `FLUX_ATTACHMENTS`. |
+| `FLUX_BLOBSTORE_NATS_URL` | Optional override for the shared NATS URL. |
+| `FLUX_BLOBSTORE_NATS_CERT`, `_KEY`, `_CA` | Optional mTLS overrides; otherwise shared `FLUX_NATS_*` material is used. |
+| `FLUX_NATS_URL`, `FLUX_NATS_CERT`, `_KEY`, `_CA` | Shared NATS URL and optional mTLS material used by the Object Store when not overridden. |
+| `FLUX_NATS_CREDS` | Optional NATS credentials file used by the attachment Object Store. |
+| `FLUX_BLOBSTORE_NATS_CREDS` | Optional attachment-only override for the NATS credentials file. |
 
 An empty service token disables observations and profile enrichment, but not planning.
 Keep database, OAuth and connector secrets server-side. Give Pi only its scoped
@@ -150,10 +161,10 @@ flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
 
 `flux migrate`, `bootstrap`, `member`, `seed`, `serve`, `read`, `import` and
 `version` are the CLI commands. `flux plan` also namespaces the first five commands.
-Serving requires schema 9 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 10 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
-comments. Back up and restore-test
+comments; migration 010 adds attachment metadata. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -173,7 +184,8 @@ GRANT INSERT, UPDATE ON workspace_integrations, integration_runs, proposals TO f
 GRANT INSERT, DELETE ON approved_gitlab_projects, item_external_links,
   webhook_deliveries TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON external_links TO flux_runtime;
-GRANT INSERT ON imported_items, item_comments TO flux_runtime;
+GRANT INSERT ON imported_items, item_comments, item_attachments TO flux_runtime;
+GRANT DELETE ON item_attachments TO flux_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
 ```
 
@@ -349,6 +361,9 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
 | `GET /items/{item}/comments` | Read the item’s flat append-only comments, including author and creation time. |
 | `POST /items/{item}/comments` | Add one comment as the authenticated planning member; does not require or change planning revision. |
+| `GET /items/{item}/attachments/{attachment}` | Download one attachment after workspace membership authorization. |
+| `POST /items/{item}/attachments` | Upload one multipart `file` as a member/admin; requires CSRF and idempotency headers. |
+| `DELETE /items/{item}/attachments/{attachment}` | Remove attachment metadata and its blob as a member/admin. |
 | `GET /read/{view}` | Agent pages; `limit`, `offset`, `revision`, optional `target`. |
 | `GET /history?before=ID` | Up to 50 descending planning events. |
 | `GET /proposals?before=SEQUENCE` | Up to 20 review summaries. |
@@ -403,7 +418,8 @@ planning history, audit snapshots or burn-down snapshots. The item editor uses c
 instead of a decision-note field.
 
 Items carry title, Markdown description, column_id, optional project_id, assignee, labels,
-dependencies and sprint_ids. Planning commands retain `reason` only for their explicit
+dependencies, sprint_ids and attachment metadata. Attachment bytes never enter planning
+commands or revision snapshots; planning commands retain `reason` only for their explicit
 rationale fields.
 
 Labels may use names such as `type::bug` or `priority::high`; each workspace label
@@ -419,8 +435,10 @@ Per workspace: 1,000 items including archived work, 200 sprints, 100 projects,
 support up to 366 days. GitLab MR picker responses and board-member assignee scopes
 are capped at 50 results/IDs per request. Each item permits 20
 labels, 50 dependencies and 20 external links. Titles are at most 240 bytes,
-descriptions 16,000, comments and rationale/goals 4,000. Comment reads return up to
-500 oldest comments per item. Self-dependencies and cycles are rejected; WIP has no
+descriptions 16,000, comments and rationale/goals 4,000. Each item permits 100 attachments
+of at most 20 MiB each (10,000 attachments per workspace); filenames and MIME types are at most
+255 bytes. Comment reads return
+up to 500 oldest comments per item. Self-dependencies and cycles are rejected; WIP has no
 administrator bypass.
 
 Mutation bodies are capped at 64 KiB. Proposals allow 1–50 operations/import records

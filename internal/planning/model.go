@@ -11,18 +11,24 @@ import (
 )
 
 var (
-	ErrInvalid           = errors.New("invalid planning change")
-	ErrConflict          = errors.New("planning changed; refresh and review before saving")
-	ErrForbidden         = errors.New("workspace permission denied")
-	ErrNotFound          = errors.New("planning record not found")
-	ErrGitLabUnavailable = errors.New("GitLab connector unavailable")
+	ErrInvalid               = errors.New("invalid planning change")
+	ErrConflict              = errors.New("planning changed; refresh and review before saving")
+	ErrForbidden             = errors.New("workspace permission denied")
+	ErrNotFound              = errors.New("planning record not found")
+	ErrAttachmentUnavailable = errors.New("attachment storage unavailable")
+	ErrGitLabUnavailable     = errors.New("GitLab connector unavailable")
 )
 
 const (
-	MaxItems          = 1000
-	MaxCommentLength  = 4000
-	MaxItemComments   = 500
-	DefaultLabelColor = "#dcefe4"
+	MaxItems                = 1000
+	MaxCommentLength        = 4000
+	MaxItemComments         = 500
+	MaxAttachmentBytes      = 20 << 20
+	MaxItemAttachments      = 100
+	MaxWorkspaceAttachments = 10000
+	MaxAttachmentName       = 255
+	MaxAttachmentMIME       = 255
+	DefaultLabelColor       = "#dcefe4"
 )
 
 type Workspace struct {
@@ -68,18 +74,30 @@ type Column struct {
 	WIP      int    `json:"wip"`
 }
 type Item struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Description  string   `json:"description"`
-	ColumnID     string   `json:"column_id"`
-	ProjectID    string   `json:"project_id"`
-	SprintIDs    []string `json:"sprint_ids"`
-	Assignee     string   `json:"assignee"`
-	Rank         int      `json:"rank"`
-	Revision     int64    `json:"revision"`
-	Archived     bool     `json:"archived"`
-	Labels       []string `json:"labels"`
-	Dependencies []string `json:"dependencies"`
+	ID           string       `json:"id"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description"`
+	ColumnID     string       `json:"column_id"`
+	ProjectID    string       `json:"project_id"`
+	SprintIDs    []string     `json:"sprint_ids"`
+	Assignee     string       `json:"assignee"`
+	Rank         int          `json:"rank"`
+	Revision     int64        `json:"revision"`
+	Archived     bool         `json:"archived"`
+	Labels       []string     `json:"labels"`
+	Dependencies []string     `json:"dependencies"`
+	Attachments  []Attachment `json:"attachments,omitempty"`
+}
+type Attachment struct {
+	ID          int64     `json:"id"`
+	ItemID      string    `json:"item_id"`
+	Name        string    `json:"name"`
+	ContentType string    `json:"content_type"`
+	Size        int64     `json:"size"`
+	Digest      string    `json:"digest"`
+	Uploader    string    `json:"uploader"`
+	CreatedAt   time.Time `json:"created_at"`
+	StorageKey  string    `json:"-"`
 }
 type Comment struct {
 	ID        int64     `json:"id"`
@@ -274,6 +292,7 @@ func Apply(b *Board, c Command) error {
 		item.Revision = 1
 		item.Archived = false
 		item.Rank = len(b.Items)
+		item.Attachments = []Attachment{}
 		b.Items = append(b.Items, item)
 	case "item.update":
 		if c.Item == nil {
@@ -292,6 +311,7 @@ func Apply(b *Board, c Command) error {
 		item.Rank = old.Rank
 		item.Revision = old.Revision + 1
 		item.Archived = old.Archived
+		item.Attachments = old.Attachments
 		if old.Archived {
 			return invalid("restore an archived item before editing")
 		}

@@ -121,7 +121,7 @@ func (s *Store) changeProposal(ctx context.Context, tx pgx.Tx, b p.Board, subjec
 	var v p.Proposal
 	var err error
 	var preview p.ProposalPreview
-	before, _ := json.Marshal(b)
+	before, _ := json.Marshal(planningSnapshot(b))
 	switch c.Kind {
 	case "proposal.import":
 		if c.Proposal == nil {
@@ -204,7 +204,7 @@ func (s *Store) changeProposal(ctx context.Context, tx pgx.Tx, b p.Board, subjec
 	default:
 		return 0, p.ErrInvalid
 	}
-	after, _ := json.Marshal(map[string]any{"proposal_id": v.ID, "state": v.State, "reason": c.Reason, "preview": preview, "board": b})
+	after, _ := json.Marshal(map[string]any{"proposal_id": v.ID, "state": v.State, "reason": c.Reason, "preview": preview, "board": planningSnapshot(b)})
 	if _, err = tx.Exec(ctx, "INSERT INTO audit_events(workspace_id,actor,action,request_id,before_state,after_state,outcome) VALUES($1,$2,$3,$4,$5,$6,'success')", b.Workspace.ID, subject, c.Kind, key, before, after); err != nil {
 		return 0, err
 	}

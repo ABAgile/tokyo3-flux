@@ -22,7 +22,7 @@ FROM alpine:3.21 AS server
 RUN apk add --no-cache ca-certificates tini tzdata \
     && addgroup -S flux \
     && adduser -S -G flux flux \
-    && mkdir -p /var/lib/flux \
+    && mkdir -p /var/lib/flux/attachments \
     && chown -R flux:flux /var/lib/flux
 
 COPY --from=builder /out/flux /usr/local/bin/flux

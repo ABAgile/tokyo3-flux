@@ -1,15 +1,23 @@
 package planning
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	fluxauth "abagile.com/tokyo3/flux/internal/auth"
+	"abagile.com/tokyo3/flux/internal/blobstore"
 	"github.com/abagile/tokyo3-base/session"
 )
 
@@ -18,6 +26,7 @@ type fakeRepository struct {
 	commentAdds int
 	subject     string
 	err         error
+	attachment  Attachment
 }
 
 func (f *fakeRepository) Workspaces(_ context.Context, subject string) ([]Workspace, error) {
@@ -60,6 +69,32 @@ func (f *fakeRepository) AddComment(_ context.Context, _, subject, item, _, body
 	f.commentAdds++
 	f.subject = subject
 	return Comment{ID: 2, ItemID: item, Author: subject, Body: body}, f.err
+}
+func (f *fakeRepository) Attachment(_ context.Context, _, subject, item string, id int64) (Attachment, error) {
+	f.subject = subject
+	if f.attachment.ID != id || f.attachment.ItemID != item {
+		return Attachment{}, ErrNotFound
+	}
+	return f.attachment, f.err
+}
+func (f *fakeRepository) AddAttachment(_ context.Context, _, subject, item, key, _ string, attachment Attachment) (Attachment, error) {
+	f.subject = subject
+	f.attachment = attachment
+	f.attachment.ID = 1
+	f.attachment.ItemID = item
+	f.attachment.StorageKey = key
+	f.attachment.Uploader = subject
+	f.attachment.CreatedAt = time.Now().UTC()
+	return f.attachment, f.err
+}
+func (f *fakeRepository) RemoveAttachment(_ context.Context, _, subject, item string, id int64) (Attachment, error) {
+	f.subject = subject
+	if f.attachment.ID != id || f.attachment.ItemID != item {
+		return Attachment{}, ErrNotFound
+	}
+	attachment := f.attachment
+	f.attachment = Attachment{}
+	return attachment, f.err
 }
 func (f *fakeRepository) Burndown(_ context.Context, _, subject, _, _, _ string) (Burndown, error) {
 	f.subject = subject
@@ -235,5 +270,105 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	h.Handler(true).ServeHTTP(w, httptest.NewRequest("POST", root+"/changes", strings.NewReader(`{}`)))
 	if w.Code != 403 {
 		t.Fatal("ungated machine write accepted")
+	}
+}
+
+func TestHTTPAttachments(t *testing.T) {
+	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("a", 32)), CookiePrefix: "attachment-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, _ := fluxauth.NewFixture(manager)
+	loginResponse := httptest.NewRecorder()
+	login.ServeHTTP(loginResponse, httptest.NewRequest("GET", "http://localhost/auth/login", nil))
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("no session")
+	}
+	var csrf string
+	manager.Gate(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		csrf, err = manager.CSRFToken(r, "planning")
+	})).ServeHTTP(httptest.NewRecorder(), func() *http.Request {
+		req := httptest.NewRequest("GET", "http://localhost/", nil)
+		req.AddCookie(cookies[0])
+		return req
+	}())
+	if err != nil || csrf == "" {
+		t.Fatal("no csrf", err)
+	}
+	repo := &fakeRepository{}
+	storageRoot := t.TempDir()
+	blobs, err := blobstore.NewLocal(storageRoot, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blobs.Close()
+	h := NewHTTP(repo, manager, "machine-viewer", true,
+		slog.New(slog.NewTextHandler(io.Discard, nil)), blobs)
+	browser := manager.Gate(h.Handler(false))
+	root := "http://localhost/api/v2/workspaces/w/items/a/attachments"
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "../note.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = part.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	upload := httptest.NewRequest("POST", root, &body)
+	upload.AddCookie(cookies[0])
+	upload.Header.Set("Content-Type", writer.FormDataContentType())
+	upload.Header.Set("X-CSRF-Token", csrf)
+	upload.Header.Set("Idempotency-Key", strings.Repeat("u", 16))
+	uploadResponse := httptest.NewRecorder()
+	browser.ServeHTTP(uploadResponse, upload)
+	if uploadResponse.Code != http.StatusCreated {
+		t.Fatalf("upload status %d: %s", uploadResponse.Code, uploadResponse.Body.String())
+	}
+	var uploaded Attachment
+	if err := json.NewDecoder(uploadResponse.Body).Decode(&uploaded); err != nil {
+		t.Fatal(err)
+	}
+	if uploaded.ID != 1 || uploaded.Name != "note.txt" || uploaded.Size != 5 || uploaded.ContentType != "text/plain" {
+		t.Fatalf("unexpected attachment: %+v", uploaded)
+	}
+	key := repo.attachment.StorageKey
+	if strings.ContainsAny(key, "/\\") {
+		t.Fatalf("attachment key created a nested path: %q", key)
+	}
+	get := httptest.NewRequest("GET", root+"/1", nil)
+	get.AddCookie(cookies[0])
+	getResponse := httptest.NewRecorder()
+	browser.ServeHTTP(getResponse, get)
+	if getResponse.Code != http.StatusOK || getResponse.Body.String() != "hello" {
+		t.Fatalf("download status %d body %q", getResponse.Code, getResponse.Body.String())
+	}
+	if !strings.Contains(getResponse.Header().Get("Content-Disposition"), "note.txt") {
+		t.Fatal("download filename missing")
+	}
+	if err := os.WriteFile(filepath.Join(storageRoot, filepath.FromSlash(key)), []byte("HELLO"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := httptest.NewRequest("GET", root+"/1", nil)
+	corrupt.AddCookie(cookies[0])
+	corruptResponse := httptest.NewRecorder()
+	browser.ServeHTTP(corruptResponse, corrupt)
+	if corruptResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("corrupt download status %d: %s", corruptResponse.Code, corruptResponse.Body.String())
+	}
+	remove := httptest.NewRequest("DELETE", root+"/1", nil)
+	remove.AddCookie(cookies[0])
+	remove.Header.Set("X-CSRF-Token", csrf)
+	removeResponse := httptest.NewRecorder()
+	browser.ServeHTTP(removeResponse, remove)
+	if removeResponse.Code != http.StatusNoContent {
+		t.Fatalf("remove status %d: %s", removeResponse.Code, removeResponse.Body.String())
+	}
+	if _, err := blobs.Open(context.Background(), key); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Fatalf("blob remains after removal: %v", err)
 	}
 }

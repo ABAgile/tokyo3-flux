@@ -51,6 +51,9 @@ var burndownMigration string
 //go:embed 009_comments.sql
 var commentsMigration string
 
+//go:embed 010_attachments.sql
+var attachmentsMigration string
+
 type Store struct {
 	refreshInterval time.Duration
 	pool            *pgxpool.Pool
@@ -97,7 +100,7 @@ func (s *Store) Close() { s.pool.Close() }
 func (s *Store) Ready(ctx context.Context) error {
 	var version int
 	err := s.pool.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version)
-	if err != nil || version != 9 {
+	if err != nil || version != 10 {
 		return errors.New("native schema unavailable: run flux plan migrate")
 	}
 	return nil
@@ -122,7 +125,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 9 {
+		if version < 1 || version > 10 {
 			return errors.New("unsupported native schema version")
 		}
 	} else if _, err = tx.Exec(ctx, schema); err != nil {
@@ -165,6 +168,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if version < 9 {
 		if _, err = tx.Exec(ctx, commentsMigration); err != nil {
+			return err
+		}
+	}
+	if version < 10 {
+		if _, err = tx.Exec(ctx, attachmentsMigration); err != nil {
 			return err
 		}
 	}
@@ -524,7 +532,51 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 			rows.Close()
 			return b, err
 		}
+		v.Attachments = []p.Attachment{}
 		b.Items = append(b.Items, v)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return b, err
+	}
+	itemIndexes := make(map[string]int, len(b.Items))
+	for index := range b.Items {
+		itemIndexes[b.Items[index].ID] = index
+	}
+	rows, err = tx.Query(ctx, `SELECT id,item_id,storage_key,name,content_type,size,digest,uploader,created_at
+ FROM item_attachments WHERE workspace_id=$1 ORDER BY item_id,id LIMIT $2`, wid,
+		p.MaxWorkspaceAttachments+1)
+	if err != nil {
+		return b, err
+	}
+	attachmentCount := 0
+	for rows.Next() {
+		attachmentCount++
+		if attachmentCount > p.MaxWorkspaceAttachments {
+			rows.Close()
+			return b, errors.New("workspace exceeds supported attachment limit")
+		}
+		var attachment p.Attachment
+		if err = rows.Scan(&attachment.ID, &attachment.ItemID, &attachment.StorageKey,
+			&attachment.Name, &attachment.ContentType, &attachment.Size, &attachment.Digest,
+			&attachment.Uploader, &attachment.CreatedAt); err != nil {
+			rows.Close()
+			return b, err
+		}
+		if !validAttachmentStorageKey(attachment.StorageKey) || strings.TrimSpace(attachment.Uploader) == "" || validateAttachmentMetadata(attachment) != nil {
+			rows.Close()
+			return b, errors.New("workspace contains invalid attachment metadata")
+		}
+		index, ok := itemIndexes[attachment.ItemID]
+		if !ok {
+			rows.Close()
+			return b, errors.New("attachment references an unknown workspace item")
+		}
+		if len(b.Items[index].Attachments) >= p.MaxItemAttachments {
+			rows.Close()
+			return b, errors.New("workspace exceeds supported item attachment limit")
+		}
+		b.Items[index].Attachments = append(b.Items[index].Attachments, attachment)
 	}
 	rows.Close()
 	if err = rows.Err(); err != nil {
@@ -655,6 +707,11 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	if err != nil {
 		return 0, err
 	}
+	if c.Item != nil {
+		item := *c.Item
+		item.Attachments = nil
+		c.Item = &item
+	}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return 0, err
@@ -676,7 +733,7 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	if strings.HasPrefix(c.Kind, "proposal.") {
 		return s.changeProposal(ctx, tx, b, subject, key, digest, c)
 	}
-	before, err := json.Marshal(b)
+	before, err := json.Marshal(planningSnapshot(b))
 	if err != nil {
 		return 0, err
 	}
@@ -724,7 +781,7 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	if _, err = tx.Exec(ctx, "INSERT INTO work_item_events(workspace_id,revision,actor,action,target,reason) VALUES($1,$2,$3,$4,$5,$6)", wid, b.Workspace.Revision, subject, c.Kind, target, c.Reason); err != nil {
 		return 0, err
 	}
-	after, err := json.Marshal(b)
+	after, err := json.Marshal(planningSnapshot(b))
 	if err != nil {
 		return 0, err
 	}
