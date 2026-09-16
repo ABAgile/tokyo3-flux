@@ -174,7 +174,7 @@ func TestSafeAvatarURL(t *testing.T) {
 		{"https://other.example/avatar.png", ""},
 		{base + "/uploads/avatar.png?token=secret", ""},
 		{base + "/../avatar.png", ""},
-		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80&d=identicon", "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef"},
+		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80&d=identicon", "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?d=identicon&s=80"},
 		{"https://avatars.gravatar.com/avatar/0123456789abcdef0123456789abcdef", ""},
 		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
 		{"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcde", ""},

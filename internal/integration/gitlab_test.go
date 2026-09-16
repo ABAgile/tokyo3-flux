@@ -41,7 +41,7 @@ func TestProfileAvatarURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := c.safeAvatarURL("https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80"), "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef"; got != want {
+	if got, want := c.safeAvatarURL("https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80&d=identicon"), "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?d=identicon&s=80"; got != want {
 		t.Fatalf("safeAvatarURL() = %q, want %q", got, want)
 	}
 	if got, want := c.safeAvatarURL("https://gitlab.example/uploads/avatar.png"), "https://gitlab.example/uploads/avatar.png"; got != want {
@@ -57,13 +57,18 @@ func TestMemberProfiles(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.URL.Path != "/api/v4/users" || r.Header.Get("PRIVATE-TOKEN") != "server-secret" {
+		if r.Header.Get("PRIVATE-TOKEN") != "server-secret" {
 			t.Fatalf("profile request = %s %q", r.URL, r.Header.Get("PRIVATE-TOKEN"))
 		}
-		if got := r.URL.Query()["user_ids[]"]; len(got) != 2 || got[0] != "42" || got[1] != "7" {
-			t.Fatalf("user IDs = %v", got)
+		switch r.URL.Path {
+		case "/api/v4/users/42":
+			_, _ = w.Write([]byte(`{"id":42,"username":"alex","name":"Alex Example","avatar_url":"` + server.URL + `/uploads/alex.png"}`))
+		case "/api/v4/users/7":
+			_, _ = w.Write([]byte(`{"id":7,"username":"bea","name":"Bea Example","avatar_url":"https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?s=80&d=identicon"}`))
+		default:
+			t.Errorf("unexpected profile request path %q", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
 		}
-		_, _ = w.Write([]byte(`[{"id":42,"username":"alex","name":"Alex Example","avatar_url":"` + server.URL + `/uploads/alex.png"}]`))
 	}))
 	defer server.Close()
 	c, err := New(server.URL, "server-secret")
@@ -71,11 +76,35 @@ func TestMemberProfiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	profiles := c.Profiles(context.Background(), []string{"42", "7", "fixture-user", "42"})
-	if profiles["42"].Name != "Alex Example" || profiles["42"].AvatarURL != server.URL+"/uploads/alex.png" || len(profiles) != 1 {
+	if profiles["42"].Name != "Alex Example" || profiles["42"].AvatarURL != server.URL+"/uploads/alex.png" || profiles["7"].Name != "Bea Example" || profiles["7"].AvatarURL != "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?d=identicon&s=80" || len(profiles) != 2 {
 		t.Fatalf("profiles = %+v", profiles)
 	}
-	if cached := c.Profiles(context.Background(), []string{"42"}); cached["42"].Name != "Alex Example" || calls.Load() != 1 {
+	if cached := c.Profiles(context.Background(), []string{"42"}); cached["42"].Name != "Alex Example" || calls.Load() != 2 {
 		t.Fatalf("profile cache = %+v, calls = %d", cached, calls.Load())
+	}
+}
+
+func TestUsers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v4/users" || r.Header.Get("PRIVATE-TOKEN") != "server-secret" {
+			t.Fatalf("user request = %s %q", r.URL, r.Header.Get("PRIVATE-TOKEN"))
+		}
+		query := r.URL.Query()
+		for key, want := range map[string]string{"active": "true", "per_page": "50", "order_by": "name", "sort": "asc", "search": "alex"} {
+			if query.Get(key) != want {
+				t.Fatalf("%s query = %q, want %q", key, query.Get(key), want)
+			}
+		}
+		_, _ = w.Write([]byte(`[{"id":42,"username":"alex","name":"Alex Example","avatar_url":"` + r.Host + `/uploads/alex.png","state":"active"},{"id":7,"username":"blocked","name":"Blocked","state":"blocked"}]`))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users, err := c.Users(context.Background(), "alex")
+	if err != nil || len(users) != 1 || users[0].ID != 42 || users[0].Username != "alex" || users[0].Name != "Alex Example" {
+		t.Fatalf("users = %+v, err = %v", users, err)
 	}
 }
 

@@ -41,6 +41,14 @@ type Member struct {
 	Name      string `json:"name"`
 	Subject   string `json:"subject"`
 	Role      string `json:"role"`
+	Username  string `json:"username,omitempty"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+}
+
+type GitLabUser struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	Name      string `json:"name"`
 	AvatarURL string `json:"avatar_url,omitempty"`
 }
 type Label struct {
@@ -157,6 +165,7 @@ type Command struct {
 	Proposal    *ProposalDocument `json:"proposal,omitempty"`
 	Integration *Integration      `json:"integration,omitempty"`
 	Link        *LinkTarget       `json:"link,omitempty"`
+	Member      *Member           `json:"member,omitempty"`
 	Name        string            `json:"name,omitempty"`
 	Color       string            `json:"color,omitempty"`
 	Kind        string            `json:"kind"`
@@ -231,6 +240,70 @@ func Apply(b *Board, c Command) error {
 			return invalid("member name must be 1–120 bytes")
 		}
 		b.Members[i].Name = name
+	case "member.save":
+		if b.Role != "admin" {
+			return ErrForbidden
+		}
+		if c.Member == nil {
+			return invalid("member required")
+		}
+		member := *c.Member
+		member.Subject = strings.TrimSpace(member.Subject)
+		member.Role = strings.TrimSpace(member.Role)
+		target := strings.TrimSpace(c.Target)
+		if member.Subject == "" && target != "" {
+			member.Subject = target
+		}
+		if member.Subject == "" || len(member.Subject) > 200 || strings.ContainsAny(member.Subject, "\r\n") {
+			return invalid("member subject must be 1–200 bytes")
+		}
+		if member.Role != "viewer" && member.Role != "member" && member.Role != "admin" {
+			return invalid("member role must be viewer, member, or admin")
+		}
+		if len(member.Name) > 120 || strings.ContainsAny(member.Name, "\r\n") {
+			return invalid("member name must be at most 120 bytes")
+		}
+		if target == "" {
+			if memberIndex(b, member.Subject) >= 0 {
+				return invalid("member already belongs to this workspace")
+			}
+			member.Name = strings.TrimSpace(member.Name)
+			member.Username, member.AvatarURL = "", ""
+			b.Members = append(b.Members, member)
+			break
+		}
+		if target != member.Subject {
+			return invalid("member subject cannot be changed")
+		}
+		i := memberIndex(b, target)
+		if i < 0 {
+			return ErrNotFound
+		}
+		if b.Members[i].Role == "admin" && member.Role != "admin" && memberAdminCount(b) <= 1 {
+			return invalid("keep one administrator")
+		}
+		member.Name = strings.TrimSpace(member.Name)
+		member.Username, member.AvatarURL = b.Members[i].Username, b.Members[i].AvatarURL
+		b.Members[i] = member
+	case "member.delete":
+		if b.Role != "admin" {
+			return ErrForbidden
+		}
+		target := strings.TrimSpace(c.Target)
+		if target == "" || len(target) > 200 || strings.ContainsAny(target, "\r\n") {
+			return invalid("member subject must be 1–200 bytes")
+		}
+		i := memberIndex(b, target)
+		if i < 0 {
+			return ErrNotFound
+		}
+		if b.Members[i].Role == "admin" && memberAdminCount(b) <= 1 {
+			return invalid("keep one administrator")
+		}
+		if slices.ContainsFunc(b.Items, func(item Item) bool { return item.Assignee == target }) {
+			return invalid("reassign this member's cards before removing them")
+		}
+		b.Members = slices.Delete(b.Members, i, i+1)
 	case "label.save", "label.delete":
 		at := slices.IndexFunc(b.Labels, func(label Label) bool { return label.Name == c.Target })
 		if c.Target != "" && at < 0 {
@@ -542,6 +615,18 @@ func reorder(b *Board, id, before string) error {
 }
 func itemIndex(b *Board, id string) int {
 	return slices.IndexFunc(b.Items, func(v Item) bool { return v.ID == id })
+}
+func memberIndex(b *Board, subject string) int {
+	return slices.IndexFunc(b.Members, func(v Member) bool { return v.Subject == subject })
+}
+func memberAdminCount(b *Board) int {
+	count := 0
+	for _, member := range b.Members {
+		if member.Role == "admin" {
+			count++
+		}
+	}
+	return count
 }
 func sprintIndex(b *Board, id string) int {
 	return slices.IndexFunc(b.Sprints, func(v Sprint) bool { return v.ID == id })

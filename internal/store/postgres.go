@@ -260,6 +260,30 @@ func (s *Store) Projects(ctx context.Context, wid, subject string) ([]p.Project,
 	return out, rows.Err()
 }
 
+// GitLabUsers returns the connector's active user catalog to workspace
+// administrators. It is a picker source, not persisted planning state.
+func (s *Store) GitLabUsers(ctx context.Context, wid, subject, search string) ([]p.GitLabUser, error) {
+	memberRole, err := role(ctx, s.pool, wid, subject)
+	if err != nil {
+		return nil, err
+	}
+	if memberRole != "admin" {
+		return nil, p.ErrForbidden
+	}
+	if s.connector == nil {
+		return nil, p.ErrGitLabUnavailable
+	}
+	users, err := s.connector.Users(ctx, search)
+	if err != nil {
+		return nil, p.ErrGitLabUnavailable
+	}
+	out := make([]p.GitLabUser, 0, len(users))
+	for _, user := range users {
+		out = append(out, p.GitLabUser{ID: user.ID, Username: user.Username, Name: user.Name, AvatarURL: user.AvatarURL})
+	}
+	return out, nil
+}
+
 // GitLabProjects returns the full connector catalog to admins and only
 // approved projects to other workspace members. It is a picker source, not
 // persisted planning state.
@@ -468,6 +492,7 @@ func (s *Store) enrichMembers(ctx context.Context, b *p.Board) {
 		if strings.TrimSpace(b.Members[i].Name) == "" {
 			b.Members[i].Name = profile.Name
 		}
+		b.Members[i].Username = profile.Username
 		b.Members[i].AvatarURL = profile.AvatarURL
 	}
 }
@@ -755,8 +780,37 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	if err = p.Apply(&b, c); err != nil {
 		return 0, err
 	}
-	if c.Kind == "member.name" {
+	switch c.Kind {
+	case "member.name":
 		if _, err = tx.Exec(ctx, "UPDATE memberships SET name=$3 WHERE workspace_id=$1 AND subject=$2", wid, c.Target, strings.TrimSpace(c.Name)); err != nil {
+			return 0, err
+		}
+	case "member.save":
+		subject := strings.TrimSpace(c.Target)
+		if subject == "" && c.Member != nil {
+			subject = strings.TrimSpace(c.Member.Subject)
+		}
+		var member p.Member
+		found := false
+		for _, candidate := range b.Members {
+			if candidate.Subject == subject {
+				member, found = candidate, true
+				break
+			}
+		}
+		if !found {
+			return 0, p.ErrNotFound
+		}
+		if c.Target == "" {
+			_, err = tx.Exec(ctx, "INSERT INTO memberships(workspace_id,subject,role,name) VALUES($1,$2,$3,$4)", wid, member.Subject, member.Role, member.Name)
+		} else {
+			_, err = tx.Exec(ctx, "UPDATE memberships SET role=$3,name=$4 WHERE workspace_id=$1 AND subject=$2", wid, member.Subject, member.Role, member.Name)
+		}
+		if err != nil {
+			return 0, err
+		}
+	case "member.delete":
+		if _, err = tx.Exec(ctx, "DELETE FROM memberships WHERE workspace_id=$1 AND subject=$2", wid, strings.TrimSpace(c.Target)); err != nil {
 			return 0, err
 		}
 	}
@@ -774,6 +828,10 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 			target = b.Sprints[len(b.Sprints)-1].ID
 		case "project.save":
 			target = b.Projects[len(b.Projects)-1].ID
+		case "member.save":
+			if c.Member != nil {
+				target = strings.TrimSpace(c.Member.Subject)
+			}
 		case "label.save":
 			target = c.Name
 		}

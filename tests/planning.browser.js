@@ -46,6 +46,7 @@ async (page) => {
  // Project classification is optional and managed without creating a new board.
  await nav('Projects');
  await page.getByRole('heading',{name:'Projects',exact:true}).waitFor();
+ const projectSections = page.locator('.maintenance-sections'); check(await projectSections.evaluate(sections => sections.firstElementChild?.querySelector('h2')?.textContent === 'GitLab integration'),'GitLab integration should be shown first'); check(await projectSections.evaluate(sections => getComputedStyle(sections).gridTemplateColumns.split(' ').length === 1),'Projects page still uses a two-column layout');
  await page.getByRole('button',{name:'＋ New project',exact:true}).click();
  await page.getByLabel('Project name').fill('Cross-project stream');
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
@@ -203,7 +204,7 @@ async (page) => {
  await page.getByRole('heading',{name:'Archive work item',exact:true}).waitFor();
  await page.getByRole('button',{name:'Archive item',exact:true}).click(); await saved();
  await nav('Archive'); await page.getByRole('heading',{name:'Archive',exact:true}).waitFor(); await page.getByRole('button',{name:'Restore item',exact:true}).click(); await saved();
- await nav('History'); await page.getByRole('heading',{name:'History',exact:true}).waitFor(); await page.getByText('item · restore',{exact:true}).waitFor();
+ await nav('History'); await page.getByRole('heading',{name:'History',exact:true}).waitFor(); await page.getByText('item · restore',{exact:true}).waitFor(); const historyText = await page.locator('.history-row').first().textContent(); const historyActor = historyText.split(' · ')[0]; check(/\S+ \([^)]+\)$/.test(historyActor),'history rows should show known actors as name (subject)'); const workspaceLabel = await page.locator('#workspace option:checked').textContent(); check(historyText.includes(workspaceLabel),'history rows should identify the workspace by name and ID');
  await page.getByText('Close first sprint; retain next sprint assignment',{exact:true}).waitFor();
  await nav('Kanban board'); await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
  await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all');

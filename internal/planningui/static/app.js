@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 let session, workspaces = [], board, root, view = 'board', busy = false, loading = false;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
-let integrationFormOpen = false, integrationCatalog = [], integrationCatalogError = '', integrationCatalogLoading = false;
+let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
 const theme = localStorage.getItem('flux-plan-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = theme;
@@ -22,9 +22,11 @@ $('theme').onclick = () => { const next = document.documentElement.dataset.theme
 updateThemeControl();
 function button(text, fn, className) { const b = el('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
 function writable() { return board && board.role !== 'viewer' && !busy && !loading; }
+function adminWritable() { return board && board.role === 'admin' && !busy && !loading; }
 function gitLabWritable() { return writable() && !!board.connector_instance && board.connector_instance === board.integration.instance && !!board.integration.projects.length; }
 function canComment() { return board && (board.role === 'member' || board.role === 'admin') && !busy && !loading; }
 function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable() || integrationFormOpen; return b; }
+function adminButton(text, fn, className) { const b = button(text, fn, className); b.dataset.adminWrite = 'true'; b.disabled = !adminWritable() || integrationFormOpen; return b; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
 async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); if (r.status === 204) return null; let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
@@ -45,7 +47,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
@@ -72,12 +74,19 @@ function memberInfo(subject) {
  return {name, avatarURL: member?.avatar_url || (subject === session?.subject && session.avatar_url) || ''};
 }
 function memberName(subject) { return memberInfo(subject).name; }
+function memberListingInfo(member) {
+ const name = String(member.name || '').trim() || (member.subject === session?.subject && String(session.name || '').trim()) || String(member.username || '').trim() || 'Unnamed member';
+ return {name, avatarURL: member.avatar_url || (member.subject === session?.subject && session.avatar_url) || ''};
+}
 function initials(name) { const words = name.trim().split(/\s+/).filter(Boolean); return words.length ? words.slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase() : '—'; }
+function avatarView(name, avatarURL) {
+ const avatar = el('span', undefined, 'avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(name), 'avatar-fallback'));
+ if (avatarURL) { const image = el('img'); image.src = avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
+ return avatar;
+}
 function assigneeView(subject) {
  const info = memberInfo(subject); const node = el('span', undefined, 'assignee'); node.setAttribute('aria-label', `Assignee: ${info.name}`); node.title = info.name;
- const avatar = el('span', undefined, 'avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
- if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
- node.append(avatar, el('span', info.name)); return node;
+ node.append(avatarView(info.name, info.avatarURL), el('span', info.name)); return node;
 }
 function linkDisplayName(link, includeTitle = true) {
  const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
@@ -201,7 +210,7 @@ function render() {
  const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
  const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
  const titles = { board: 'Kanban board', sprints: 'Sprints', projects: 'Projects', labels: 'Labels', members: 'Members', archive: 'Archive', history: 'History' };
- const subtitles = { projects: 'Organize workspace projects and GitLab integration.', labels: 'Maintain labels used to classify work.', members: 'Review workspace members and maintain display names.' };
+ const subtitles = { projects: 'Organize workspace projects and GitLab integration.', labels: 'Maintain labels used to classify work.', members: 'Manage workspace members, roles, and names.' };
  $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : subtitles[view] || 'Plan intentionally. Keep work moving.';
  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
  const active = activeSprints();
@@ -321,9 +330,16 @@ function renderContent() {
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
+function workspaceLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
+function historyActorLabel(subject) {
+ const member = board.members.find(candidate => candidate.subject === subject);
+ const name = member ? memberListingInfo(member).name : subject === session?.subject ? String(session.name || '').trim() : '';
+ return name ? `${name} (${subject})` : subject;
+}
 function renderHistory(content) {
+ const label = workspaceLabel(board.workspace); content.append(el('p', label, 'muted'));
  if (!history.length) content.append(el('p', 'No planning changes yet.', 'empty'));
- history.forEach(e => { const row = el('article', undefined, 'history-row'); row.append(el('strong', e.action.replaceAll('.', ' · ')), el('p', `${e.actor} · ${new Date(e.at).toLocaleString()} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`, 'muted')); if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id')); if (e.reason) row.append(el('p', e.reason)); content.append(row); });
+ history.forEach(e => { const row = el('article', undefined, 'history-row'); row.append(el('strong', e.action.replaceAll('.', ' · ')), el('p', `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`, 'muted')); if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id')); if (e.reason) row.append(el('p', e.reason)); content.append(row); });
  if (historyMore) content.append(button('Load older changes', async () => { try { await loadHistory(); renderContent(); } catch (e) { notice(e.message, true); } }));
 }
 function field(parent, name, title, value = '', type = 'text', entries) {
@@ -867,22 +883,32 @@ function editProject(project) {
   fields.append(el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
  }, data => ({kind: 'project.save', target: project?.id || '', project: {...(project || {}), name: data.get('name').trim()}}));
 }
+function integrationProjectChips(projectIDs) {
+ const catalog = new Map(integrationCatalog.map(project => [String(project.id), project]));
+ const chips = el('div', undefined, 'tags integration-project-chips'); chips.setAttribute('aria-label', 'Approved GitLab projects');
+ projectIDs.forEach(id => { const project = catalog.get(String(id)); const label = project ? gitlabProjectLabel(project) : `GitLab project #${id}`; const chip = el('span', label, 'badge integration-project-chip'); chip.title = label; chips.append(chip); });
+ return chips;
+}
 function renderProjects(content) {
+ const approvedIDs = board.integration?.projects || [];
+ if (!integrationFormOpen && board.connector_instance && approvedIDs.length && !integrationCatalogLoaded && !integrationCatalogLoading) void loadIntegrationCatalog();
  const sections = el('div', undefined, 'maintenance-sections');
- const projects = el('section', undefined, 'maintenance-section'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject); projects.append(projectHead, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
- if (!board.projects.length) projects.append(el('p', 'No projects yet. Items can remain unclassified.', 'empty')); else { const list = el('div', undefined, 'maintenance-list'); board.projects.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const edit = writeButton('Edit project', () => editProject(project)); edit.dataset.write = 'true'; row.append(info, edit); list.append(row); }); projects.append(list); }
  const integration = el('section', undefined, 'maintenance-section');
- const integrationHead = el('div', undefined, 'section-head');
- integrationHead.append(el('h2', 'GitLab integration'));
+ const integrationHead = el('div', undefined, 'section-head'); integrationHead.append(el('h2', 'GitLab integration'));
  if (integrationFormOpen) {
   integration.append(integrationHead, renderIntegrationForm());
  } else {
-  const review = writeButton('Review integration', reviewIntegration); review.dataset.write = 'true'; integrationHead.append(review);
-  const configured = board.connector_instance || 'Not configured'; const approved = board.integration?.projects?.length || 0;
+  const edit = writeButton('Edit integration', editIntegration); edit.dataset.write = 'true'; integrationHead.append(edit);
+  const configured = board.connector_instance || 'Not configured'; const approved = approvedIDs.length;
   integration.append(integrationHead, el('p', `Operator-configured GitLab instance: ${configured}`, 'help'), el('p', `${approved} approved GitLab project${approved === 1 ? '' : 's'}.`, 'help'));
+  if (approved) integration.append(integrationProjectChips(approvedIDs));
+  if (integrationCatalogLoading) integration.append(el('p', 'Loading approved GitLab project names…', 'help'));
+  if (integrationCatalogError) integration.append(el('p', `Project names are unavailable; approved IDs remain visible. ${integrationCatalogError}`, 'help'));
   if (!board.connector_instance) integration.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.', 'help'));
  }
- sections.append(projects, integration); content.append(sections);
+ const projects = el('section', undefined, 'maintenance-section'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject); projects.append(projectHead, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
+ if (!board.projects.length) projects.append(el('p', 'No projects yet. Items can remain unclassified.', 'empty')); else { const list = el('div', undefined, 'maintenance-list'); board.projects.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const edit = writeButton('Edit project', () => editProject(project)); edit.dataset.write = 'true'; row.append(info, edit); list.append(row); }); projects.append(list); }
+ sections.append(integration, projects); content.append(sections);
 }
 function editLabel(label) {
  $('editor').close(); const originalName = typeof label === 'string' ? label : label?.name || ''; const originalColor = typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
@@ -901,13 +927,77 @@ function renderLabels(content) {
  if (!board.labels.length) { content.append(el('p', 'No labels yet. Create reusable labels for this workspace.', 'empty')); return; }
  const list = el('div', undefined, 'label-maintenance-list'); board.labels.forEach(label => { const row = el('article', undefined, 'setup-row label-maintenance-row'); const summary = el('div', undefined, 'label-maintenance-summary'); const usage = board.items.filter(item => item.labels.includes(label.name)).length; summary.append(labelBadge(label.name), el('small', `${usage} card${usage === 1 ? '' : 's'}`, 'muted')); const actions = el('div', undefined, 'actions'); const rename = writeButton('Rename', () => editLabel(label)); rename.dataset.write = 'true'; const remove = writeButton('Delete…', () => deleteLabel(label), 'danger'); remove.dataset.write = 'true'; actions.append(rename, remove); row.append(summary, actions); list.append(row); }); content.append(list);
 }
-function editMemberName(member) {
- $('editor').close(); openEditor('Member display name', fields => { const input = field(fields, 'name', 'Display name', member.name || (member.subject === session.subject && session.name) || ''); input.required = true; input.maxLength = 120; }, data => ({kind: 'member.name', target: member.subject, name: data.get('name').trim()}));
+const MEMBER_ROLE_ENTRIES = [['viewer', 'Viewer'], ['member', 'Member'], ['admin', 'Admin']];
+function memberRoleLabel(role) { return MEMBER_ROLE_ENTRIES.find(([value]) => value === role)?.[1] || role; }
+function memberRoleChip(role) {
+ const roleClass = MEMBER_ROLE_ENTRIES.some(([value]) => value === role) ? role : 'unknown'; const chip = el('span', memberRoleLabel(role), `badge member-role member-role-${roleClass}`); chip.setAttribute('aria-label', `Role: ${memberRoleLabel(role)}`); return chip;
+}
+function memberIdentityView(member) {
+ const info = memberListingInfo(member); const identity = el('div', undefined, 'member-identity'); identity.append(avatarView(info.name, info.avatarURL));
+ const copy = el('div', undefined, 'member-identity-copy'); copy.append(el('strong', info.name)); const username = String(member.username || '').trim(); const meta = el('div', undefined, 'member-identity-meta'); if (username) meta.append(el('small', `@${username}`, 'muted')); meta.append(memberRoleChip(member.role)); copy.append(meta); identity.append(copy); return identity;
+}
+function editMember(member) {
+ if (!adminWritable()) return;
+ $('editor').close(); openEditor('Edit workspace member', fields => {
+  const subject = field(fields, 'subject', 'GitLab subject', member.subject); subject.readOnly = true; subject.setAttribute('aria-readonly', 'true');
+  const name = field(fields, 'name', 'Workspace name', member.name || ''); name.maxLength = 120; name.placeholder = 'Optional admin-maintained name';
+  field(fields, 'role', 'Workspace role', member.role, 'text', MEMBER_ROLE_ENTRIES);
+  fields.append(el('p', 'Leave the workspace name blank to use the available GitLab profile name.', 'help'));
+ }, data => ({kind: 'member.save', target: member.subject, member: {subject: member.subject, name: data.get('name').trim(), role: data.get('role')}}));
+ $('save').textContent = 'Save member';
+}
+function removeMember(member) {
+ if (!adminWritable()) return;
+ const assigned = board.items.filter(item => item.assignee === member.subject).length;
+ $('editor').close(); openEditor('Remove workspace member', fields => {
+  fields.append(memberIdentityView(member), el('p', `Remove ${memberListingInfo(member).name} from this workspace? Workspace history is retained.`));
+  if (assigned) fields.append(el('p', `This member is assigned to ${assigned} card${assigned === 1 ? '' : 's'}. Reassign those cards before removing the member.`, 'help'));
+ }, () => ({kind: 'member.delete', target: member.subject}));
+ $('save').textContent = 'Remove member';
+}
+function addMember() {
+ if (!adminWritable()) return;
+ const currentBoard = board, currentRoot = root;
+ $('editor').close(); openEditor('Add workspace member', fields => {
+  fields.append(el('p', 'Search active users from the configured GitLab instance. Adding a user grants access to this workspace only; it does not change GitLab permissions.', 'help'));
+  let searchTimer, searchGeneration = 0, nameEdited = false;
+  const usersBySubject = new Map();
+  let subjectInput, nameInput;
+  const syncSelectedUser = values => {
+   const subject = String(values[0] || '');
+   subjectInput.value = subject;
+   if (!nameEdited) nameInput.value = usersBySubject.get(subject)?.name || '';
+  };
+  const queueUsers = (query, controls) => {
+   if (searchTimer) clearTimeout(searchTimer); const generation = ++searchGeneration; const search = query.trim(); controls.setStatus(search ? 'Searching GitLab…' : 'Loading GitLab users…');
+   searchTimer = setTimeout(async () => {
+    try {
+     const users = await loadGitLabUsers(currentRoot, search);
+     if (generation !== searchGeneration || board !== currentBoard || root !== currentRoot) return;
+     users.forEach(user => usersBySubject.set(String(user.id), user));
+     const selected = controls.selected(); const entries = memberUserEntries(users, selected); controls.setEntries(entries, selected); controls.setStatus(entries.length ? '' : 'No available GitLab users match this search.');
+    } catch (error) {
+     if (generation === searchGeneration && board === currentBoard && root === currentRoot) controls.setStatus(error.message || String(error));
+    }
+   }, search ? 250 : 0);
+  };
+  multiSelect(fields, 'gitlab_user', 'GitLab user', [], [], undefined, 'Only users returned by the configured server-side GitLab connector can be added. Existing workspace members are omitted.', {single:true, onOpen:queueUsers, onFilter:queueUsers, onChange:syncSelectedUser});
+  subjectInput = field(fields, 'subject', 'GitLab subject', ''); subjectInput.readOnly = true; subjectInput.required = true; subjectInput.placeholder = 'Select a GitLab user'; subjectInput.setAttribute('aria-readonly', 'true');
+  nameInput = field(fields, 'name', 'Workspace name', ''); nameInput.maxLength = 120; nameInput.placeholder = 'Defaults to the GitLab profile name'; nameInput.addEventListener('input', () => { nameEdited = true; });
+  field(fields, 'role', 'Workspace role', 'member', 'text', MEMBER_ROLE_ENTRIES);
+  if (!currentBoard.connector_instance) fields.append(el('p', 'A GitLab read connector is not configured. Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN.', 'help'));
+ }, data => {
+  const subject = String(data.get('gitlab_user') || '').trim(); if (!/^[1-9][0-9]*$/.test(subject) || !Number.isSafeInteger(Number(subject))) throw new Error('Select an available GitLab user.');
+  return {kind: 'member.save', member: {subject, role: data.get('role'), name: String(data.get('name') || '').trim()}};
+ });
+ $('save').textContent = 'Add member';
 }
 function renderMembers(content) {
- const heading = el('div', undefined, 'section-head'); heading.append(el('h2', 'Workspace members')); content.append(heading, el('p', 'Names identify assignees; changing a display name never changes membership or permissions. Only workspace admins can edit names.', 'help'));
+ $('count').textContent = `${board.members.length} member${board.members.length === 1 ? '' : 's'}`;
+ const heading = el('div', undefined, 'section-head'); heading.append(el('h2', 'Workspace members')); if (board.role === 'admin') heading.append(adminButton('＋ Add member', addMember, 'primary'));
+ content.append(heading, el('p', board.role === 'admin' ? 'Manage workspace access and roles. OAuth supplies the signed-in user’s GitLab profile; other numeric members need the server-side read connector for names, usernames, and avatars. Bootstrap, non-GitLab, or unavailable profiles may not have a username or avatar.' : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.', 'help'));
  if (!board.members.length) { content.append(el('p', 'No workspace members yet.', 'empty')); return; }
- const list = el('div', undefined, 'maintenance-list'); board.members.forEach(member => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', memberName(member.subject)), el('small', `${member.subject} · ${member.role}`, 'muted')); if (board.role === 'admin') { const edit = writeButton('Edit name', () => editMemberName(member)); edit.dataset.write = 'true'; row.append(info, edit); } else row.append(info); list.append(row); }); content.append(list);
+ const list = el('div', undefined, 'maintenance-list'); board.members.forEach(member => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(memberIdentityView(member)); if (board.role === 'admin') { const actions = el('div', undefined, 'actions'); actions.append(adminButton('Edit member', () => editMember(member)), adminButton('Remove member', () => removeMember(member), 'danger')); row.append(info, actions); } else row.append(info); list.append(row); }); content.append(list);
 }
 function observationTiming(link) {
  const timestamp = value => { if (!value) return 'none yet'; const date = new Date(value); return Number.isNaN(date.getTime()) ? 'unavailable' : date.toLocaleString(); };
@@ -925,6 +1015,22 @@ function integrationProjectEntries(projects, selected) {
  });
  selected.forEach(value => { if (!seen.has(value)) entries.push([value, `Project ${value} (currently approved)`]); });
  return entries;
+}
+function gitLabUserLabel(user) {
+ const name = String(user.name || '').trim() || String(user.username || '').trim() || `GitLab user ${user.id}`; const username = String(user.username || '').trim();
+ return `${name}${username && username !== name ? ` · @${username}` : ''} (#${user.id})`;
+}
+function validGitLabUserCatalog(data) { return Array.isArray(data) && data.every(user => user && Number.isSafeInteger(user.id) && user.id > 0 && typeof user.username === 'string' && user.username.trim() && typeof user.name === 'string' && user.name.trim() && (user.avatar_url === undefined || typeof user.avatar_url === 'string')); }
+function memberUserEntries(users, selected = []) {
+ const entries = [], seen = new Set(), existing = new Set(board.members.map(member => member.subject)), selectedSet = new Set(selected.map(String));
+ users.forEach(user => { const value = String(user.id); if (seen.has(value) || existing.has(value) && !selectedSet.has(value)) return; seen.add(value); entries.push([value, gitLabUserLabel(user)]); });
+ selected.forEach(value => { value = String(value); if (seen.has(value)) return; seen.add(value); entries.push([value, `GitLab user #${value} (currently selected)`]); });
+ return entries;
+}
+async function loadGitLabUsers(currentRoot, search = '') {
+ const params = new URLSearchParams({search}); const data = await api(currentRoot + '/gitlab/users?' + params);
+ if (!validGitLabUserCatalog(data)) throw new Error('GitLab user results are invalid. Refresh to retry.');
+ return data;
 }
 function validGitLabProjectCatalog(data) { return Array.isArray(data) && data.every(project => project && Number.isSafeInteger(project.id) && project.id > 0 && typeof project.name === 'string' && project.name.trim()); }
 async function loadGitLabProjects(currentRoot) {
@@ -950,19 +1056,28 @@ function mergeRequestEntries(mergeRequests, selected) {
  selected.forEach(value => { if (!seen.has(value)) entries.push([value, `MR !${value} (currently selected)`]); });
  return entries;
 }
-function reviewIntegration() {
+function editIntegration() {
  if (!board || busy || loading || integrationFormOpen) return;
- integrationFormOpen = true; integrationCatalog = []; integrationCatalogError = '';
- integrationCatalogLoading = false;
- if (board.role === 'admin' && board.connector_instance) loadIntegrationCatalog(); else render();
+ integrationFormOpen = true; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = '';
+ integrationCatalogLoading = false; integrationCatalogRequest++;
+ if (board.connector_instance) void loadIntegrationCatalog(); else render();
 }
 async function loadIntegrationCatalog() {
- if (!board || !integrationFormOpen || integrationCatalogLoading) return;
- const currentBoard = board, currentRoot = root; integrationCatalogLoading = true; integrationCatalogError = '';
- render(); notice('Loading available GitLab projects…');
- try { integrationCatalog = await loadGitLabProjects(currentRoot); } catch (e) { integrationCatalogError = e.message; }
- integrationCatalogLoading = false;
- if (board === currentBoard && root === currentRoot && integrationFormOpen && view === 'projects') { notice(''); render(); }
+ if (!board || integrationCatalogLoading || view !== 'projects') return;
+ const currentBoard = board, currentRoot = root, request = ++integrationCatalogRequest; integrationCatalogLoading = true; integrationCatalogError = '';
+ if (integrationFormOpen) { render(); notice('Loading available GitLab projects…'); }
+ try {
+  const catalog = await loadGitLabProjects(currentRoot);
+  if (request !== integrationCatalogRequest || board !== currentBoard || root !== currentRoot) return;
+  integrationCatalog = catalog; integrationCatalogLoaded = true;
+ } catch (error) {
+  if (request !== integrationCatalogRequest || board !== currentBoard || root !== currentRoot) return;
+  integrationCatalogError = error.message; integrationCatalogLoaded = true;
+ } finally {
+  if (request !== integrationCatalogRequest) return;
+  integrationCatalogLoading = false;
+  if (board === currentBoard && root === currentRoot && view === 'projects') { if (integrationFormOpen) notice(''); render(); }
+ }
 }
 function renderIntegrationForm() {
  const currentBoard = board; const readOnly = currentBoard.role !== 'admin';
@@ -982,7 +1097,7 @@ function renderIntegrationForm() {
  const consent = field(form, 'consent', 'I approve this metadata visibility and any removals', 'yes', 'checkbox'); consent.required = true; consent.parentElement.classList.add('consent');
  if (!currentBoard.connector_instance) form.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.', 'help'));
  const error = el('p', '', 'error'); error.hidden = true; error.setAttribute('role', 'alert'); form.append(error);
- const actions = el('div', undefined, 'dialog-foot inline-maintenance-actions'); const cancel = button('Cancel', () => { integrationFormOpen = false; integrationCatalog = []; integrationCatalogError = ''; integrationCatalogLoading = false; render(); }); actions.append(cancel);
+ const actions = el('div', undefined, 'dialog-foot inline-maintenance-actions'); const cancel = button('Cancel', () => { integrationFormOpen = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++; render(); }); actions.append(cancel);
  let save;
  if (!readOnly) { save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.disabled = integrationCatalogLoading; actions.append(save); }
  form.append(actions);
@@ -999,7 +1114,7 @@ function renderIntegrationForm() {
    if (new Set(parts).size !== parts.length) throw new Error('A GitLab project may only be selected once.');
    integrationFormOpen = false; save.disabled = true; cancel.disabled = true;
    await change({revision:board.workspace.revision, kind:'integration.save', integration:{instance:board.connector_instance, projects:parts.map(Number)}});
-   integrationCatalog = []; integrationCatalogError = ''; integrationCatalogLoading = false; render();
+   integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++; render();
   } catch (submitError) {
    integrationFormOpen = true; error.textContent = `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`; error.hidden = false; save.disabled = false; cancel.disabled = false; renderControls();
   }
@@ -1057,7 +1172,7 @@ $('label').onchange = $('search').oninput = renderContent;
 $('project').onchange = $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
- integrationFormOpen = false; integrationCatalog = []; integrationCatalogError = ''; integrationCatalogLoading = false;
+ integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
  board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
  await refresh();
@@ -1081,4 +1196,4 @@ setInterval(() => {
  document.querySelectorAll('[data-refresh-link]').forEach(node => { const link = board.links.find(l => l.id === node.dataset.refreshLink); node.disabled = !writable() || !link || !board.connector_instance || board.connector_instance !== board.integration.instance || !!link.next_refresh && Date.parse(link.next_refresh) > Date.now(); });
 }, 10000);
 renderControls();
-(async () => { try { session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; workspaces = await api('/api/v2/workspaces'); options($('workspace'), workspaces.map(w => [w.id, w.name])); if (!workspaces.length) { notice('No workspace membership. Ask an operator to grant your login subject access: ' + session.subject); render(); return; } await chooseWorkspace(); } catch (e) { notice(e.message, true); renderControls(); } })();
+(async () => { try { session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; workspaces = await api('/api/v2/workspaces'); options($('workspace'), workspaces.map(w => [w.id, workspaceLabel(w)])); if (!workspaces.length) { notice('No workspace membership. Ask an operator to grant your login subject access: ' + session.subject); render(); return; } await chooseWorkspace(); } catch (e) { notice(e.message, true); renderControls(); } })();

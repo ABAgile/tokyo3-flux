@@ -33,6 +33,22 @@ services:
       retries: 12
       start_period: 10s
 
+  nats:
+    image: nats:2.11-alpine
+    restart: unless-stopped
+    # JetStream is required by the attachment Object Store. This service is
+    # reachable only by other services on the Compose network; TLS is not
+    # needed for this local-only connection.
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
   migrate:
     build: *flux-build
     command: ["migrate"]
@@ -51,6 +67,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      nats:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
     ports:
@@ -63,17 +81,10 @@ services:
       FLUX_BLOBSTORE: "${FLUX_BLOBSTORE:-filesystem}"
       FLUX_BLOBSTORE_PATH: "${FLUX_BLOBSTORE_PATH:-/var/lib/flux/attachments}"
       FLUX_ATTACHMENT_MAX_BYTES: "${FLUX_ATTACHMENT_MAX_BYTES:-20971520}"
-      FLUX_BLOBSTORE_NATS_URL: "${FLUX_BLOBSTORE_NATS_URL:-}"
-      FLUX_BLOBSTORE_NATS_BUCKET: "${FLUX_BLOBSTORE_NATS_BUCKET:-FLUX_ATTACHMENTS}"
-      FLUX_BLOBSTORE_NATS_CERT: "${FLUX_BLOBSTORE_NATS_CERT:-}"
-      FLUX_BLOBSTORE_NATS_KEY: "${FLUX_BLOBSTORE_NATS_KEY:-}"
-      FLUX_BLOBSTORE_NATS_CA: "${FLUX_BLOBSTORE_NATS_CA:-}"
-      FLUX_BLOBSTORE_NATS_CREDS: "${FLUX_BLOBSTORE_NATS_CREDS:-}"
-      FLUX_NATS_URL: "${FLUX_NATS_URL:-}"
-      FLUX_NATS_CERT: "${FLUX_NATS_CERT:-}"
-      FLUX_NATS_KEY: "${FLUX_NATS_KEY:-}"
-      FLUX_NATS_CA: "${FLUX_NATS_CA:-}"
-      FLUX_NATS_CREDS: "${FLUX_NATS_CREDS:-}"
+      # Override FLUX_BLOBSTORE=nats in .env to exercise the local Object Store.
+      # FLUX_BLOBSTORE_NATS_URL: "${FLUX_BLOBSTORE_NATS_URL:-nats://nats:4222}"
+      # FLUX_BLOBSTORE_NATS_BUCKET: "${FLUX_BLOBSTORE_NATS_BUCKET:-FLUX_ATTACHMENTS}"
+      FLUX_NATS_URL: "${FLUX_NATS_URL:-nats://nats:4222}"
 
       FLUX_SESSION_KEY: "${FLUX_SESSION_KEY:?set FLUX_SESSION_KEY to 64 hex characters}"
 

@@ -76,6 +76,38 @@ func TestWorkspaceValidation(t *testing.T) {
 		})
 	}
 }
+func TestMemberManagement(t *testing.T) {
+	b := testBoard()
+	b.Role, b.Workspace.Role, b.Members[0].Role = "admin", "admin", "admin"
+	mustApply(t, &b, Command{Kind: "member.save", Member: &Member{Subject: "42", Role: "member"}})
+	if len(b.Members) != 2 || b.Members[1].Subject != "42" || b.Members[1].Role != "member" {
+		t.Fatalf("added member = %+v", b.Members)
+	}
+	member := b.Members[1]
+	member.Role = "admin"
+	member.Name = "Alex"
+	mustApply(t, &b, Command{Kind: "member.save", Target: member.Subject, Member: &member})
+	if b.Members[1].Role != "admin" || b.Members[1].Name != "Alex" {
+		t.Fatalf("updated member = %+v", b.Members[1])
+	}
+	b.Items[0].Assignee = "42"
+	if err := Apply(&b, Command{Kind: "member.delete", Target: "42", Revision: b.Workspace.Revision}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("removed assigned member: %v", err)
+	}
+	b.Items[0].Assignee = ""
+	mustApply(t, &b, Command{Kind: "member.delete", Target: "42"})
+	if len(b.Members) != 1 {
+		t.Fatal("member was not removed")
+	}
+	if err := Apply(&b, Command{Kind: "member.save", Target: "alice", Member: &Member{Subject: "alice", Role: "member"}, Revision: b.Workspace.Revision}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("last administrator demoted: %v", err)
+	}
+	b.Role, b.Workspace.Role = "member", "member"
+	if err := Apply(&b, Command{Kind: "member.save", Member: &Member{Subject: "43", Role: "member"}, Revision: b.Workspace.Revision}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-admin member management: %v", err)
+	}
+}
+
 func TestNativeLifecycleAndOrdering(t *testing.T) {
 	b := testBoard()
 	it := Item{Title: "New", ColumnID: "ready", Assignee: "alice", Labels: []string{"native"}}

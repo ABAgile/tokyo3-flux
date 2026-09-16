@@ -33,6 +33,9 @@ type Repository interface {
 type GitLabProjectRepository interface {
 	GitLabProjects(context.Context, string, string) ([]GitLabProject, error)
 }
+type GitLabUserRepository interface {
+	GitLabUsers(context.Context, string, string, string) ([]GitLabUser, error)
+}
 type GitLabMergeRequestRepository interface {
 	GitLabMergeRequests(context.Context, string, string, int64, string) ([]GitLabMergeRequest, error)
 }
@@ -197,6 +200,24 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			return
 		}
 		v, err := repo.GitLabProjects(r.Context(), r.PathValue("workspace"), h.subject(r, false))
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/gitlab/users", func(w http.ResponseWriter, r *http.Request) {
+		if machine {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		repo, ok := h.repo.(GitLabUserRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		rawSearch := r.URL.Query().Get("search")
+		if len(rawSearch) > 120 || strings.ContainsAny(rawSearch, "\r\n") {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := repo.GitLabUsers(r.Context(), r.PathValue("workspace"), h.subject(r, false), strings.TrimSpace(rawSearch))
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/gitlab/merge-requests", func(w http.ResponseWriter, r *http.Request) {

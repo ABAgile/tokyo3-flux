@@ -27,8 +27,8 @@ async page => {
  };
  await nav('Projects');
  await page.getByRole('heading',{name:'Projects',exact:true}).waitFor();
- await page.getByRole('button',{name:'Review integration',exact:true}).click();
- check(await page.locator('.inline-maintenance-form').count()===1 && !await page.getByRole('dialog').isVisible(),'integration review opened a dialog');
+ await page.getByRole('button',{name:'Edit integration',exact:true}).click();
+ check(await page.locator('.inline-maintenance-form').count()===1 && !await page.getByRole('dialog').isVisible(),'integration edit opened a dialog');
  await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
  await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();
  await page.getByRole('button',{name:'Save changes',exact:true}).click();
@@ -76,10 +76,12 @@ async page => {
  await openEditor(b);await page.getByRole('button',{name:/^Remove MR !7 · project 42/}).click();await save();
  check((await board()).links.find(l=>l.kind==='mr'&&l.number===7).items.length===1,'unlink removed another item’s shared observation');
  await nav('Projects');
- await page.getByRole('button',{name:'Review integration',exact:true}).click();
+ await page.getByText('Flux · team/flux (#42)',{exact:true}).waitFor(); check(await page.locator('.integration-project-chip').filter({hasText:'Flux · team/flux (#42)'}).count()===1,'approved GitLab project chips are missing from the show state');
+ await page.getByRole('button',{name:'Edit integration',exact:true}).click();
  await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
  await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).uncheck();
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();
  current=await board();check(current.links.length===0&&current.items.length===initial.items.length,'revocation damaged planning or retained links');
- return 'PASS: MR URL paste, quick scopes, fallback MR search, MR-only links with corresponding pipeline status, revision-safe link association/removal, revocation, explicit approval, shared observations, manual refresh, head-SHA safety, separate failures, persistent cache, planning independence, viewer restrictions, six responsive keyboard layouts.';
+ await nav('Members'); await page.getByRole('heading',{name:'Members',exact:true}).waitFor(); check(await page.getByRole('button',{name:'＋ Add member',exact:true}).count()===1,'admin member action is missing'); await page.getByRole('button',{name:'＋ Add member',exact:true}).click(); const userPicker=page.getByRole('group',{name:'GitLab user',exact:true}); await userPicker.getByRole('button',{name:'Edit GitLab user',exact:true}).click(); await userPicker.getByRole('checkbox',{name:'Fixture User 42 · @fixture-42 (#42)',exact:true}).check(); check(await page.getByLabel('GitLab subject',{exact:true}).inputValue()==='42' && !await page.getByLabel('GitLab subject',{exact:true}).isEditable(),'GitLab subject should be a read-only field'); check(await page.getByLabel('Workspace name',{exact:true}).inputValue()==='Fixture User 42','workspace name did not default to the GitLab profile name'); await page.keyboard.press('Escape'); await page.getByRole('button',{name:'Add member',exact:true}).click(); await saved(); let memberRow=page.locator('.maintenance-row').filter({hasText:'Fixture User 42'}); await memberRow.waitFor(); check(await memberRow.getByText('42',{exact:true}).count()===0,'member listing should not display the GitLab subject'); await memberRow.getByRole('button',{name:'Edit member',exact:true}).click(); await page.getByRole('combobox',{name:'Workspace role',exact:true}).selectOption('admin'); await page.getByRole('button',{name:'Save member',exact:true}).click(); await saved(); memberRow=page.locator('.maintenance-row').filter({hasText:'Fixture User 42'}); check(await memberRow.locator('.member-role-admin').textContent()==='Admin' && !(await memberRow.textContent()).includes('manage workspace'),'member role chip did not persist without permission text'); check(await memberRow.getByText('@fixture-42',{exact:true}).count()===1,'GitLab username is missing from the member listing'); await memberRow.getByRole('button',{name:'Remove member',exact:true}).click(); await page.getByRole('button',{name:'Remove member',exact:true}).click(); await saved(); check(await page.locator('.maintenance-row').filter({hasText:'Fixture User 42'}).count()===0,'member was not removed');
+ return 'PASS: MR URL paste, quick scopes, fallback MR search, MR-only links with corresponding pipeline status, revision-safe link association/removal, revocation, explicit approval, shared observations, manual refresh, head-SHA safety, separate failures, persistent cache, workspace member add/role/remove, planning independence, viewer restrictions, six responsive keyboard layouts.';
 }

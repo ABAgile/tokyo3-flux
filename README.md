@@ -11,7 +11,7 @@ planning evidence and draft suggestions for a human to review and approve.
   Projects optionally classify work; filtering never partitions WIP or permissions. The home board
   defaults to Active sprints, with backlog available from Scope. The Projects, Members and Labels
   views maintain workspace configuration, with GitLab integration grouped under Projects and its
-  approval form shown inline after Review integration.
+  approval form shown inline after Edit integration.
 - Each item has one column, an optional project, assignee, labels, dependencies
   and zero or more open sprint memberships. Labels may use `scope::value` names and
   workspace-selected colors from the fixed 64-swatch palette; maintain them from the
@@ -51,12 +51,12 @@ planning evidence and draft suggestions for a human to review and approve.
   scroll. Archive instead of
   deleting work; restore archived items before editing them.
 - Viewers read, members plan, review proposals and add item comments, and admins
-  also configure integrations, member display names and add item comments. When
+  also configure integrations, manage workspace members and roles, and maintain display names. When
   configured, GitLab profile names and
   validated instance/Gravatar avatars enrich assignee cards without changing native
-  membership. Membership and
-  roles are operator-managed,
-  never inferred from GitLab access.
+  membership. Admins add GitLab users from the connector catalog and can change or remove their
+  workspace access; operator membership commands remain available for machine or bootstrap identities.
+  Membership is never inferred from GitLab project access.
 - Browser changes require membership, CSRF, revisions and idempotency. Planning,
   history and successful audit commit atomically. GitLab and agents never own
   planning state or change it autonomously.
@@ -65,7 +65,7 @@ planning evidence and draft suggestions for a human to review and approve.
 
 ### Compose
 
-The local stack runs PostgreSQL, an explicit one-shot migration and Flux:
+The local stack runs PostgreSQL, a private NATS JetStream service, an explicit one-shot migration and Flux:
 
 ```sh
 cp .env.example .env
@@ -89,9 +89,8 @@ or create classifications in the UI. To add sample work to an **empty** workspac
 docker compose exec flux flux seed --workspace WORKSPACE_ID --subject GITLAB_NUMERIC_USER_ID
 ```
 
-Bootstrap and seed are explicit, not startup actions. The named `db` and `attachments` volumes persist across `docker compose down`; do not remove them to restart the application.
-Compose uses development credentials and one non-SSL database URL, with no DB host
-port and loopback HTTP publication. Use separate credentials and HTTPS in production.
+Bootstrap and seed are explicit, not startup actions. The named `db`, `data` and `nats` volumes persist across `docker compose down`; do not remove them to restart the application.
+Set `FLUX_BLOBSTORE=nats` in `.env` to exercise the local JetStream Object Store. Compose supplies the internal, non-TLS `nats://nats:4222` URL; leave the default `filesystem` value to test local files instead. Compose uses development credentials and one non-SSL database URL, with no DB or NATS host ports and loopback HTTP publication. Use separate credentials, TLS and HTTPS in production.
 
 ### Standalone
 
@@ -130,7 +129,7 @@ database or starting workers. PostgreSQL is required.
 | `FLUX_GITLAB_OAUTH_CLIENT_ID` | Browser OAuth client ID; required outside demo. |
 | `FLUX_GITLAB_OAUTH_CLIENT_SECRET` | Browser OAuth client secret; required outside demo. |
 | `FLUX_GITLAB_OAUTH_REDIRECT_URL` | Browser OAuth redirect URL; required outside demo. |
-| `FLUX_GITLAB_SERVICE_TOKEN` | Optional server-only `read_api` token for project/MR catalogs, observations and profiles. |
+| `FLUX_GITLAB_SERVICE_TOKEN` | Optional server-only `read_api` token for project/MR catalogs, observations, profiles and the admin user picker. |
 | `FLUX_GITLAB_REFRESH_INTERVAL` | Refresh interval: `1m` default; `30s`–`1h`, or `0` manual-only. |
 | `FLUX_GITLAB_WEBHOOK_SECRET` | Optional 32+ character secret; requires observations/refresh. |
 | `FLUX_API_TOKEN` | Optional machine-access token of at least 32 characters. |
@@ -174,7 +173,7 @@ owner credential. After migration, grant the runtime role only required DML:
 GRANT USAGE ON SCHEMA public TO flux_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO flux_runtime;
 GRANT UPDATE ON workspaces TO flux_runtime;
-GRANT UPDATE (name) ON memberships TO flux_runtime;
+GRANT INSERT, UPDATE, DELETE ON memberships TO flux_runtime;
 GRANT INSERT, UPDATE ON projects, sprints, work_items TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON board_columns TO flux_runtime;
 GRANT INSERT, DELETE ON item_labels, workspace_labels, dependencies, item_sprints TO flux_runtime;
@@ -189,7 +188,7 @@ GRANT DELETE ON item_attachments TO flux_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
 ```
 
-Do not grant runtime schema ownership/CREATE, membership role updates, or
+Do not grant runtime schema ownership/CREATE, or
 history/audit UPDATE/DELETE. Check PUBLIC privileges too. Audit and refresh-run
 records have no automatic purge; plan retention and backup policies.
 
@@ -357,6 +356,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | --- | --- |
 | `GET /projects`, `GET /board` | Project list and planning board. |
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
+| `GET /gitlab/users?search=TEXT` | Admin-only active GitLab user catalog for workspace membership management; results are connector-provided and capped. |
 | `GET /gitlab/merge-requests?project=ID&scope=recent\|assigned_to_me\|board_members&search=TEXT` | Search merge requests in one currently approved project; browser members/admins only. Numeric search targets an exact project-scoped IID; assignment scopes use workspace GitLab member IDs. |
 | `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
 | `GET /items/{item}/comments` | Read the item’s flat append-only comments, including author and creation time. |
@@ -398,7 +398,8 @@ Command kinds and payloads:
   destination column); `sprint.start` (`target`), `sprint.close` (`target`, reason,
   optional destination open sprint).
 - `label.save` (`name`, `color`, optional target), `label.delete` (`target`);
-  admin-only `member.name` (`target` subject, name).
+  admin-only `member.save` (`member:{subject,role,name}`, optional existing target),
+  `member.delete` (`target`), and legacy `member.name` (`target` subject, name).
 - Admin-only `integration.save` (`integration:{instance,projects}`);
   `link.attach` (`target` item, `link:{project,kind:"mr",number}`), `link.detach`
   (`target` item, destination link ID), `link.refresh` (`target` link ID).
@@ -432,7 +433,7 @@ also has a selectable palette color shown on cards. Columns have name, category
 Per workspace: 1,000 items including archived work, 200 sprints, 100 projects,
 12 columns for creation, 500 labels for creation, 200 registered GitLab links,
 100 approved GitLab projects and 200 pending proposals. Daily burn-down timelines
-support up to 366 days. GitLab MR picker responses and board-member assignee scopes
+support up to 366 days. GitLab user and MR picker responses and board-member assignee scopes
 are capped at 50 results/IDs per request. Each item permits 20
 labels, 50 dependencies and 20 external links. Titles are at most 240 bytes,
 descriptions 16,000, comments and rationale/goals 4,000. Each item permits 100 attachments

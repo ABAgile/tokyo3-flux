@@ -41,6 +41,10 @@ func (f *fakeRepository) GitLabProjects(_ context.Context, _, subject string) ([
 	f.subject = subject
 	return []GitLabProject{{ID: 42, Name: "Flux", PathWithNamespace: "team/flux"}}, f.err
 }
+func (f *fakeRepository) GitLabUsers(_ context.Context, _, subject, _ string) ([]GitLabUser, error) {
+	f.subject = subject
+	return []GitLabUser{{ID: 42, Username: "alex", Name: "Alex Example"}}, f.err
+}
 func (f *fakeRepository) GitLabMergeRequests(_ context.Context, _, subject string, project int64, _ string) ([]GitLabMergeRequest, error) {
 	f.subject = subject
 	return []GitLabMergeRequest{{ProjectID: project, IID: 7, Title: "Latest change", State: "opened"}}, f.err
@@ -138,6 +142,8 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		{name: "comment unknown field", method: "POST", path: "/items/a/comments", body: `{"body":"hello","author":"spoof"}`, cookie: true, token: csrf, status: 400},
 		{name: "burn down", method: "GET", path: "/burndown?sprint=s1&project=all&assignee=all", cookie: true, status: 200},
 		{name: "merge-request search", method: "GET", path: "/gitlab/merge-requests?project=42&search=latest", cookie: true, status: 200},
+		{name: "gitlab users", method: "GET", path: "/gitlab/users?search=alex", cookie: true, status: 200},
+		{name: "gitlab users bad search", method: "GET", path: "/gitlab/users?search=%0A", cookie: true, status: 400},
 		{name: "merge-request assigned", method: "GET", path: "/gitlab/merge-requests?project=42&scope=assigned_to_me", cookie: true, status: 200},
 		{name: "merge-request board members", method: "GET", path: "/gitlab/merge-requests?project=42&scope=board_members", cookie: true, status: 200},
 		{name: "merge-request bad scope", method: "GET", path: "/gitlab/merge-requests?project=42&scope=unsafe", cookie: true, status: 400},
@@ -182,7 +188,7 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	if repo.changes != 1 || repo.commentAdds != 1 {
 		t.Fatalf("unexpected writes reached repository: planning=%d comments=%d", repo.changes, repo.commentAdds)
 	}
-	for _, path := range []string{"/api/v2/session", "/api/v2/workspaces", "/api/v2/workspaces/w/projects", "/api/v2/workspaces/w/gitlab/projects"} {
+	for _, path := range []string{"/api/v2/session", "/api/v2/workspaces", "/api/v2/workspaces/w/projects", "/api/v2/workspaces/w/gitlab/projects", "/api/v2/workspaces/w/gitlab/users?search=alex"} {
 		r := httptest.NewRequest("GET", "http://localhost"+path, nil)
 		r.AddCookie(cookies[0])
 		w := httptest.NewRecorder()
@@ -219,6 +225,13 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	machine.ServeHTTP(machineMergeRequests, machineMergeRequest)
 	if machineMergeRequests.Code != http.StatusForbidden {
 		t.Fatalf("machine merge-request search got %d", machineMergeRequests.Code)
+	}
+	machineUsers := httptest.NewRecorder()
+	machineUserRequest := httptest.NewRequest("GET", root+"/gitlab/users?search=alex", nil)
+	machineUserRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	machine.ServeHTTP(machineUsers, machineUserRequest)
+	if machineUsers.Code != http.StatusForbidden {
+		t.Fatalf("machine user catalog got %d", machineUsers.Code)
 	}
 	machineComments := httptest.NewRecorder()
 	machineCommentRequest := httptest.NewRequest("GET", root+"/items/a/comments", nil)

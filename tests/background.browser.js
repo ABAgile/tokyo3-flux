@@ -11,7 +11,7 @@ async page => {
  const initial=await board();const item=initial.items[0];
  check(initial.refresh_seconds===30,'worker configuration missing');
  await nav('Projects');
- await page.getByRole('button',{name:'Review integration',exact:true}).click();
+ await page.getByRole('button',{name:'Edit integration',exact:true}).click();
  await page.getByRole('button',{name:'Edit Approved GitLab projects',exact:true}).click();
  await page.getByRole('checkbox',{name:'Flux · team/flux (#42)',exact:true}).check();
  await page.getByLabel('I approve this metadata visibility and any removals',{exact:true}).check();await save();

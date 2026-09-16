@@ -47,6 +47,12 @@ type Project struct {
 	Name              string
 	PathWithNamespace string
 }
+type User struct {
+	ID        int64
+	Username  string
+	Name      string
+	AvatarURL string
+}
 type MergeRequest struct {
 	IID       int64
 	Title     string
@@ -67,6 +73,8 @@ const (
 	projectPageSize          = 100
 	maxCatalogProjects       = 1000
 	maxCatalogPages          = maxCatalogProjects / projectPageSize
+	userPageSize             = 50
+	maxGitLabUsers           = 50
 	maxMergeRequestAssignees = 50
 	maxMergeRequestResults   = 50
 )
@@ -181,56 +189,192 @@ type profileResponse struct {
 }
 
 func (c *Client) fetchProfiles(ctx context.Context, ids []int64) (map[int64]MemberProfile, bool) {
+	// GitLab installations can silently ignore user_ids[] on the collection
+	// endpoint for non-admin read tokens. Resolve each ID through the dedicated
+	// endpoint so a returned first page cannot be mistaken for the requested
+	// member set.
+	workers := min(len(ids), 4)
+	if workers == 0 {
+		return map[int64]MemberProfile{}, true
+	}
+	jobs := make(chan int64)
+	results := make(chan profileResult, len(ids))
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for id := range jobs {
+				profile, found, ok := c.fetchProfile(ctx, id)
+				results <- profileResult{id: id, profile: profile, found: found, ok: ok}
+			}
+		}()
+	}
+	go func() {
+		for _, id := range ids {
+			jobs <- id
+		}
+		close(jobs)
+		group.Wait()
+		close(results)
+	}()
+
+	profiles := make(map[int64]MemberProfile, len(ids))
+	ok := true
+	for result := range results {
+		if !result.ok {
+			ok = false
+			continue
+		}
+		if result.found {
+			profiles[result.id] = result.profile
+		}
+	}
+	if !ok {
+		return nil, false
+	}
+	return profiles, true
+}
+
+type profileResult struct {
+	id      int64
+	profile MemberProfile
+	found   bool
+	ok      bool
+}
+
+func (c *Client) fetchProfile(ctx context.Context, id int64) (MemberProfile, bool, bool) {
 	select {
 	case c.slots <- struct{}{}:
 		defer func() { <-c.slots }()
 	default:
-		return nil, false
+		return MemberProfile{}, false, false
 	}
-	endpoint, err := url.Parse(c.instance + "/api/v4/users")
+	endpoint, err := url.Parse(c.instance + "/api/v4/users/" + strconv.FormatInt(id, 10))
 	if err != nil {
-		return nil, false
+		return MemberProfile{}, false, false
 	}
-	query := endpoint.Query()
-	for _, id := range ids {
-		query.Add("user_ids[]", strconv.FormatInt(id, 10))
-	}
-	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, false
+		return MemberProfile{}, false, false
 	}
 	request.Header.Set("PRIVATE-TOKEN", c.token)
 	request.Header.Set("Accept", "application/json")
 	response, err := c.http.Do(request)
 	if err != nil {
-		return nil, false
+		return MemberProfile{}, false, false
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return MemberProfile{}, false, true
+	}
 	if response.StatusCode != http.StatusOK {
-		return nil, false
+		return MemberProfile{}, false, false
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(body) > 1<<20 {
-		return nil, false
+		return MemberProfile{}, false, false
 	}
-	var data []profileResponse
-	if json.Unmarshal(body, &data) != nil {
-		return nil, false
+	var user profileResponse
+	if json.Unmarshal(body, &user) != nil || user.ID != id || user.ID <= 0 || user.ID > p.MaxExternalID || len(user.Username) > 120 || len(user.Name) > 120 || len(user.AvatarURL) > 2048 {
+		return MemberProfile{}, false, false
 	}
-	profiles := make(map[int64]MemberProfile, len(data))
+	name := bounded(strings.TrimSpace(user.Name), 120)
+	username := bounded(strings.TrimSpace(user.Username), 120)
+	if name == "" {
+		name = username
+	}
+	return MemberProfile{Name: name, Username: username, AvatarURL: c.safeAvatarURL(user.AvatarURL)}, true, true
+}
+
+// Users returns active GitLab users matching search. It is an admin-only
+// picker source; user records are never persisted as workspace state.
+func (c *Client) Users(ctx context.Context, search string) ([]User, error) {
+	if c == nil {
+		return nil, errors.New("GitLab connector is disabled")
+	}
+	if len(search) > 120 || strings.ContainsAny(search, "\r\n") {
+		return nil, errors.New("GitLab user search is invalid")
+	}
+	search = strings.TrimSpace(search)
+	if retry := c.retryRemaining(); retry > 0 {
+		return nil, fmt.Errorf("GitLab connector is rate limited for %s", retry)
+	}
+	select {
+	case c.slots <- struct{}{}:
+		defer func() { <-c.slots }()
+	default:
+		return nil, errors.New("GitLab connector is busy")
+	}
+	return c.fetchUsers(ctx, search)
+}
+
+type userResponse struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+	State     string `json:"state"`
+}
+
+func (c *Client) fetchUsers(ctx context.Context, search string) ([]User, error) {
+	endpoint, err := url.Parse(c.instance + "/api/v4/users")
+	if err != nil {
+		return nil, errors.New("invalid GitLab user catalog endpoint")
+	}
+	query := endpoint.Query()
+	query.Set("active", "true")
+	query.Set("per_page", strconv.Itoa(userPageSize))
+	query.Set("order_by", "name")
+	query.Set("sort", "asc")
+	if search != "" {
+		query.Set("search", search)
+	}
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, errors.New("create GitLab user catalog request")
+	}
+	request.Header.Set("PRIVATE-TOKEN", c.token)
+	request.Header.Set("Accept", "application/json")
+	response, err := c.http.Do(request)
+	if err != nil {
+		return nil, errors.New("request GitLab user catalog")
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		c.setRetryAfter(response.Header.Get("Retry-After"))
+		return nil, errors.New("GitLab user catalog is rate limited")
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitLab user catalog returned %s", response.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(body) > 1<<20 {
+		return nil, errors.New("GitLab user catalog response is invalid")
+	}
+	var data []userResponse
+	if err := json.Unmarshal(body, &data); err != nil || len(data) > maxGitLabUsers {
+		return nil, errors.New("GitLab user catalog response is invalid")
+	}
+	users := make([]User, 0, len(data))
+	seen := map[int64]struct{}{}
 	for _, user := range data {
-		if user.ID <= 0 || user.ID > p.MaxExternalID || len(user.Username) > 120 || len(user.Name) > 120 || len(user.AvatarURL) > 2048 {
+		if user.ID <= 0 || user.ID > p.MaxExternalID || len(user.Username) > 120 || len(user.Name) > 120 || len(user.AvatarURL) > 2048 || strings.TrimSpace(user.Username) == "" || (user.State != "" && user.State != "active") {
 			continue
 		}
-		name := bounded(strings.TrimSpace(user.Name), 120)
+		if _, ok := seen[user.ID]; ok {
+			continue
+		}
+		seen[user.ID] = struct{}{}
 		username := bounded(strings.TrimSpace(user.Username), 120)
+		name := bounded(strings.TrimSpace(user.Name), 120)
 		if name == "" {
 			name = username
 		}
-		profiles[user.ID] = MemberProfile{Name: name, Username: username, AvatarURL: c.safeAvatarURL(user.AvatarURL)}
+		users = append(users, User{ID: user.ID, Username: username, Name: name, AvatarURL: c.safeAvatarURL(user.AvatarURL)})
 	}
-	return profiles, true
+	return users, nil
 }
 
 type projectResponse struct {
@@ -663,7 +807,59 @@ func safeGravatarURL(u *url.URL) string {
 			return ""
 		}
 	}
-	return "https://" + strings.ToLower(u.Hostname()) + prefix + strings.ToLower(hash)
+	query, ok := safeGravatarQuery(u.RawQuery)
+	if !ok {
+		return ""
+	}
+	value := "https://" + strings.ToLower(u.Hostname()) + prefix + strings.ToLower(hash)
+	if query != "" {
+		value += "?" + query
+	}
+	return value
+}
+
+func safeGravatarQuery(raw string) (string, bool) {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "", false
+	}
+	out := url.Values{}
+	for key, entries := range values {
+		if len(entries) != 1 {
+			return "", false
+		}
+		value := entries[0]
+		switch key {
+		case "d":
+			switch strings.ToLower(value) {
+			case "404", "blank", "identicon", "mm", "monsterid", "mp", "retro", "robohash", "wavatar":
+				out.Set(key, strings.ToLower(value))
+			default:
+				return "", false
+			}
+		case "r":
+			switch strings.ToLower(value) {
+			case "g", "pg", "r", "x":
+				out.Set(key, strings.ToLower(value))
+			default:
+				return "", false
+			}
+		case "f":
+			if strings.ToLower(value) != "y" {
+				return "", false
+			}
+			out.Set(key, "y")
+		case "s", "size":
+			size, err := strconv.Atoi(value)
+			if err != nil || size < 1 || size > 2048 {
+				return "", false
+			}
+			out.Set(key, strconv.Itoa(size))
+		default:
+			return "", false
+		}
+	}
+	return out.Encode(), true
 }
 func gravatarHost(host string) bool {
 	switch strings.ToLower(strings.TrimSuffix(host, ".")) {

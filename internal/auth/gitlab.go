@@ -283,7 +283,59 @@ func safeGravatarURL(avatar *url.URL) string {
 			return ""
 		}
 	}
-	return "https://" + strings.ToLower(avatar.Hostname()) + prefix + strings.ToLower(hash)
+	query, ok := safeGravatarQuery(avatar.RawQuery)
+	if !ok {
+		return ""
+	}
+	value := "https://" + strings.ToLower(avatar.Hostname()) + prefix + strings.ToLower(hash)
+	if query != "" {
+		value += "?" + query
+	}
+	return value
+}
+
+func safeGravatarQuery(raw string) (string, bool) {
+	values, err := url.ParseQuery(raw)
+	if err != nil {
+		return "", false
+	}
+	out := url.Values{}
+	for key, entries := range values {
+		if len(entries) != 1 {
+			return "", false
+		}
+		value := entries[0]
+		switch key {
+		case "d":
+			switch strings.ToLower(value) {
+			case "404", "blank", "identicon", "mm", "monsterid", "mp", "retro", "robohash", "wavatar":
+				out.Set(key, strings.ToLower(value))
+			default:
+				return "", false
+			}
+		case "r":
+			switch strings.ToLower(value) {
+			case "g", "pg", "r", "x":
+				out.Set(key, strings.ToLower(value))
+			default:
+				return "", false
+			}
+		case "f":
+			if strings.ToLower(value) != "y" {
+				return "", false
+			}
+			out.Set(key, "y")
+		case "s", "size":
+			size, err := strconv.Atoi(value)
+			if err != nil || size < 1 || size > 2048 {
+				return "", false
+			}
+			out.Set(key, strconv.Itoa(size))
+		default:
+			return "", false
+		}
+	}
+	return out.Encode(), true
 }
 
 func gravatarHost(host string) bool {

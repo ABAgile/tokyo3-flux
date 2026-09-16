@@ -34,12 +34,34 @@ def main():
             if self.headers.get('PRIVATE-TOKEN') != 'fixture-read-secret':
                 self.send_error(403)
                 return
+            user_match = re.fullmatch(r'/api/v4/users/([1-9]\d*)', parsed.path)
+            if user_match:
+                user_id = int(user_match.group(1))
+                if user_id not in (7, 42, 43):
+                    self.send_error(404)
+                    return
+                user = dict(id=user_id, username=f'fixture-{user_id}', name=f'Fixture User {user_id}', avatar_url=f'http://127.0.0.1:{args.port}/uploads/avatar/{user_id}.png')
+                body = json.dumps(user).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if parsed.path == '/api/v4/users':
+                query = parse_qs(parsed.query)
                 users = []
-                for raw_id in parse_qs(parsed.query).get('user_ids[]', []):
-                    if re.fullmatch(r'[1-9]\d*', raw_id):
-                        user_id = int(raw_id)
-                        users.append(dict(id=user_id, username=f'fixture-{user_id}', name=f'Fixture User {user_id}', avatar_url=f'http://127.0.0.1:{args.port}/uploads/avatar/{user_id}.png'))
+                if 'user_ids[]' in query:
+                    for raw_id in query.get('user_ids[]', []):
+                        if re.fullmatch(r'[1-9]\d*', raw_id):
+                            user_id = int(raw_id)
+                            users.append(dict(id=user_id, username=f'fixture-{user_id}', name=f'Fixture User {user_id}', avatar_url=f'http://127.0.0.1:{args.port}/uploads/avatar/{user_id}.png'))
+                else:
+                    search = query.get('search', [''])[0].lower()
+                    for user_id in (7, 42, 43):
+                        user = dict(id=user_id, username=f'fixture-{user_id}', name=f'Fixture User {user_id}', avatar_url=f'http://127.0.0.1:{args.port}/uploads/avatar/{user_id}.png', state='active')
+                        if not search or search in user['username'].lower() or search in user['name'].lower():
+                            users.append(user)
                 body = json.dumps(users).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')

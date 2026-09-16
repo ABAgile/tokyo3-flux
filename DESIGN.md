@@ -89,9 +89,17 @@ a validated HTTPS Gravatar avatar URL.
   revision-checked commands; no optimistic rearrangement. Accent outlines mark drop targets, with
   top/bottom borders marking insertion. Filtering never changes project or sprint membership.
   Archived cards and viewers cannot drag.
-- Projects and GitLab integration share a Projects maintenance view; project editing uses its
-  existing dialog, while integration approval opens an inline form. Members have a dedicated Members
-  view with admin-only name editing. Workspace labels have a dedicated Labels maintenance view with
+- Projects and GitLab integration share a single-column Projects maintenance view, with GitLab
+  integration first. Its show state displays approved GitLab project chips; `Edit integration` keeps
+  the existing inline approval form. Project editing uses its existing dialog. Members have a dedicated Members
+  view where admins can search available GitLab users, add or remove members, change roles, and maintain
+  display names; adding a user defaults the workspace name to the GitLab profile name and shows the
+  stored GitLab subject as a read-only field. Listings show the name, optional GitLab username and a
+  color-coded role chip using only the role name, without the subject or permission description;
+  OAuth supplies the signed-in user’s profile, while other numeric members need the server-side read
+  connector; bootstrap, non-GitLab or unavailable identities may not have a GitLab username or avatar.
+  Non-admins can review the roster
+  only. Workspace labels have a dedicated Labels maintenance view with
   a compact responsive grid for create/rename/delete and color management. Deletion confirms removal
   from all cards, including archived work. Names may use an optional `scope::value` form such as
   `type::bug` or `priority::high`. Item label chips use their chosen palette colors and expose an x
@@ -156,8 +164,9 @@ a validated HTTPS Gravatar avatar URL.
   errors and save/conflict status are announced with live regions.
 - Never optimistic-save silently: disable submit during requests, retain form input on
   validation/conflict, offer explicit refresh, and show successful saves.
-- Viewer mode disables write actions. Archive view and history preserve completed work. Loading,
-  no-work, no-workspace, unavailable, and stale-revision states must be explicit. Render user
-  Markdown through the safe renderer; never execute raw HTML.
+- Viewer mode disables write actions. Archive view and history preserve completed work. History
+  entries identify the current workspace as `workspace name (id)` and render known member actors as
+  `name (subject)`. Loading, no-work, no-workspace, unavailable, and stale-revision states must be
+  explicit. Render user Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system. Verify both themes at 1440px,
   768px, and 390px and keyboard-only planning workflows.
