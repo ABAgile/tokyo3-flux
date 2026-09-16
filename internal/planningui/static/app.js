@@ -1,7 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let session, workspaces = [], board, root, view = 'board', busy = false, loading = false, planningChangeNotice = false;
-let attachmentTooltip, attachmentTooltipTarget;
+let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
+let selectedItemID = '', detailPane, detailState;
+let attachmentTooltip, attachmentTooltipTarget, observationTooltipTarget;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
 let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
@@ -52,7 +53,7 @@ function captureUIState() {
  const active = document.activeElement;
  const focus = active && active !== document.body && active !== document.documentElement ? {node:active, id:active.id, key:active.dataset?.focusKey} : undefined;
  const selection = active && 'selectionStart' in active && Number.isFinite(active.selectionStart) ? {start:active.selectionStart, end:active.selectionEnd, direction:active.selectionDirection} : undefined;
- const scrollNodes = [document.querySelector('main'), $('content'), $('editor'), $('editor-form')?.querySelector('#fields')].filter((node, index, values) => node && values.indexOf(node) === index);
+ const scrollNodes = [document.querySelector('main'), $('content'), detailPane, detailState?.form?.querySelector('.item-detail-fields'), $('editor'), $('editor-form')?.querySelector('#fields')].filter((node, index, values) => node && values.indexOf(node) === index);
  const details = [...document.querySelectorAll('details')].map((node, index) => ({node, key:node.dataset.stateKey || `details:${index}`, open:node.open}));
  return {focus, selection, scrollX:window.scrollX, scrollY:window.scrollY, scrollNodes:scrollNodes.map(node => ({node, left:node.scrollLeft, top:node.scrollTop})), details};
 }
@@ -89,7 +90,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? board?.items.find(value => value.id === e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? board?.items.find(value => value.id === e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
@@ -278,7 +279,7 @@ function render() {
  const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
  const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
  const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
- const titles = { board: 'Kanban board', sprints: 'Sprints', projects: 'Projects', labels: 'Labels', members: 'Members', archive: 'Archive', history: 'History' };
+ const titles = { board: presentation === 'list' ? 'Planning list' : 'Kanban board', sprints: 'Sprints', projects: 'Projects', labels: 'Labels', members: 'Members', archive: 'Archive', history: 'History' };
  const subtitles = { projects: 'Organize workspace projects and GitLab integration.', labels: 'Maintain labels used to classify work.', members: 'Manage workspace members, roles, and names.' };
  $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : subtitles[view] || 'Plan intentionally. Keep work moving.';
  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
@@ -320,6 +321,16 @@ function observationTooltip(link) {
  if (observationIsStale(link)) parts.push('Stale');
  parts.push(observationTiming(link)); return `${linkLabel(link)} · ${parts.join(' · ')}`;
 }
+function observationIconTarget(target) { return target instanceof Element ? target.closest('.card-observation-icon') : undefined; }
+function positionObservationTooltip(target) {
+ const tooltipStyle = getComputedStyle(target, '::after'); const width = Number.parseFloat(tooltipStyle.width) || 320; const height = Number.parseFloat(tooltipStyle.height) || 0;
+ const rootStyle = getComputedStyle(document.documentElement); const gap = Number.parseFloat(rootStyle.getPropertyValue('--s1')) || 4; const edge = Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16; const targetBox = target.getBoundingClientRect(); const maxLeft = Math.max(edge, innerWidth - width - edge); const left = Math.min(Math.max(edge, targetBox.left), maxLeft); const below = targetBox.bottom + gap; const top = below + height <= innerHeight - edge ? below : Math.max(edge, targetBox.top - gap - height);
+ target.style.setProperty('--observation-tooltip-left', `${Math.round(left)}px`); target.style.setProperty('--observation-tooltip-top', `${Math.round(top)}px`);
+}
+function repositionObservationTooltip() {
+ const target = observationTooltipTarget; if (!target?.isConnected || (!target.matches(':hover') && document.activeElement !== target)) { observationTooltipTarget = undefined; return; }
+ positionObservationTooltip(target);
+}
 function observationIconState(link) {
  if (link.refresh_pending || link.outcome === 'refreshing') return {symbol:'↻', status:'pending', stale:true};
  if (!link.observation) return {symbol:link.outcome && link.outcome !== 'unobserved' && link.outcome !== 'ok' ? '!' : '?', status:link.outcome && link.outcome !== 'unobserved' && link.outcome !== 'ok' ? 'warning' : 'unknown', stale:false};
@@ -333,7 +344,7 @@ function observationIconState(link) {
 }
 function cardObservationIcon(link, focusKey) {
  const state = observationIconState(link); const icon = el('span', state.symbol, 'card-observation-icon'); const tooltip = observationTooltip(link);
- icon.dataset.linkId = link.id; icon.dataset.observation = 'status-icon'; icon.dataset.status = state.status; icon.dataset.stale = String(state.stale); icon.dataset.focusKey = focusKey || `link:${link.id}:observation`; icon.dataset.tooltip = tooltip; icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', `Card observation: ${tooltip}`); icon.title = tooltip; icon.tabIndex = 0; return icon;
+ icon.dataset.linkId = link.id; icon.dataset.observation = 'status-icon'; icon.dataset.status = state.status; icon.dataset.stale = String(state.stale); icon.dataset.focusKey = focusKey || `link:${link.id}:observation`; icon.dataset.tooltip = tooltip; icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', `Card observation: ${tooltip}`); icon.tabIndex = 0; return icon;
 }
 function card(item, peers) {
  const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); const title = button(item.title, () => editItem(item), 'card-title'); title.dataset.focusKey = `item:${item.id}:title`; top.append(title);
@@ -367,7 +378,7 @@ function card(item, peers) {
 function linkIdentitySignature(link) { return JSON.stringify({id:link.id, project:link.project, kind:link.kind, number:link.number, items:[...(link.items || [])].sort()}); }
 function observationSignature(link) { return JSON.stringify({observation:link.observation || null, last_success:link.last_success || null, last_attempt:link.last_attempt || null, outcome:link.outcome || '', next_refresh:link.next_refresh || null, refresh_pending:!!link.refresh_pending}); }
 function patchObservationIcon(node, link) {
- const replacement = cardObservationIcon(link, node.dataset.focusKey); if (node.tagName === replacement.tagName) { syncAttributes(node, replacement); if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent; return node; }
+ const replacement = cardObservationIcon(link, node.dataset.focusKey); if (node.tagName === replacement.tagName) { syncAttributes(node, replacement); if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent; if (observationTooltipTarget === node) positionObservationTooltip(node); return node; }
  node.replaceWith(replacement); return replacement;
 }
 function patchObservationLink(node, link) {
@@ -539,6 +550,45 @@ function renderCardListContent(content, items) {
  if (!current || current.dataset.contentView !== next.dataset.contentView) { content.replaceChildren(next); return; }
  reconcileKeyedChildren(current, [...next.children], keyedNodeKey, (target, fresh) => fresh.dataset.item ? patchCard(target, fresh) : patchNode(target, fresh));
 }
+function listCell(label, className) { const cell = el('div', undefined, `list-cell ${className || ''}`.trim()); cell.dataset.label = label; cell.append(el('span', label, 'list-cell-label')); return cell; }
+function listTableHeader() { const header = el('div', undefined, 'list-table-head'); ['Title', 'Project', 'Assignee', 'Labels', 'Sprints', 'Links / Status'].forEach(label => header.append(el('span', label, 'list-table-heading'))); return header; }
+function listRow(item) {
+ const row = el('article', undefined, 'list-row'); row.dataset.item = item.id; row.dataset.focusKey = `item:${item.id}:list-row`; row.tabIndex = 0; row.setAttribute('aria-label', `Open work item ${item.title}`);
+ row.addEventListener('click', event => { if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary')) return; selectItem(item.id, row); });
+ row.addEventListener('keydown', event => { if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return; event.preventDefault(); selectItem(item.id, row); });
+ makeDraggable(row, 'card', item.id, item.title); row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
+ dropZone(row, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
+ const title = listCell('Title', 'list-cell-title'); const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title'); titleButton.dataset.focusKey = `item:${item.id}:list-title`; title.append(titleButton);
+ const project = listCell('Project', 'list-cell-project'); project.append(el('span', projectName(item.project_id), 'list-row-project'));
+ const status = listCell('Links / Status', 'list-cell-status'); const statusContent = el('div', undefined, 'list-row-status-content'); const state = el('div', undefined, 'list-row-status-badges'); if (blocked(item)) state.append(el('span', 'Blocked', 'badge warning')); if (item.archived) state.append(el('span', 'Archived', 'badge')); if (state.childElementCount) statusContent.append(state);
+ const links = board.links.filter(link => link.items.includes(item.id)); if (links.length) { const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links'); linkIndicator.setAttribute('aria-label', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`); const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); const observationLink = button('View observations', () => showLinks(item), 'card-link-details list-row-observation-link'); observationLink.dataset.focusKey = `item:${item.id}:list-observations`; observationLink.setAttribute('aria-label', `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`); observationLink.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, observationLink); linkIndicator.append(linkHead); links.forEach(link => { const line = el('span', undefined, 'list-row-link-line'); if (link.kind === 'mr') line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`)); line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`)); linkIndicator.append(line); }); statusContent.append(linkIndicator); }
+ const attachments = item.attachments || []; if (attachments.length) { const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments'); attachmentIndicator.setAttribute('aria-label', `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`); attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachments.length))); statusContent.append(attachmentIndicator); }
+ if (statusContent.childElementCount) status.append(statusContent); else status.append(el('span', '—', 'list-cell-empty'));
+ const assignee = listCell('Assignee', 'list-cell-assignee'); assignee.append(assigneeView(item.assignee));
+ const labels = listCell('Labels', 'list-cell-labels'); item.labels.forEach(label => labels.append(labelBadge(label))); if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
+ const sprints = listCell('Sprints', 'list-cell-sprints'); item.sprint_ids.forEach(id => sprints.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
+ row.append(title, project, assignee, labels, sprints, status);
+ row.classList.toggle('is-selected', selectedItemID === item.id); row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}`; return row;
+}
+function listSection(column, items) {
+ const section = el('details', undefined, 'list-section'); section.dataset.column = column.id; section.open = true; section.setAttribute('aria-label', column.name);
+ const peers = items.filter(item => item.column_id === column.id); const total = board.items.filter(item => !item.archived && item.column_id === column.id).length;
+ const head = el('summary', undefined, 'list-section-head'); head.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip, shown:peers.length, total}); const title = el('span', undefined, 'list-section-title'); title.append(el('h3', column.name)); const summary = el('span', `${peers.length} shown · ${column.wip ? `${total}/${column.wip} WIP` : 'No limit'}`, 'list-section-summary'); head.append(title, summary); makeDraggable(head, 'list', column.id, column.name);
+ dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: column.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === column.id) + 1]?.id || '' : column.id}), 'x');
+ const body = el('div', undefined, 'list-section-body'); body.append(...peers.map(item => listRow(item))); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; body.append(empty); } section.append(head, body); section.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip}); return section;
+}
+function patchListSection(target, next) {
+ const expanded = target.open; syncAttributes(target, next); const currentHead = target.querySelector(':scope > .list-section-head'); const nextHead = next.querySelector(':scope > .list-section-head'); if (currentHead && nextHead) patchNode(currentHead, nextHead);
+ const currentBody = target.querySelector(':scope > .list-section-body'); const nextBody = next.querySelector(':scope > .list-section-body'); if (currentBody && nextBody) { syncAttributes(currentBody, nextBody); reconcileKeyedChildren(currentBody, [...nextBody.children], keyedNodeKey, (current, fresh) => fresh.dataset.item ? patchNode(current, fresh) : patchNode(current, fresh)); }
+ target.open = expanded; return target;
+}
+function renderListPresentationContent(content, items) {
+ const current = content.firstElementChild; let layout, sections;
+ if (!current || current.dataset.contentView !== 'list:board') {
+  layout = el('div', undefined, 'list-detail-layout'); layout.dataset.contentView = 'list:board'; const list = el('div', undefined, 'planning-list'); list.dataset.contentView = 'planning-list'; sections = el('div', undefined, 'list-sections'); list.append(listTableHeader(), sections); const pane = createDetailPane(); layout.append(list, pane); content.replaceChildren(layout);
+ } else { layout = current; sections = layout.querySelector(':scope > .planning-list > .list-sections'); }
+ const nextSections = board.columns.map(column => listSection(column, items)); reconcileKeyedChildren(sections, nextSections, node => `column:${node.dataset.column}`, patchListSection); syncListSelection(); updateDetailPaneVisibility();
+}
 function renderSprintPage(content) {
  const head = el('div', undefined, 'section-head'); head.dataset.renderSignature = 'sprint-page-head'; head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary'));
  const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; board.sprints.forEach(sprint => list.append(sprintPanel(sprint))); if (!board.sprints.length) { const empty = el('p', 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty'); empty.dataset.empty = 'true'; list.append(empty); }
@@ -559,7 +609,7 @@ function renderContent() {
  if (view === 'sprints') { $('count').textContent = ''; renderSprintPage(content); return; }
  if (view === 'history') { content.replaceChildren(); renderHistory(content); return; }
  const items = filteredItems(); $('count').textContent = `${items.length} items · workspace revision ${board.workspace.revision}`;
- if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
+ if (view === 'board' && presentation === 'list') renderListPresentationContent(content, items); else if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
@@ -693,7 +743,7 @@ function helpPopover(text, name = 'Help') {
  function close(focus = false) { if (content.hidden) return; content.hidden = true; trigger.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); if (focus) trigger.focus(); }
  function open() { content.hidden = false; trigger.setAttribute('aria-expanded', 'true'); outside = e => { if (!wrapper.contains(e.target)) close(); }; document.addEventListener('click', outside); }
  function toggle() { if (content.hidden) open(); else close(true); }
- trigger.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(true); } }); wrapper.append(trigger, content); return wrapper;
+ trigger.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); } }); wrapper.append(trigger, content); return wrapper;
 }
 function multiSelect(parent, name, title, entries, selected = [], decorate, helpText, settings = {}) {
  const single = settings.single === true; const onChange = settings.onChange; const onFilter = settings.onFilter; const onOpen = settings.onOpen;
@@ -737,12 +787,12 @@ function multiSelect(parent, name, title, entries, selected = [], decorate, help
  function render() {
   values.replaceChildren(); const chosen = choices.filter(choice => choice.input.checked);
   if (!chosen.length) values.append(el('span', 'None selected', 'multi-select-empty'));
-  chosen.forEach(choice => { const chip = el('span', undefined, 'multi-select-chip'); chip.append(el('span', choice.text)); if (decorate) decorate(chip, choice.value, choice.text); const remove = button('×', () => { choice.input.checked = false; render(); if (onChange) onChange(currentValues()); }, 'multi-select-remove'); remove.dataset.multiRemove = 'true'; remove.hidden = !editing; remove.setAttribute('aria-label', `Remove ${choice.text}`); chip.append(remove); values.append(chip); });
+  chosen.forEach(choice => { const chip = el('span', undefined, 'multi-select-chip'); chip.append(el('span', choice.text)); if (decorate) decorate(chip, choice.value, choice.text); const remove = button('×', () => { choice.input.checked = false; render(); if (onChange) onChange(currentValues()); root.dispatchEvent(new Event('change', {bubbles:true})); }, 'multi-select-remove'); remove.dataset.multiRemove = 'true'; remove.hidden = !editing; remove.setAttribute('aria-label', `Remove ${choice.text}`); chip.append(remove); values.append(chip); });
   const query = filter.value.trim().toLowerCase(); let visible = 0;
   choices.forEach(choice => { const match = !query || choice.text.toLowerCase().includes(query); choice.option.hidden = !match; if (match) visible++; }); empty.hidden = visible > 0 || !status.hidden;
  }
  controls = {root, group, header, edit, filter, close, isOpen: () => !menu.hidden, setEntries, setStatus, select: selectValue, selected: currentValues};
- filter.addEventListener('input', () => { render(); invoke(onFilter, filter.value.trim()); }); menu.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); close(true); } });
+ filter.addEventListener('input', () => { render(); invoke(onFilter, filter.value.trim()); }); menu.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); } });
  root.append(values, menu); group.append(header, root); parent.append(group); replaceEntries(entries, selected); return controls;
 }
 function labelColorPicker(parent, value) {
@@ -840,8 +890,8 @@ async function rejectProposal(id) {
  openEditor('Reject planning proposal', fields => { field(fields, 'reason', 'Rejection rationale', '', 'textarea').required = true; }, data => ({kind:'proposal.reject',target:id,reason:data.get('reason').trim()}));
  $('save').textContent = 'Reject proposal';
 }
-function itemEditorDraft() {
- const data = new FormData($('editor-form'));
+function itemEditorDraft(form = $('editor-form')) {
+ const data = new FormData(form);
  return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), column_id:String(data.get('column_id') || ''), project_id:String(data.get('project_id') || ''), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids')};
 }
 function resolveGitLabMRURL(value, currentBoard, projects) {
@@ -858,31 +908,30 @@ function resolveGitLabMRURL(value, currentBoard, projects) {
  if (!project) throw new Error('That merge-request project is not in the approved GitLab project catalog.');
  return {project:Number(project.id), kind:'mr', number:Number(iid)};
 }
-async function attachItemGitLabLink(item, link) {
- const currentBoard = board, currentRoot = root; const draft = itemEditorDraft(); const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); closeEditor();
+async function attachItemGitLabLink(item, link, context) {
+ const currentBoard = board, currentRoot = root; const form = context?.form || ($('editor').open ? $('editor-form') : undefined); const draft = form ? itemEditorDraft(form) : undefined; const mode = context?.mode || ($('editor').open ? 'modal' : view === 'board' && presentation === 'list' ? 'detail' : 'modal'); const origin = context?.origin; const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); if (mode === 'modal') closeEditor();
  try { await change({revision:currentBoard.workspace.revision, kind:'link.attach', target:item.id, link}); }
- catch (error) { if (root === currentRoot && board) { const latest = board.items.find(value => value.id === item.id); if (latest) editItem(latest, draft); notice(error.message, true); } return; }
+ catch (error) { if (root === currentRoot && board) { const latest = board.items.find(value => value.id === item.id); if (latest && draft) reopenItemEditor(latest, draft, mode, origin); notice(error.message, true); } return; }
  if (root !== currentRoot || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) return;
- const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); editItem(latest, {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]});
+ const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); reopenItemEditor(latest, draft ? {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]} : undefined, mode, origin);
 }
-function inlineGitLabPaste(parent, item, readOnly) {
+function inlineGitLabPaste(parent, item, readOnly, context) {
  const currentBoard = board, currentRoot = root; const row = el('div', undefined, 'gitlab-paste-row'); const input = el('input'); input.type = 'text'; input.inputMode = 'url'; input.placeholder = 'Paste GitLab MR URL, then press Enter or click Get'; input.maxLength = 2048; input.setAttribute('aria-label', 'GitLab MR URL'); const get = button('Get', resolve, 'primary'); get.dataset.gitlabWrite = 'true'; get.disabled = readOnly || !gitLabWritable(); row.append(input, get);
  const status = el('p', '', 'help'); status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; };
  let pending = false;
  async function resolve() {
   if (pending || get.disabled) return; const raw = input.value.trim(); if (!raw) { setStatus('Paste a GitLab merge-request URL first.', true); input.focus(); return; }
   pending = true; get.disabled = true; setStatus('Resolving GitLab merge request…');
-  try { const projects = await loadGitLabProjects(currentRoot); if (!row.isConnected || board !== currentBoard || root !== currentRoot) return; const link = resolveGitLabMRURL(raw, currentBoard, projects); await attachItemGitLabLink(item, link); }
+  try { const projects = await loadGitLabProjects(currentRoot); if (!row.isConnected || board !== currentBoard || root !== currentRoot) return; const link = resolveGitLabMRURL(raw, currentBoard, projects); await attachItemGitLabLink(item, link, context); }
   catch (error) { if (row.isConnected) { setStatus(error.message, true); input.focus(); } }
   finally { pending = false; if (row.isConnected) get.disabled = !gitLabWritable(); }
  }
  input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); resolve(); } }); parent.append(row, status);
 }
-async function addGitLabLink(item) {
- const currentBoard = board, currentRoot = root;
- const draft = item && $('editor').open ? itemEditorDraft() : undefined;
- closeEditor(); let projects = [], catalogError = '';
- const returnToCard = () => { if (root !== currentRoot || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) return; const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); const returnDraft = draft ? {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]} : undefined; editItem(latest, returnDraft); };
+async function addGitLabLink(item, context) {
+ const currentBoard = board, currentRoot = root; const form = context?.form || ($('editor').open ? $('editor-form') : undefined); const draft = form ? itemEditorDraft(form) : undefined; const mode = context?.mode || ($('editor').open ? 'modal' : view === 'board' && presentation === 'list' ? 'detail' : 'modal'); const origin = context?.origin;
+ if (mode === 'modal') closeEditor(); let projects = [], catalogError = '';
+ const returnToCard = () => { if (root !== currentRoot || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) return; const previous = new Set(currentBoard.links.filter(value => value.items.includes(item.id)).map(value => value.id)); const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); const returnDraft = draft ? {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]} : undefined; reopenItemEditor(latest, returnDraft, mode, origin); };
  try { projects = await loadGitLabProjects(currentRoot); } catch (e) { catalogError = e.message; }
  if (board !== currentBoard || root !== currentRoot) return;
  openEditor('Add link', fields => {
@@ -970,7 +1019,7 @@ function renderItemComments(fields, item) {
   commentBusy = true; commentLoad++; addButton.disabled = true; setStatus('Adding comment…');
   try {
    await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf,'Idempotency-Key':requestKey()}, body:JSON.stringify({body})});
-   if (board !== currentBoard || root !== currentRoot || !section.isConnected) return; textarea.value = ''; refreshCommentPreview(); await loadComments();
+   if (board !== currentBoard || root !== currentRoot || !section.isConnected) return; textarea.value = ''; refreshCommentPreview(); textarea.dispatchEvent(new Event('input', {bubbles:true})); await loadComments();
   } catch (error) { if (board === currentBoard && root === currentRoot && section.isConnected) setStatus(error.message, true); }
   finally { commentBusy = false; if (addButton && section.isConnected) { addButton.disabled = !canComment(); renderControls(); } }
  }
@@ -1041,47 +1090,78 @@ function renderItemAttachments(fields, item, readOnly) {
  } else heading.append(headingTitle);
  section.append(heading, status, list); fields.append(section); renderList();
 }
-function editItem(item, draft) {
- const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs;
- item ||= { title: '', description: '', column_id: board.columns[0].id, project_id: ['all', 'none'].includes($('project').value) ? '' : $('project').value, sprint_ids: [], assignee: '', labels: [], dependencies: [] };
- openEditor(existing ? 'Work item' : 'Create work item', fields => {
-  if (existing) $('editor-title').append(' ', helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'));
-  const layout = el('div', undefined, 'item-editor-layout'); const primary = el('div', undefined, 'item-editor-primary'); const controls = el('div', undefined, 'item-editor-controls'); layout.append(primary, controls); fields.append(layout);
-  const title = field(primary, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240;
-  markdownEditor(primary, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
-  multiSelect(controls, 'assignee', 'Assignee', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], [draft?.assignee ?? item.assignee], undefined, undefined, {single:true});
-  multiSelect(controls, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), draft?.labels ?? item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.');
-  multiSelect(controls, 'project_id', 'Project', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])], [draft?.project_id ?? item.project_id], undefined, undefined, {single:true});
-  multiSelect(controls, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), draft?.sprint_ids ?? item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
-  const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
-  if (closed.length) controls.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
-  multiSelect(controls, 'dependencies', 'Depends on', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title]), draft?.dependencies ?? item.dependencies);
-  if (existing) {
-   const itemLinks = board.links.filter(link => link.items.includes(item.id));
-   const linkPicker = multiSelect(controls, 'link_ids', 'GitLab links', board.links.map(link => [link.id, linkDisplayName(link)]), draft?.link_ids ?? itemLinks.map(link => link.id), undefined, 'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.');
-   if (!readOnly) inlineGitLabPaste(linkPicker.group, item, readOnly);
-   const linkActions = el('div', undefined, 'actions');
-   if (!readOnly) { const add = writeButton('Add link', () => addGitLabLink(item)); add.dataset.gitlabWrite = 'true'; add.disabled = !gitLabWritable(); linkActions.append(add); }
-   else if (itemLinks.length) linkActions.append(button('View observations', () => { $('editor').close(); showLinks(item); }));
-   if (linkActions.childElementCount) controls.append(linkActions);
-  }
-  controls.append(el('hr', undefined, 'item-editor-divider'));
-  field(controls, 'column_id', 'Move to', draft?.column_id ?? item.column_id, 'text', board.columns.map(c => [c.id, c.name]));
-  if (existing && !item.archived && !readOnly) {
-   const archive = writeButton('Archive item', () => archiveItem(item), 'danger'); archive.dataset.itemFooter = 'true'; archive.dataset.write = 'true'; archive.classList.add('archive-footer'); $('editor-form').querySelector('.dialog-foot').insertBefore(archive, $('cancel'));
-  }
-  if (existing) { renderItemAttachments(primary, item, readOnly); renderItemComments(primary, item); }
- }, data => {
-  if (existing) desiredLinkIDs = data.getAll('link_ids');
-  return { kind: existing ? 'item.update' : 'item.create', target: item.id || '', item: { ...item, title: data.get('title').trim(), description: data.get('description'), column_id: data.get('column_id'), project_id: data.get('project_id'), sprint_ids: data.getAll('sprint_ids'), assignee: data.get('assignee'), labels: data.getAll('labels'), dependencies: data.getAll('dependencies') } };
- }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
+function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
+ if (item.id && titleHost) titleHost.append(' ', helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'));
+ const layout = el('div', undefined, 'item-editor-layout'); const primary = el('div', undefined, 'item-editor-primary'); const controls = el('div', undefined, 'item-editor-controls'); layout.append(primary, controls); fields.append(layout);
+ const title = field(primary, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240;
+ markdownEditor(primary, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
+ multiSelect(controls, 'assignee', 'Assignee', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], [draft?.assignee ?? item.assignee], undefined, undefined, {single:true});
+ multiSelect(controls, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), draft?.labels ?? item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.');
+ multiSelect(controls, 'project_id', 'Project', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])], [draft?.project_id ?? item.project_id], undefined, undefined, {single:true});
+ multiSelect(controls, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), draft?.sprint_ids ?? item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
+ const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
+ if (closed.length) controls.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
+ multiSelect(controls, 'dependencies', 'Depends on', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title]), draft?.dependencies ?? item.dependencies);
+ if (item.id) {
+  const itemLinks = board.links.filter(link => link.items.includes(item.id));
+  const linkPicker = multiSelect(controls, 'link_ids', 'GitLab links', board.links.map(link => [link.id, linkDisplayName(link)]), draft?.link_ids ?? itemLinks.map(link => link.id), undefined, 'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.');
+  if (!readOnly) inlineGitLabPaste(linkPicker.group, item, readOnly, context);
+  const linkActions = el('div', undefined, 'actions');
+  if (!readOnly) { const add = writeButton('Add link', () => addGitLabLink(item, context)); add.dataset.gitlabWrite = 'true'; add.disabled = !gitLabWritable(); linkActions.append(add); }
+  else if (itemLinks.length) linkActions.append(button('View observations', () => { if (context.mode === 'modal') $('editor').close(); showLinks(item); }));
+  if (linkActions.childElementCount) controls.append(linkActions);
+ }
+ controls.append(el('hr', undefined, 'item-editor-divider'));
+ field(controls, 'column_id', 'Move to', draft?.column_id ?? item.column_id, 'text', board.columns.map(c => [c.id, c.name]));
+ if (item.id && !item.archived && !readOnly) {
+  const archive = writeButton('Archive item', () => archiveItem(item, context), 'danger'); archive.dataset.itemFooter = 'true'; archive.dataset.write = 'true'; archive.classList.add('archive-footer'); const footer = context.footer || context.form.querySelector('.dialog-foot'); const cancel = footer?.querySelector('#cancel,.detail-cancel'); if (footer) footer.insertBefore(archive, cancel || footer.lastElementChild);
+ }
+ if (item.id) { renderItemAttachments(primary, item, readOnly); renderItemComments(primary, item); }
 }
-function archiveItem(item) {
- $('editor').close();
+function createDetailPane() { const pane = el('aside', undefined, 'item-detail-pane'); pane.hidden = true; pane.setAttribute('aria-label', 'Selected work item'); detailPane = pane; return pane; }
+function syncListSelection() { document.querySelectorAll('.list-row').forEach(row => { const selected = row.dataset.item === selectedItemID; row.classList.toggle('is-selected', selected); if (selected) row.setAttribute('aria-current', 'true'); else row.removeAttribute('aria-current'); }); }
+function updateDetailPaneVisibility() {
+ if (!detailPane) return; const open = !!detailState && detailState.pane === detailPane && !!selectedItemID && detailState.form?.isConnected; detailPane.hidden = !open; detailPane.parentElement?.classList.toggle('has-detail', open); syncListSelection();
+}
+function detailDraftIsDirty(state) {
+ if (!state?.form?.isConnected) return false; let current; try { current = itemEditorDraft(state.form); } catch { return true; }
+ return JSON.stringify(current) !== JSON.stringify(state.initialDraft) || [...state.form.querySelectorAll('[data-comment-control]')].some(input => String(input.value || '').trim());
+}
+function detailDiscardAllowed() { return !detailState?.dirty || window.confirm(`Discard unsaved changes to “${detailState.item?.title || 'this item'}”?`); }
+function closeDetail({force = false, focus = true} = {}) {
+ if (busy) return false; if (!detailState) { selectedItemID = ''; detailPane?.removeAttribute('data-item'); updateDetailPaneVisibility(); return true; }
+ if (!force && !detailDiscardAllowed()) return false; const state = detailState; detailState = undefined; selectedItemID = ''; if (state.pane) { state.pane.hidden = true; state.pane.replaceChildren(); state.pane.parentElement?.classList.remove('has-detail'); } syncListSelection(); if (focus) { const target = state.origin?.isConnected ? state.origin : [...document.querySelectorAll('.list-row')].find(row => row.dataset.item === state.itemID); if (target) target.focus({preventScroll:true}); } return true;
+}
+function selectItem(itemID, origin) {
+ if (!board || view !== 'board' || presentation !== 'list') return false; if (detailState?.itemID === itemID) { if (origin) detailState.origin = origin; detailState.form?.querySelector('[name="title"]')?.focus({preventScroll:true}); return true; }
+ if (!closeDetail({focus:false})) return false; const item = board.items.find(value => value.id === itemID); if (!item) return false; selectedItemID = itemID; openItemDetail(item, undefined, origin); return true;
+}
+function updateDetailHeader(item) { if (!detailState?.form || !item) return; detailState.item = item; const title = detailState.form.querySelector('.item-detail-title'); if (title?.firstChild) title.firstChild.nodeValue = item.title; const help = title?.querySelector('.help-popover-content'); if (help) help.textContent = `Card ID: ${item.id}\nRevision: ${item.revision}`; }
+function openItemDetail(item, draft, origin) {
+ if (!detailPane) return; const readOnly = board.role === 'viewer' || item.archived; const form = el('form', undefined, 'item-detail-form'); const heading = el('div', undefined, 'item-detail-head'); const title = el('h2', item.title, 'item-detail-title'); const actions = el('div', undefined, 'item-detail-head-actions'); const close = button('×', () => closeDetail(), 'item-detail-close'); close.setAttribute('aria-label', 'Close item details'); actions.append(close); heading.append(title, actions);
+ const fields = el('div', undefined, 'item-detail-fields'); const error = el('p', '', 'item-detail-error'); error.hidden = true; error.setAttribute('role', 'alert'); const footer = el('div', undefined, 'item-detail-footer'); const cancel = button('Cancel', () => closeDetail(), 'detail-cancel'); const save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.dataset.write = 'true'; footer.append(cancel, save); form.append(heading, fields, error, footer); detailPane.replaceChildren(form); detailPane.hidden = false;
+ const context = {mode:'detail', form, footer, origin}; buildItemEditor(fields, item, draft, readOnly, context, title); if (readOnly) { fields.querySelectorAll('input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])').forEach(input => { input.disabled = true; }); fields.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach(input => { input.disabled = true; }); } save.hidden = readOnly;
+ const revision = board.workspace.revision; let pending, key; const state = detailState = {itemID:item.id, item, form, pane:detailPane, origin, dirty:false, initialDraft:null}; const updateDirty = () => { if (detailState === state) state.dirty = detailDraftIsDirty(state); }; form.addEventListener('input', updateDirty); form.addEventListener('change', updateDirty); state.initialDraft = itemEditorDraft(form); updateDetailPaneVisibility();
+ form.addEventListener('submit', async event => {
+  event.preventDefault(); if (readOnly || busy || detailState !== state) return; error.textContent = ''; error.hidden = true; save.disabled = true; cancel.disabled = true; close.disabled = true; const data = new FormData(form); const command = {revision, ...(() => { const desired = data.getAll('link_ids'); state.desiredLinkIDs = desired; return {kind:'item.update', target:item.id, item:{...item, title:String(data.get('title') || '').trim(), description:data.get('description'), column_id:data.get('column_id'), project_id:data.get('project_id'), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; })()}; const serialized = JSON.stringify(command); if (pending !== serialized) { key = requestKey(); pending = serialized; }
+  try { await change(command, key); await reconcileItemLinks(item.id, state.desiredLinkIDs || []); if (detailState !== state || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) { closeDetail({force:true}); return; } state.item = latest; state.initialDraft = itemEditorDraft(form); state.dirty = false; updateDetailHeader(latest); notice('Changes saved.'); }
+  catch (err) { if (detailState === state) { state.dirty = true; error.textContent = `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`; error.hidden = false; } }
+  finally { if (detailState === state && form.isConnected) { save.disabled = false; cancel.disabled = false; close.disabled = false; renderControls(); } }
+ });
+ const titleInput = form.querySelector('[name="title"]'); if (titleInput) titleInput.focus({preventScroll:true});
+}
+function reopenItemEditor(item, draft, mode, origin) { if (mode === 'detail') openItemDetail(item, draft, origin); else editItemModal(item, draft); }
+function editItemModal(item, draft) {
+ const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs; item ||= {title:'', description:'', column_id:board.columns[0].id, project_id:['all','none'].includes($('project').value) ? '' : $('project').value, sprint_ids:[], assignee:'', labels:[], dependencies:[]}; const context = {mode:'modal', form:$('editor-form')};
+ openEditor(existing ? 'Work item' : 'Create work item', fields => { context.form = $('editor-form'); buildItemEditor(fields, item, draft, readOnly, context, $('editor-title')); }, data => { if (existing) desiredLinkIDs = data.getAll('link_ids'); return {kind:existing ? 'item.update' : 'item.create', target:item.id || '', item:{...item, title:data.get('title').trim(), description:data.get('description'), column_id:data.get('column_id'), project_id:data.get('project_id'), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
+}
+function editItem(item, draft) { if (item && view === 'board' && presentation === 'list') return selectItem(item.id); return editItemModal(item, draft); }
+function archiveItem(item, context) {
+ if (context?.mode === 'modal') closeEditor();
  openEditor('Archive work item', fields => {
   fields.append(el('p', `Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`));
   field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
- }, data => ({ kind: 'item.archive', target: item.id, reason: data.get('reason') }));
+ }, data => ({kind:'item.archive', target:item.id, reason:data.get('reason')}), false, context?.mode === 'detail' ? () => closeDetail({force:true, focus:true}) : undefined);
  $('save').textContent = 'Archive item';
 }
 function editSprint(sprint) {
@@ -1399,20 +1479,29 @@ function setupBoard() {
 }
 $('editor').addEventListener('cancel', e => { e.preventDefault(); if (e.target === $('editor') && !busy) closeEditor(); });
 $('editor').addEventListener('click', e => { if (!busy && e.target === $('editor')) closeEditor(); });
+document.addEventListener('pointerover', e => { const target = observationIconTarget(e.target); if (target && !(e.relatedTarget instanceof Node && target.contains(e.relatedTarget))) { observationTooltipTarget = target; positionObservationTooltip(target); } });
+document.addEventListener('pointerout', e => { const target = observationIconTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover') || target.contains(document.activeElement)) return; if (observationTooltipTarget === target) observationTooltipTarget = undefined; });
+document.addEventListener('focusin', e => { const target = observationIconTarget(e.target); if (target) { observationTooltipTarget = target; positionObservationTooltip(target); } });
+document.addEventListener('focusout', e => { const target = observationIconTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover')) return; if (observationTooltipTarget === target) observationTooltipTarget = undefined; });
+window.addEventListener('resize', repositionObservationTooltip); document.addEventListener('scroll', repositionObservationTooltip, true);
 document.addEventListener('pointerover', e => { const target = attachmentLinkTarget(e.target); if (target && !(e.relatedTarget instanceof Node && target.contains(e.relatedTarget))) showAttachmentTooltip(target, e.target); });
 document.addEventListener('pointerout', e => { const target = attachmentLinkTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover') || target.contains(document.activeElement)) return; hideAttachmentTooltip(target); });
 document.addEventListener('focusin', e => { const target = attachmentLinkTarget(e.target); if (target) showAttachmentTooltip(target, e.target); });
 document.addEventListener('focusout', e => { const target = attachmentLinkTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover')) return; hideAttachmentTooltip(target); });
 window.addEventListener('resize', repositionAttachmentTooltip); document.addEventListener('scroll', repositionAttachmentTooltip, true);
 document.addEventListener('pointerdown', e => { document.querySelectorAll('.attachment-actions[open],.card-attachments[open]').forEach(menu => { if (!menu.contains(e.target)) menu.open = false; }); const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
+function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; render(); }
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
 $('proposals').onclick = () => showProposals();
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
+$('presentation-board').onclick = () => setPresentation('board'); $('presentation-list').onclick = () => setPresentation('list');
 $('scope').onchange = render;
 $('label').onchange = $('search').oninput = renderContent;
 $('project').onchange = $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
-document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
+document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); });
+document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
+ if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return; }
  integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
  clearPlanningChangeNotice(); board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;

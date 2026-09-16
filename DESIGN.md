@@ -36,10 +36,24 @@ a validated HTTPS Gravatar avatar URL.
   page-level horizontal scroll.
 - One shared board belongs to each workspace; projects classify items optionally. Project, assignee
   and label filters sit beside Scope in the planning toolbar (including unassigned and named
-  assignees), never in the sidebar and never as a planning boundary. Scope lists Active sprints,
-  Backlog, and All open work in that order. WIP counts the whole workspace column, regardless of
-  filtering. Project management uses the existing dialog/controls, not a new
-  component variant.
+  assignees), never in the sidebar and never as a planning boundary. The planning toolbar also
+  offers a Board/List presentation toggle; Kanban is the default, while List groups the same
+  filtered work by the ordered board columns without changing navigation or scope semantics. Scope
+  lists Active sprints, Backlog, and All open work in that order. WIP counts the whole workspace
+  column, regardless of filtering. List sections remain visible when empty and can be expanded,
+  collapsed, and used as drop targets. Desktop List rows use an Asana-like table grid with separate
+  Title, Project, Assignee, Labels, Sprints, and Links / Status columns plus a shared header;
+  descriptions are not shown and the title cell is title-only. Links / Status owns blocked/archived
+  state, a Board-aligned `GitLab links · count` header with View observations beside the label
+  and left-aligned when wrapped, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width
+  border. Observation status popovers are positioned against the viewport so list containers
+  do not clip the last row. The Project cell shows only the project. When the detail pane is open,
+  List hides the Sprints and Links / Status columns and expands the desktop detail track to
+  `minmax(420px, 520px)` so the selected editor has more room. At 480px and below, cells become
+  labeled stacked fields without page-level horizontal scrolling. With no selected item, desktop
+  List uses a `minmax(0, 1fr) minmax(360px, 440px)` work-list/detail-pane split; below the desktop
+  breakpoint, the detail pane becomes a full-width stacked section. Project management uses the
+  existing dialog/controls, not a new component variant.
 - Cards show project (or No project) and all open sprint memberships as badges; project and assignee
   share a metadata row, with the assignee aligned right. Cards show attachments in a compact Asana-like
   collapsed file dropdown at the bottom of the card, separated by a divider and using a fixed-size
@@ -81,8 +95,9 @@ a validated HTTPS Gravatar avatar URL.
   sprints are allowed. Closing one does not remove assignments to other open sprints. The footer
   keeps Save, Archive and Cancel visible while item fields scroll.
 - Cards use the item title as a header, followed by project, assignee, labels, and blocked state.
-  Descriptions remain available in the editor but are not shown on cards. The native item ID is not
-  displayed on cards. Cards and board columns use a restrained accent-border hover cue. Card
+  Descriptions remain available in the editor but are not shown on Kanban cards or List rows. The
+  native item ID is not displayed on cards. Cards and board columns use a restrained accent-border
+  hover cue. Card
   ordering uses drag-and-drop; there are no separate up/down controls. The item editor’s `Move to`
   select remains the keyboard movement mechanism. Cards are draggable from their body
   context, and columns are draggable from their headers, moving cards before/after cards or to a
@@ -112,8 +127,9 @@ a validated HTTPS Gravatar avatar URL.
   an explicitly unnamed member identifier. Workspace admins can maintain missing names via Members;
   subjects remain the stored identity.
 - Cards group associated merge requests in a labeled GitLab links block: each appears once as a
-  compact direct GitLab link (`MR !IID`) with a compact non-interactive status icon whose hover/focus
-  tooltip and accessible label summarize the cached observation, plus a `View observations` action in
+  compact direct GitLab link (`MR !IID`) with a compact non-interactive status icon whose single
+  custom hover/focus tooltip and accessible label summarize the cached observation (without a native
+  title tooltip), plus a `View observations` action in
   the block header. Each MR observation includes its corresponding latest
   head pipeline status. The observations dialog exposes direct MR and pipeline links; the item
   editor manages associations with a dropdown multi-select, a paste-URL field and a button for
