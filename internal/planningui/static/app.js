@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let session, workspaces = [], board, root, view = 'board', busy = false, loading = false;
+let session, workspaces = [], board, root, view = 'board', busy = false, loading = false, planningChangeNotice = false;
+let attachmentTooltip, attachmentTooltipTarget;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
 let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
@@ -28,15 +29,56 @@ function canComment() { return board && (board.role === 'member' || board.role =
 function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable() || integrationFormOpen; return b; }
 function adminButton(text, fn, className) { const b = button(text, fn, className); b.dataset.adminWrite = 'true'; b.disabled = !adminWritable() || integrationFormOpen; return b; }
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
+function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') { const banner = $('planning-change'); if (planningChangeNotice && !banner.hidden && $('planning-change-text').textContent === text) return; planningChangeNotice = true; $('planning-change-text').textContent = text; banner.hidden = false; }
+function clearPlanningChangeNotice() { planningChangeNotice = false; $('planning-change').hidden = true; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
+function mergeEntities(previous = [], next = [], key) {
+ const existing = new Map(previous.map(value => [key(value), value]));
+ return next.map(value => { const current = existing.get(key(value)); if (!current) return value; Object.keys(current).forEach(name => { if (!(name in value)) delete current[name]; }); Object.assign(current, value); return current; });
+}
+function mergeBoardData(previous, next) {
+ if (!previous) return next;
+ return {...next,
+  projects: mergeEntities(previous.projects, next.projects, value => value.id),
+  labels: mergeEntities(previous.labels, next.labels, value => value.name),
+  columns: mergeEntities(previous.columns, next.columns, value => value.id),
+  items: mergeEntities(previous.items, next.items, value => value.id),
+  sprints: mergeEntities(previous.sprints, next.sprints, value => value.id),
+  members: mergeEntities(previous.members, next.members, value => value.subject),
+  links: mergeEntities(previous.links, next.links, value => value.id),
+ };
+}
+function captureUIState() {
+ const active = document.activeElement;
+ const focus = active && active !== document.body && active !== document.documentElement ? {node:active, id:active.id, key:active.dataset?.focusKey} : undefined;
+ const selection = active && 'selectionStart' in active && Number.isFinite(active.selectionStart) ? {start:active.selectionStart, end:active.selectionEnd, direction:active.selectionDirection} : undefined;
+ const scrollNodes = [document.querySelector('main'), $('content'), $('editor'), $('editor-form')?.querySelector('#fields')].filter((node, index, values) => node && values.indexOf(node) === index);
+ const details = [...document.querySelectorAll('details')].map((node, index) => ({node, key:node.dataset.stateKey || `details:${index}`, open:node.open}));
+ return {focus, selection, scrollX:window.scrollX, scrollY:window.scrollY, scrollNodes:scrollNodes.map(node => ({node, left:node.scrollLeft, top:node.scrollTop})), details};
+}
+function restoreUIState(state) {
+ if (!state) return;
+ state.scrollNodes.forEach(({node, left, top}) => { if (node?.isConnected) { node.scrollLeft = left; node.scrollTop = top; } });
+ state.details.forEach(({node, key, open}) => { const target = node?.isConnected ? node : [...document.querySelectorAll('details')].find(candidate => candidate.dataset.stateKey === key); if (target) target.open = open; });
+ window.scrollTo(state.scrollX, state.scrollY);
+ let target = state.focus?.node?.isConnected ? state.focus.node : undefined;
+ if (!target && state.focus?.id) target = $(state.focus.id);
+ if (!target && state.focus?.key) target = [...document.querySelectorAll('[data-focus-key]')].find(candidate => candidate.dataset.focusKey === state.focus.key);
+ if (!target) return;
+ try { target.focus({preventScroll:true}); } catch { target.focus(); }
+ if (state.selection && 'selectionStart' in target) { try { target.setSelectionRange(state.selection.start, state.selection.end, state.selection.direction); } catch {} }
+}
 async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); if (r.status === 204) return null; let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
 function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownRequests.clear(); burndownErrors.clear(); }
 async function refresh() {
  if (!root || busy || integrationFormOpen) return;
- const generation = ++loadGeneration; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
- try { const next = await api(root + '/board'); if (generation !== loadGeneration) return false; board = next; resetBurndown(); history = []; historyBefore = 0; if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
- catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
- finally { if (generation === loadGeneration) { loading = false; render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
+ const generation = ++loadGeneration; let uiState; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
+ try {
+  const next = await api(root + '/board'); if (generation !== loadGeneration) return false;
+  uiState = captureUIState(); board = mergeBoardData(board, next); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0;
+  if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true;
+ } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
+ finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
 }
 function requestKey() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''); }
 async function change(command, key = requestKey()) {
@@ -47,23 +89,23 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { e.draggable = writable(); }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? board?.items.find(value => value.id === e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
 let drag;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
 document.addEventListener('drop', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
- node.dataset.dragType = type; node.draggable = writable(); node.setAttribute('aria-label', `Drag ${type} ${name}`);
+ node.dataset.dragType = type; node.draggable = writable() && !(type === 'card' && board.items.find(value => value.id === id)?.archived); node.setAttribute('aria-label', `Drag ${type} ${name}`);
  node.addEventListener('dragstart', e => {
-  if (!writable() || (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))) { e.preventDefault(); return; }
+  if (!writable() || (type === 'card' && board.items.find(value => value.id === id)?.archived) || (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))) { e.preventDefault(); return; }
   e.stopPropagation(); drag = {type, id, revision: board.workspace.revision, root}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
  });
  node.addEventListener('dragend', () => { drag = undefined; clearDropMarks(); });
  return node;
 }
 function dropZone(node, type, command, axis = 'y') {
- function accepts() { return drag?.type === type && drag.root === root && writable(); }
+ function accepts() { return drag?.type === type && drag.root === root && writable() && !(type === 'card' && board.items.find(value => value.id === node.dataset.item)?.archived); }
  function after(e) { const r = node.getBoundingClientRect(); return axis === 'x' ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2; }
  node.addEventListener('dragover', e => { if (!accepts()) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; clearDropMarks(); node.classList.add(axis === 'end' ? 'drop-end' : after(e) ? 'drop-after' : 'drop-before'); });
  node.addEventListener('dragleave', e => { if (!node.contains(e.relatedTarget)) node.classList.remove('drop-before', 'drop-after', 'drop-end'); });
@@ -103,8 +145,9 @@ function mergeRequestLinkURL(link) {
   return parsed.toString();
  } catch { return ''; }
 }
-function cardLinkView(link) {
+function cardLinkView(link, focusKey) {
  const url = link.kind === 'mr' ? mergeRequestLinkURL(link) : link.observation?.url; const node = el(url ? 'a' : 'span', linkLabel(link), 'card-link');
+ node.dataset.linkId = link.id; node.dataset.observation = 'link'; node.dataset.focusKey = focusKey || `link:${link.id}`;
  node.title = link.observation?.title || linkDisplayName(link, false);
  if (url) { node.href = url; node.target = '_blank'; node.rel = 'noopener noreferrer'; }
  return node;
@@ -129,22 +172,48 @@ function attachmentKind(attachment) {
  const extension = String(attachment.name || '').split('.').at(-1)?.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
  return extension || 'FILE';
 }
+function attachmentTypeDescription(attachment) {
+ const type = String(attachment.content_type || '').trim(); return type ? `${attachmentKind(attachment)} file · ${type}` : `${attachmentKind(attachment)} file`;
+}
 function attachmentFileMark(attachment) {
  const mark = el('span', attachmentKind(attachment), 'attachment-file-mark'); mark.setAttribute('aria-hidden', 'true'); return mark;
 }
 function attachmentPaperclip() { const icon = el('span', '📎', 'attachment-paperclip'); icon.setAttribute('aria-hidden', 'true'); return icon; }
 function attachmentLinkView(item, attachment, base = root) {
  const link = el('a', attachment.name, 'attachment-link'); link.href = attachmentHref(item, attachment, base);
- link.setAttribute('aria-label', attachment.name); link.setAttribute('download', ''); link.title = `${attachment.name} · ${attachmentSize(attachment.size)}`; return link;
+ link.setAttribute('aria-label', attachment.name); link.setAttribute('download', ''); link.dataset.attachmentTooltip = attachmentTypeDescription(attachment); return link;
 }
 function attachmentTileLink(item, attachment, base = root, metadata = attachmentSize(attachment.size)) {
- const link = attachmentLinkView(item, attachment, base); link.classList.add('attachment-tile-link');
+ const link = attachmentLinkView(item, attachment, base); link.dataset.attachmentId = String(attachment.id); link.classList.add('attachment-tile-link');
  const copy = el('span', undefined, 'attachment-tile-copy'); copy.append(el('span', attachment.name, 'attachment-name'), el('span', metadata, 'attachment-meta')); link.replaceChildren(attachmentFileMark(attachment), copy); return link;
 }
+function attachmentTooltipHost() { return document.querySelector('dialog[open]') || document.body; }
+function ensureAttachmentTooltip() {
+ if (attachmentTooltip) return attachmentTooltip;
+ attachmentTooltip = el('span', undefined, 'attachment-tooltip'); attachmentTooltip.id = 'attachment-tooltip'; attachmentTooltip.setAttribute('role', 'tooltip'); attachmentTooltip.hidden = true; return attachmentTooltip;
+}
+function attachmentLinkTarget(target) { return target instanceof Element ? target.closest('.attachment-tile-link') : undefined; }
+function attachmentTooltipAnchor(target, source) {
+ const mark = (source instanceof Element ? source.closest('.attachment-file-mark') : undefined) || target.querySelector('.attachment-file-mark'); return mark && target.contains(mark) ? mark : target;
+}
+function hideAttachmentTooltip(target) {
+ if (target && target !== attachmentTooltipTarget) return;
+ if (attachmentTooltipTarget?.getAttribute('aria-describedby') === 'attachment-tooltip') attachmentTooltipTarget.removeAttribute('aria-describedby');
+ attachmentTooltipTarget = undefined; if (attachmentTooltip) attachmentTooltip.hidden = true;
+}
+function showAttachmentTooltip(target, source) {
+ if (!target?.dataset.attachmentTooltip) { hideAttachmentTooltip(); return; }
+ if (attachmentTooltipTarget && attachmentTooltipTarget !== target) hideAttachmentTooltip();
+ const tooltip = ensureAttachmentTooltip(); const host = attachmentTooltipHost(); if (tooltip.parentElement !== host) host.append(tooltip);
+ attachmentTooltipTarget = target; tooltip.textContent = target.dataset.attachmentTooltip; target.setAttribute('aria-describedby', tooltip.id); tooltip.hidden = false;
+ const rootStyle = getComputedStyle(document.documentElement); const gap = Number.parseFloat(rootStyle.getPropertyValue('--s1')) || 4; const edge = Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16; const targetBox = target.getBoundingClientRect(); const anchor = attachmentTooltipAnchor(target, source).getBoundingClientRect(); const size = tooltip.getBoundingClientRect();
+ const maxLeft = Math.max(edge, innerWidth - size.width - edge); const left = Math.min(Math.max(edge, anchor.left), maxLeft); const top = Math.min(Math.max(edge, targetBox.bottom + gap), Math.max(edge, innerHeight - size.height - edge)); tooltip.style.left = `${Math.round(left)}px`; tooltip.style.top = `${Math.round(top)}px`;
+}
+function repositionAttachmentTooltip() { const dialog = attachmentTooltipTarget?.closest('dialog'); if (attachmentTooltipTarget?.isConnected && (!dialog || dialog.open)) showAttachmentTooltip(attachmentTooltipTarget); else hideAttachmentTooltip(); }
 function attachmentTile(item, attachment, base, metadata, onRemove) {
- const tile = el('div', undefined, 'attachment-tile'); tile.append(attachmentTileLink(item, attachment, base, metadata));
+ const tile = el('div', undefined, 'attachment-tile'); tile.dataset.attachmentId = String(attachment.id); tile.dataset.renderSignature = JSON.stringify({attachment, metadata}); tile.append(attachmentTileLink(item, attachment, base, metadata));
  if (onRemove) {
-  const actions = el('details', undefined, 'attachment-actions'); const toggle = el('summary', '⋯', 'attachment-actions-toggle'); toggle.setAttribute('aria-label', `Attachment actions for ${attachment.name}`); toggle.title = 'Attachment actions';
+  const actions = el('details', undefined, 'attachment-actions'); actions.dataset.stateKey = `attachment:${attachment.id}:actions`; const toggle = el('summary', '⋯', 'attachment-actions-toggle'); toggle.setAttribute('aria-label', `Attachment actions for ${attachment.name}`); toggle.title = 'Attachment actions';
   const menu = el('div', undefined, 'attachment-actions-menu'); menu.setAttribute('role', 'menu'); const remove = button('Remove attachment', onRemove, 'attachment-remove'); remove.setAttribute('role', 'menuitem'); remove.dataset.write = 'true'; menu.append(remove); actions.append(toggle, menu); tile.append(actions);
  }
  return tile;
@@ -185,13 +254,13 @@ function labelForeground(color) {
  const luminance = channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
  return luminance > .21 ? 'var(--label-ink)' : 'var(--label-contrast)';
 }
-function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge label-badge'); badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
+function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge label-badge'); badge.dataset.label = name; badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
 function styleLabelOptions(select) { [...select.options].forEach(option => { const label = labelInfo(option.value); option.style.backgroundColor = label.color; option.style.color = labelForeground(label.color); }); }
 function done(item) { return board.columns.find(c => c.id === item.column_id)?.category === 'done'; }
 function blocked(item) { return item.dependencies.some(id => { const dep = board.items.find(i => i.id === id); return dep && !done(dep); }); }
 function scopeItems(sprint) { return sprint.state === 'closed' ? board.items.filter(i => board.closed_scope.some(s => s.sprint_id === sprint.id && s.item_id === i.id)) : board.items.filter(i => !i.archived && i.sprint_ids.includes(sprint.id)); }
 function sprintPanel(s) {
- const panel = el('article', undefined, 'sprint-panel'); const info = el('div', undefined, 'sprint-info'); info.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name), el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
+ const panel = el('article', undefined, 'sprint-panel'); panel.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); info.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name), el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
  const items = scopeItems(s); const metrics = el('div', undefined, 'metrics');
  for (const [n, label] of [[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked now']]) { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(n)), el('span', label)); metrics.append(metric); }
  const actions = el('div', undefined, 'actions');
@@ -201,7 +270,7 @@ function sprintPanel(s) {
  if (s.state === 'planned') actions.append(writeButton('Start sprint', () => quick({ kind: 'sprint.start', target: s.id }), 'primary'));
  if (s.state === 'active') actions.append(writeButton('Close sprint', () => closeSprint(s)));
  if (s.state === 'closed') info.append(el('small', 'Scope preserved at closure. Card details reflect current work; historical state is retained in audit.', 'muted'));
- panel.append(info, metrics, actions); if (expanded) panel.append(renderBurndown(s)); return panel;
+ panel.append(info, metrics, actions); if (expanded) panel.append(renderBurndown(s)); panel.dataset.renderSignature = JSON.stringify({s, expanded, data:expanded ? burndownData.get(currentBurndownKey(s.id)) || null : null, error:expanded ? burndownErrors.get(currentBurndownKey(s.id)) || null : null}); return panel;
 }
 function render() {
  renderControls();
@@ -217,7 +286,7 @@ function render() {
  const selected = $('scope').value; options($('scope'), [['active', 'Active sprints'], ['backlog', 'Backlog'], ['all', 'All open work'], ...board.sprints.map(s => [s.id, `${s.name} (${s.state})`])], selected); if (!$('scope').value) $('scope').value = 'active';
  const selectedSprint = board.sprints.find(s => s.id === $('scope').value); const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
  $('sprint-summary').setAttribute('aria-label', selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints');
- $('sprint-summary').replaceChildren(...(view === 'board' ? (summarySprints.length ? summarySprints.map(sprintPanel) : [el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty')]) : []));
+ renderSprintSummary(view === 'board' ? summarySprints : []);
  $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'sprints' || view === 'history'; document.querySelector('.toolbar').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
  renderContent();
 }
@@ -232,17 +301,49 @@ function filteredItems() {
   return `${i.title} ${i.description} ${i.labels.join(' ')} ${i.assignee} ${memberName(i.assignee)} ${projectName(i.project_id)}`.toLowerCase().includes(query);
  });
 }
+function cardRenderSignature(item, links) {
+ const linkIdentity = links.map(link => ({id:link.id, project:link.project, kind:link.kind, number:link.number, items:link.items}));
+ const itemView = {id:item.id, title:item.title, column_id:item.column_id, project_id:item.project_id, assignee:item.assignee, labels:item.labels, sprint_ids:item.sprint_ids, archived:item.archived, attachments:item.attachments || []};
+ return JSON.stringify({item:itemView, links:linkIdentity, project:projectName(item.project_id), assignee:memberInfo(item.assignee), sprints:item.sprint_ids.map(id => board.sprints.find(s => s.id === id)?.name || id), labels:item.labels.map(labelInfo), blocked:blocked(item)});
+}
+function observationOutcomeText(link) {
+ const outcomes = {unobserved:'Not observed',ok:'Observed',inaccessible:'Access denied',not_found:'Not found or hidden',unavailable:'Unavailable',invalid_response:'Invalid response',rate_limited:'Rate limited',busy:'Connector busy',disabled:'Disabled',outdated:'Older result ignored',refreshing:'Refresh pending'};
+ return outcomes[link.outcome] || 'Observation unavailable';
+}
+function observationIsStale(link) { if (link.refresh_pending || link.outcome === 'refreshing') return true; if (!link.last_success) return false; const timestamp = Date.parse(link.last_success); return Number.isNaN(timestamp) || Date.now() - timestamp > 5 * 60 * 1000 || link.outcome !== 'ok'; }
+function observationTooltip(link) {
+ const observation = link.observation; const parts = [];
+ if (observation?.title) parts.push(observation.title);
+ if (observation?.mr_state) parts.push(`MR: ${observation.mr_state}${observation.draft ? ' · draft' : ''}`);
+ if (observation?.pipeline) parts.push(`Pipeline: ${observation.pipeline.state || 'unknown'}`);
+ if (!observation || link.outcome !== 'ok') parts.push(observationOutcomeText(link));
+ if (observationIsStale(link)) parts.push('Stale');
+ parts.push(observationTiming(link)); return `${linkLabel(link)} · ${parts.join(' · ')}`;
+}
+function observationIconState(link) {
+ if (link.refresh_pending || link.outcome === 'refreshing') return {symbol:'↻', status:'pending', stale:true};
+ if (!link.observation) return {symbol:link.outcome && link.outcome !== 'unobserved' && link.outcome !== 'ok' ? '!' : '?', status:link.outcome && link.outcome !== 'unobserved' && link.outcome !== 'ok' ? 'warning' : 'unknown', stale:false};
+ if (link.outcome && link.outcome !== 'ok') return {symbol:'!', status:'warning', stale:observationIsStale(link)};
+ const state = String(link.observation.mr_state || '').toLowerCase();
+ if (state === 'merged') return {symbol:'✓', status:'merged', stale:observationIsStale(link)};
+ if (state === 'closed') return {symbol:'×', status:'closed', stale:observationIsStale(link)};
+ if (link.observation.draft) return {symbol:'◐', status:'draft', stale:observationIsStale(link)};
+ if (state === 'opened') return {symbol:'●', status:'open', stale:observationIsStale(link)};
+ return {symbol:'?', status:'unknown', stale:observationIsStale(link)};
+}
+function cardObservationIcon(link, focusKey) {
+ const state = observationIconState(link); const icon = el('span', state.symbol, 'card-observation-icon'); const tooltip = observationTooltip(link);
+ icon.dataset.linkId = link.id; icon.dataset.observation = 'status-icon'; icon.dataset.status = state.status; icon.dataset.stale = String(state.stale); icon.dataset.focusKey = focusKey || `link:${link.id}:observation`; icon.dataset.tooltip = tooltip; icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', `Card observation: ${tooltip}`); icon.title = tooltip; icon.tabIndex = 0; return icon;
+}
 function card(item, peers) {
- const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); top.append(button(item.title, () => editItem(item), 'card-title'));
+ const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); const title = button(item.title, () => editItem(item), 'card-title'); title.dataset.focusKey = `item:${item.id}:title`; top.append(title);
  c.dataset.item = item.id;
- if (!item.archived) {
-  makeDraggable(c, 'card', item.id, item.title);
-  dropZone(c, 'card', (id, after) => ({kind: 'item.move', target: id, destination: item.column_id, before: after ? peers[peers.findIndex(p => p.id === item.id) + 1]?.id || '' : item.id}));
- }
+ makeDraggable(c, 'card', item.id, item.title);
+ dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
  const meta = el('div', undefined, 'card-meta'); meta.append(el('small', projectName(item.project_id), 'card-project'), assigneeView(item.assignee));
  c.append(top, meta);
- const sprintTags = el('div', undefined, 'tags'); item.sprint_ids.forEach(id => sprintTags.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); c.append(sprintTags);
- const tags = el('div', undefined, 'tags'); item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
+ const sprintTags = el('div', undefined, 'tags'); sprintTags.dataset.cardSection = 'sprints'; item.sprint_ids.forEach(id => { const tag = el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'); tag.dataset.sprintId = id; sprintTags.append(tag); }); c.append(sprintTags);
+ const tags = el('div', undefined, 'tags'); tags.dataset.cardSection = 'labels'; item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
  if (item.archived) {
   const controls = el('div', undefined, 'card-controls');
   controls.append(writeButton('Restore item', () => quick({ kind: 'item.restore', target: item.id })));
@@ -250,16 +351,40 @@ function card(item, peers) {
  }
  const links = board.links.filter(l => l.items.includes(item.id));
  if (links.length) {
-  const linkList = el('div', undefined, 'card-links'); linkList.setAttribute('aria-label', 'GitLab links'); links.forEach(link => linkList.append(cardLinkView(link)));
-  const details = button('Details', () => showLinks(item), 'card-link-details'); details.setAttribute('aria-label', `View GitLab details · ${links.length}`); details.title = 'Show linked GitLab observations'; linkList.append(details); c.append(linkList);
+  const linkSection = el('div', undefined, 'card-links-section'); linkSection.setAttribute('role', 'group'); linkSection.setAttribute('aria-label', 'GitLab links');
+  const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); linkLabel.dataset.renderSignature = `links:${links.length}`; const details = button('View observations', () => showLinks(item), 'card-link-details'); details.dataset.renderSignature = 'observations-action'; details.dataset.focusKey = `item:${item.id}:observations`; details.setAttribute('aria-label', `View GitLab details · ${links.length}`); details.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, details);
+  const linkList = el('div', undefined, 'card-links'); linkList.setAttribute('aria-label', 'GitLab links'); links.forEach(link => { if (link.kind === 'mr') linkList.append(cardObservationIcon(link, `item:${item.id}:observation:${link.id}`)); linkList.append(cardLinkView(link, `item:${item.id}:link:${link.id}`)); }); linkSection.append(linkHead, linkList); c.append(linkSection);
  }
  const attachments = item.attachments || [];
  if (attachments.length) {
-  const attachmentList = el('details', undefined, 'card-attachments'); const count = `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`; attachmentList.setAttribute('aria-label', count);
+  const attachmentList = el('details', undefined, 'card-attachments'); attachmentList.dataset.stateKey = `item:${item.id}:attachments`; const count = `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`; attachmentList.setAttribute('aria-label', count);
   const attachmentHead = el('summary', undefined, 'card-attachments-head'); const attachmentToggle = el('span', undefined, 'card-attachments-toggle'); attachmentToggle.setAttribute('aria-hidden', 'true'); attachmentHead.append(attachmentPaperclip(), el('span', 'Attachments', 'card-attachments-label'), el('span', String(attachments.length), 'card-attachments-count'), attachmentToggle);
   const attachmentOptions = el('div', undefined, 'card-attachment-list'); attachments.forEach(attachment => { const link = attachmentTileLink(item, attachment); link.classList.add('card-attachment-option'); attachmentOptions.append(link); }); attachmentList.append(attachmentHead, attachmentOptions); c.append(attachmentList);
  }
+ c.dataset.renderSignature = cardRenderSignature(item, links);
  return c;
+}
+function linkIdentitySignature(link) { return JSON.stringify({id:link.id, project:link.project, kind:link.kind, number:link.number, items:[...(link.items || [])].sort()}); }
+function observationSignature(link) { return JSON.stringify({observation:link.observation || null, last_success:link.last_success || null, last_attempt:link.last_attempt || null, outcome:link.outcome || '', next_refresh:link.next_refresh || null, refresh_pending:!!link.refresh_pending}); }
+function patchObservationIcon(node, link) {
+ const replacement = cardObservationIcon(link, node.dataset.focusKey); if (node.tagName === replacement.tagName) { syncAttributes(node, replacement); if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent; return node; }
+ node.replaceWith(replacement); return replacement;
+}
+function patchObservationLink(node, link) {
+ const replacement = cardLinkView(link, node.dataset.focusKey); if (node.tagName === replacement.tagName) { syncAttributes(node, replacement); if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent; return node; }
+ node.replaceWith(replacement); return replacement;
+}
+function refreshLinkDisabled(link) { return !writable() || !link || !board.connector_instance || board.connector_instance !== board.integration.instance || !!link.next_refresh && Date.parse(link.next_refresh) > Date.now(); }
+function patchRefreshControl(node, link) { node.disabled = refreshLinkDisabled(link); const row = node.closest('.setup-row'); const next = row?.querySelector('[data-observation="next-refresh"]'); if (next) { next.hidden = !link?.next_refresh || Date.parse(link.next_refresh) <= Date.now(); if (!next.hidden) next.textContent = `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`; } }
+function patchObservationUI(previousLinks, nextLinks) {
+ const previous = new Map(previousLinks.map(link => [link.id, link])); const changed = nextLinks.filter(link => previous.has(link.id) && observationSignature(previous.get(link.id)) !== observationSignature(link));
+ if (!changed.length) return false;
+ changed.forEach(link => {
+  document.querySelectorAll('[data-observation="status-icon"]').forEach(node => { if (node.dataset.linkId === link.id) patchObservationIcon(node, link); });
+  document.querySelectorAll('[data-observation="link"]').forEach(node => { if (node.dataset.linkId === link.id) patchObservationLink(node, link); });
+  document.querySelectorAll('[data-refresh-link]').forEach(node => { if (node.dataset.refreshLink === link.id) patchRefreshControl(node, link); });
+ });
+ return true;
 }
 function currentBurndownKey(sprintID) { return [board?.workspace.revision || 0, sprintID, $('project').value, $('assignee').value].join('|'); }
 function selectedFilterText(id) { return $(id).selectedOptions[0]?.textContent || 'All'; }
@@ -288,7 +413,7 @@ function burndownSVG(data) {
 }
 function burndownLegendItem(className, text) { const item = el('span', undefined, 'burndown-legend-item'); item.append(el('span', undefined, `burndown-swatch ${className}`), el('span', text)); return item; }
 function burndownTable(data) {
- const details = el('details', undefined, 'burndown-data'); details.append(el('summary', 'View daily values')); const scroll = el('div', undefined, 'burndown-table-scroll'); const table = el('table'); table.append(el('caption', 'Daily native work-item counts')); const head = el('thead'); const heading = el('tr'); const metric = el('th', 'Metric'); metric.scope = 'col'; heading.append(metric); data.points.forEach(point => { const date = el('th', burndownDateLabel(point.date)); date.scope = 'col'; heading.append(date); }); head.append(heading); table.append(head); const body = el('tbody'); [['In scope', 'scope'], ['Remaining', 'remaining']].forEach(([label, key]) => { const row = el('tr'); const metric = el('th', label); metric.scope = 'row'; row.append(metric); data.points.forEach(point => row.append(el('td', point[key] == null ? '—' : String(point[key])))); body.append(row); }); table.append(body); scroll.append(table); details.append(scroll); return details;
+ const details = el('details', undefined, 'burndown-data'); details.dataset.stateKey = `burndown-data:${data.sprint.id}`; details.append(el('summary', 'View daily values')); const scroll = el('div', undefined, 'burndown-table-scroll'); const table = el('table'); table.append(el('caption', 'Daily native work-item counts')); const head = el('thead'); const heading = el('tr'); const metric = el('th', 'Metric'); metric.scope = 'col'; heading.append(metric); data.points.forEach(point => { const date = el('th', burndownDateLabel(point.date)); date.scope = 'col'; heading.append(date); }); head.append(heading); table.append(head); const body = el('tbody'); [['In scope', 'scope'], ['Remaining', 'remaining']].forEach(([label, key]) => { const row = el('tr'); const metric = el('th', label); metric.scope = 'row'; row.append(metric); data.points.forEach(point => row.append(el('td', point[key] == null ? '—' : String(point[key])))); body.append(row); }); table.append(body); scroll.append(table); details.append(scroll); return details;
 }
 function latestBurndownPoint(points, key) { return [...points].reverse().find(point => Number.isFinite(point[key])); }
 function firstBurndownPoint(points, key) { return points.find(point => Number.isFinite(point[key])); }
@@ -313,20 +438,128 @@ async function requestBurndown(sprintID, force = false) {
  catch (e) { if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; burndownErrors.set(key, e.message); }
  finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'sprints') render(); }
 }
+function syncAttributes(target, source) {
+ [...target.attributes].forEach(attribute => { if (!source.hasAttribute(attribute.name)) target.removeAttribute(attribute.name); });
+ [...source.attributes].forEach(attribute => { if (target.getAttribute(attribute.name) !== attribute.value) target.setAttribute(attribute.name, attribute.value); });
+}
+function patchNode(target, next) {
+ if (target === next) return target;
+ if (target.tagName !== next.tagName) { target.replaceWith(next); return next; }
+ if (next.dataset.renderSignature && target.dataset.renderSignature === next.dataset.renderSignature) return target;
+ const details = [...target.querySelectorAll('details')].map((node, index) => ({key:node.dataset.stateKey || `details:${index}`, open:node.open}));
+ syncAttributes(target, next); target.replaceChildren(...next.childNodes);
+ details.forEach(state => { const node = [...target.querySelectorAll('details')].find(candidate => (candidate.dataset.stateKey || '') === state.key); if (node) node.open = state.open; });
+ return target;
+}
+function keyedNodeKey(node) { if (node.dataset.item) return `item:${node.dataset.item}`; if (node.dataset.sprintId) return `sprint:${node.dataset.sprintId}`; if (node.dataset.column) return `column:${node.dataset.column}`; if (node.classList.contains('column-head')) return 'head'; return node.dataset.empty ? 'empty' : node.className || node.tagName; }
+function reconcileKeyedChildren(parent, nextNodes, keyOf, patch = patchNode, resolve) {
+ const existing = new Map([...parent.children].map(node => [keyOf(node), node])); const used = new Set(); let cursor = parent.firstElementChild;
+ nextNodes.forEach(next => {
+  const key = keyOf(next); let target = existing.get(key); if (!target && resolve) target = resolve(key, next);
+  if (!target || used.has(target)) target = next; used.add(target);
+  if (target !== cursor) parent.insertBefore(target, cursor);
+  if (target !== next) { const patched = patch(target, next); if (patched && patched !== target) { used.delete(target); used.add(patched); target = patched; } }
+  cursor = target.nextElementSibling;
+ });
+ while (cursor) { const next = cursor.nextElementSibling; if (!used.has(cursor)) cursor.remove(); cursor = next; }
+}
+function renderColumn(col, items) {
+ const section = el('section', undefined, 'column'); section.dataset.column = col.id; section.setAttribute('aria-label', col.name);
+ const peers = items.filter(item => item.column_id === col.id); const total = board.items.filter(item => !item.archived && item.column_id === col.id).length;
+ const head = el('div', undefined, 'column-head'); head.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip, shown:peers.length, total}); head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} WIP` : 'No limit'}`)); makeDraggable(head, 'list', col.id, col.name);
+ dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; section.append(empty); }
+ section.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip}); return section;
+}
+function cardChildKey(node) {
+ if (node.classList.contains('card-top')) return 'top';
+ if (node.classList.contains('card-meta')) return 'meta';
+ if (node.classList.contains('tags')) return `tags:${node.dataset.cardSection || ''}`;
+ if (node.classList.contains('card-links-section') || node.classList.contains('card-links')) return 'links';
+ if (node.classList.contains('card-attachments')) return 'attachments';
+ if (node.classList.contains('card-controls')) return 'controls';
+ return node.className || node.tagName;
+}
+function cardLinkChildKey(node) { if (node.dataset.observation === 'status-icon') return `status:${node.dataset.linkId}`; if (node.dataset.observation === 'link') return `link:${node.dataset.linkId}`; return 'details'; }
+function patchCardLinksHead(target, next) {
+ syncAttributes(target, next); reconcileKeyedChildren(target, [...next.children], node => node.classList.contains('card-links-label') ? 'label' : 'details', patchNode); return target;
+}
+function patchCardLinksSection(target, next) {
+ syncAttributes(target, next); const currentHead = target.querySelector('.card-links-head'); const nextHead = next.querySelector('.card-links-head'); if (currentHead && nextHead) patchCardLinksHead(currentHead, nextHead);
+ const currentLinks = target.querySelector('.card-links'); const nextLinks = next.querySelector('.card-links'); if (currentLinks && nextLinks) patchCardLinks(currentLinks, nextLinks); return target;
+}
+function patchCardLinks(target, next) {
+ syncAttributes(target, next);
+ reconcileKeyedChildren(target, [...next.children], cardLinkChildKey, (current, fresh) => {
+  const link = board.links.find(value => value.id === fresh.dataset.linkId);
+  if (link && fresh.dataset.observation === 'status-icon') return patchObservationIcon(current, link);
+  if (link && fresh.dataset.observation === 'link') return patchObservationLink(current, link);
+  return patchNode(current, fresh);
+ });
+ return target;
+}
+function patchCardAttachments(target, next) {
+ syncAttributes(target, next);
+ const currentHead = target.firstElementChild; const nextHead = next.firstElementChild; if (currentHead && nextHead) patchNode(currentHead, nextHead);
+ const currentList = target.querySelector('.card-attachment-list'); const nextList = next.querySelector('.card-attachment-list');
+ if (currentList && nextList) { syncAttributes(currentList, nextList); reconcileKeyedChildren(currentList, [...nextList.children], node => `attachment:${node.dataset.attachmentId || node.textContent}`, patchNode); }
+ return target;
+}
+function patchCardTags(target, next) {
+ syncAttributes(target, next);
+ reconcileKeyedChildren(target, [...next.children], node => node.dataset.sprintId ? `sprint:${node.dataset.sprintId}` : node.dataset.label ? `label:${node.dataset.label}` : `state:${node.textContent}`, patchNode);
+ return target;
+}
+function patchCard(target, next) {
+ if (target === next) return target;
+ if (target.dataset.renderSignature === next.dataset.renderSignature) { const currentLinks = target.querySelector('.card-links-section'); const nextLinks = next.querySelector('.card-links-section'); if (currentLinks && nextLinks) patchCardLinksSection(currentLinks, nextLinks); return target; }
+ syncAttributes(target, next);
+ reconcileKeyedChildren(target, [...next.children], cardChildKey, (current, fresh) => {
+  if (fresh.classList.contains('card-links-section')) return patchCardLinksSection(current, fresh);
+  if (fresh.classList.contains('card-links')) return patchCardLinks(current, fresh);
+  if (fresh.classList.contains('card-attachments')) return patchCardAttachments(current, fresh);
+  if (fresh.classList.contains('tags')) return patchCardTags(current, fresh);
+  return patchNode(current, fresh);
+ });
+ return target;
+}
+function patchColumn(target, next, cardPool) {
+ syncAttributes(target, next);
+ reconcileKeyedChildren(target, [...next.children], keyedNodeKey, (current, fresh) => fresh.dataset.item ? patchCard(current, fresh) : patchNode(current, fresh), (key) => key.startsWith('item:') ? cardPool.get(key.slice('item:'.length)) : undefined);
+}
+function renderBoardContent(content, items) {
+ const next = el('div', undefined, 'board'); next.dataset.contentView = 'board'; board.columns.forEach(column => next.append(renderColumn(column, items)));
+ const current = content.firstElementChild;
+ if (!current || current.dataset.contentView !== 'board') { content.replaceChildren(next); return; }
+ const cardPool = new Map([...current.querySelectorAll('.card')].map(node => [node.dataset.item, node]));
+ reconcileKeyedChildren(current, [...next.children], node => `column:${node.dataset.column}`, (target, fresh) => patchColumn(target, fresh, cardPool));
+}
+function renderCardListContent(content, items) {
+ const next = el('div', undefined, 'list'); next.dataset.contentView = `list:${view}`; appendCards(next, items); if (!items.length) { const empty = el('p', view === 'board' && $('scope').value === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.', 'empty'); empty.dataset.empty = 'true'; next.append(empty); }
+ const current = content.firstElementChild;
+ if (!current || current.dataset.contentView !== next.dataset.contentView) { content.replaceChildren(next); return; }
+ reconcileKeyedChildren(current, [...next.children], keyedNodeKey, (target, fresh) => fresh.dataset.item ? patchCard(target, fresh) : patchNode(target, fresh));
+}
+function renderSprintPage(content) {
+ const head = el('div', undefined, 'section-head'); head.dataset.renderSignature = 'sprint-page-head'; head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary'));
+ const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; board.sprints.forEach(sprint => list.append(sprintPanel(sprint))); if (!board.sprints.length) { const empty = el('p', 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty'); empty.dataset.empty = 'true'; list.append(empty); }
+ const currentHead = content.firstElementChild; const currentList = content.children[1];
+ if (!currentHead || !currentList || currentList.dataset.contentView !== list.dataset.contentView) { content.replaceChildren(head, list); return; }
+ patchNode(currentHead, head); reconcileKeyedChildren(currentList, [...list.children], keyedNodeKey);
+}
+function renderSprintSummary(sprints) {
+ const summary = $('sprint-summary'); if (view !== 'board') { summary.replaceChildren(); return; }
+ const next = sprints.map(sprintPanel); if (!next.length) { const empty = el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty'); empty.dataset.empty = 'true'; next.push(empty); }
+ reconcileKeyedChildren(summary, next, keyedNodeKey);
+}
 function renderContent() {
- if (!board) return; const content = $('content'); content.replaceChildren();
- if (view === 'projects') { renderProjects(content); return; }
- if (view === 'labels') { renderLabels(content); return; }
- if (view === 'members') { renderMembers(content); return; }
- if (view === 'sprints') {
-  $('count').textContent = '';
-  const head = el('div', undefined, 'section-head'); head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary')); content.append(head);
-  const list = el('div', undefined, 'sprints'); board.sprints.forEach(s => list.append(sprintPanel(s))); if (!board.sprints.length) list.append(el('p', 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty')); content.append(list); return;
- }
- if (view === 'history') { renderHistory(content); return; }
+ if (!board) return; const content = $('content');
+ if (view === 'projects') { content.replaceChildren(); renderProjects(content); return; }
+ if (view === 'labels') { content.replaceChildren(); renderLabels(content); return; }
+ if (view === 'members') { content.replaceChildren(); renderMembers(content); return; }
+ if (view === 'sprints') { $('count').textContent = ''; renderSprintPage(content); return; }
+ if (view === 'history') { content.replaceChildren(); renderHistory(content); return; }
  const items = filteredItems(); $('count').textContent = `${items.length} items · workspace revision ${board.workspace.revision}`;
- if (view === 'board') { const grid = el('div', undefined, 'board'); for (const col of board.columns) { const section = el('section', undefined, 'column'); section.setAttribute('aria-label', col.name); const head = el('div', undefined, 'column-head'); const peers = items.filter(i => i.column_id === col.id); const total = board.items.filter(i => !i.archived && i.column_id === col.id).length; head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} WIP` : 'No limit'}`)); makeDraggable(head, 'list', col.id, col.name); section.dataset.column = col.id; dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(c => c.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) section.append(el('p', 'No work here', 'empty')); grid.append(section); } content.append(grid); }
- else { const list = el('div', undefined, 'list'); appendCards(list, items); if (!items.length) list.append(el('p', view === 'board' && $('scope').value === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.', 'empty')); content.append(list); }
+ if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
@@ -521,7 +754,7 @@ function labelColorPicker(parent, value) {
 let editorReturn;
 function closeEditor() {
  if (busy) return;
- const returnTo = editorReturn; editorReturn = undefined; $('editor').close(); if (returnTo) returnTo();
+ const returnTo = editorReturn; editorReturn = undefined; hideAttachmentTooltip(); $('editor').close(); if (returnTo) returnTo();
 }
 function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
  editorReturn = afterClose;
@@ -703,13 +936,15 @@ function commentTime(value) {
  const date = new Date(value); if (Number.isNaN(date.getTime())) return {label:'Unknown time', dateTime:''}; return {label:date.toLocaleString(), dateTime:date.toISOString()};
 }
 function validComments(data) { return Array.isArray(data) && data.every(comment => comment && Number.isSafeInteger(comment.id) && comment.id > 0 && typeof comment.item_id === 'string' && typeof comment.author === 'string' && comment.author && typeof comment.body === 'string' && comment.body && typeof comment.created_at === 'string' && !Number.isNaN(Date.parse(comment.created_at))); }
+function commentNode(comment) {
+ const row = el('article', undefined, 'comment'); row.dataset.commentId = String(comment.id); row.dataset.renderSignature = JSON.stringify({comment, member:memberInfo(comment.author)});
+ const info = memberInfo(comment.author); const avatar = el('span', undefined, 'avatar comment-avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
+ if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
+ const content = el('div', undefined, 'comment-content'); const header = el('div', undefined, 'comment-head'); const author = el('strong', info.name); author.title = comment.author; const time = commentTime(comment.created_at); const created = el('time', time.label, 'muted'); if (time.dateTime) created.dateTime = time.dateTime; header.append(author, created); const body = el('div', undefined, 'comment-body'); renderMarkdown(body, comment.body); content.append(header, body); row.append(avatar, content); return row;
+}
 function renderCommentList(list, comments) {
- list.replaceChildren(); if (!comments.length) return;
- comments.forEach(comment => {
-  const row = el('article', undefined, 'comment'); const info = memberInfo(comment.author); const avatar = el('span', undefined, 'avatar comment-avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
-  if (info.avatarURL) { const image = el('img'); image.src = info.avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
-  const content = el('div', undefined, 'comment-content'); const header = el('div', undefined, 'comment-head'); const author = el('strong', info.name); author.title = comment.author; const time = commentTime(comment.created_at); const created = el('time', time.label, 'muted'); if (time.dateTime) created.dateTime = time.dateTime; header.append(author, created); const body = el('div', undefined, 'comment-body'); renderMarkdown(body, comment.body); content.append(header, body); row.append(avatar, content); list.append(row);
- });
+ const next = comments.map(commentNode); if (!next.length) { list.replaceChildren(); return; }
+ reconcileKeyedChildren(list, next, node => `comment:${node.dataset.commentId}`);
 }
 function renderItemComments(fields, item) {
  const currentBoard = board, currentRoot = root; const section = el('section', undefined, 'item-comments'); const heading = el('div', undefined, 'section-head'); heading.append(el('h3', 'Comments')); const status = el('p', 'Loading comments…', 'help'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const list = el('div', undefined, 'comment-list'); let commentBusy = false; let commentLoad = 0; let addButton, textarea, refreshCommentPreview;
@@ -752,9 +987,10 @@ function renderItemAttachments(fields, item, readOnly) {
  const list = el('div', undefined, 'attachment-grid'); let attachmentBusy = false;
  const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; status.setAttribute('role', error ? 'alert' : 'status'); };
  function renderList() {
-  list.replaceChildren(); const attachments = Array.isArray(item.attachments) ? item.attachments : []; count.textContent = String(attachments.length);
-  if (!attachments.length) { list.append(el('p', 'No attachments yet.', 'empty')); return; }
-  attachments.forEach(attachment => { list.append(attachmentTile(item, attachment, currentRoot, `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`, readOnly ? undefined : () => removeAttachment(attachment))); });
+  const attachments = Array.isArray(item.attachments) ? item.attachments : []; count.textContent = String(attachments.length);
+  if (!attachments.length) { list.replaceChildren(el('p', 'No attachments yet.', 'empty')); return; }
+  const next = attachments.map(attachment => attachmentTile(item, attachment, currentRoot, `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`, readOnly ? undefined : () => removeAttachment(attachment)));
+  reconcileKeyedChildren(list, next, node => `attachment:${node.dataset.attachmentId}`);
  }
  async function removeAttachment(attachment) {
   if (attachmentBusy || !writable()) return; attachmentBusy = true; setStatus(`Removing ${attachment.name}…`);
@@ -1129,7 +1365,7 @@ function showLinks(item) {
   const links = board.links.filter(l => l.items.includes(item.id));
   if (!links.length) fields.append(el('p', 'Unlinked. Add an approved MR; never infer links from card titles.', 'empty'));
   links.forEach(link => {
-   const row = el('article', undefined, 'setup-row'); const obs = link.observation; const linkRow = el('div', undefined, 'card-links'); linkRow.append(cardLinkView(link)); const pipelineLink = pipelineLinkView(link); if (pipelineLink) linkRow.append(pipelineLink); row.append(linkRow);
+   const row = el('article', undefined, 'setup-row'); row.dataset.linkId = link.id; const obs = link.observation; const linkRow = el('div', undefined, 'card-links'); linkRow.append(cardLinkView(link)); const pipelineLink = pipelineLinkView(link); if (pipelineLink) linkRow.append(pipelineLink); row.append(linkRow);
    if (obs?.title) row.append(el('p', obs.title));
    if (obs?.mr_state) row.append(el('p', `${obs.draft ? 'Draft · ' : ''}Review/mergeability: ${obs.review || 'unknown'} · Head SHA ${obs.head_sha || 'unknown'}`, 'help'));
    if (obs?.pipeline) row.append(el('p', `${link.kind === 'mr' ? 'Latest MR pipeline status' : 'Pipeline status'}: ${obs.pipeline.state || 'unknown'} · SHA ${obs.pipeline.sha || 'unknown'} · Provider state ${obs.pipeline.provider_state || 'unknown'}`, 'help'));
@@ -1143,9 +1379,9 @@ function showLinks(item) {
     catch(e) { $('form-error').textContent = e.message + ' Refresh the board to see current status; cooldowns prevent duplicate requests.'; }
    });
    refreshButton.dataset.refreshLink = link.id;
-   refreshButton.disabled ||= !ready || !!link.next_refresh && Date.parse(link.next_refresh) > Date.now();
+   refreshButton.disabled = refreshLinkDisabled(link) || !ready;
    actions.append(refreshButton);
-   if (link.next_refresh && Date.parse(link.next_refresh) > Date.now()) row.append(el('p', `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`, 'help'));
+   if (link.next_refresh) { const nextRefresh = el('p', '', 'help'); nextRefresh.dataset.observation = 'next-refresh'; nextRefresh.hidden = Date.parse(link.next_refresh) <= Date.now(); if (!nextRefresh.hidden) nextRefresh.textContent = `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`; row.append(nextRefresh); }
    row.append(actions); fields.append(row);
   });
   if (!ready) fields.append(el('p', 'Connector unavailable or instance approval needs updating. An admin can review Projects settings.', 'help'));
@@ -1163,17 +1399,22 @@ function setupBoard() {
 }
 $('editor').addEventListener('cancel', e => { e.preventDefault(); if (e.target === $('editor') && !busy) closeEditor(); });
 $('editor').addEventListener('click', e => { if (!busy && e.target === $('editor')) closeEditor(); });
+document.addEventListener('pointerover', e => { const target = attachmentLinkTarget(e.target); if (target && !(e.relatedTarget instanceof Node && target.contains(e.relatedTarget))) showAttachmentTooltip(target, e.target); });
+document.addEventListener('pointerout', e => { const target = attachmentLinkTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover') || target.contains(document.activeElement)) return; hideAttachmentTooltip(target); });
+document.addEventListener('focusin', e => { const target = attachmentLinkTarget(e.target); if (target) showAttachmentTooltip(target, e.target); });
+document.addEventListener('focusout', e => { const target = attachmentLinkTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover')) return; hideAttachmentTooltip(target); });
+window.addEventListener('resize', repositionAttachmentTooltip); document.addEventListener('scroll', repositionAttachmentTooltip, true);
 document.addEventListener('pointerdown', e => { document.querySelectorAll('.attachment-actions[open],.card-attachments[open]').forEach(menu => { if (!menu.contains(e.target)) menu.open = false; }); const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
 $('proposals').onclick = () => showProposals();
-$('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh;
+$('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
 $('scope').onchange = render;
 $('label').onchange = $('search').oninput = renderContent;
 $('project').onchange = $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
  integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
- board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
+ clearPlanningChangeNotice(); board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
  await refresh();
 }
@@ -1185,15 +1426,17 @@ setInterval(async () => {
  try {
   const next = await api(path + '/board');
   if (board !== current || root !== path || busy || loading || integrationFormOpen || drag || $('editor').open) return;
-  if (next.workspace.revision !== board.workspace.revision || next.role !== board.role) { notice('Planning or permissions changed elsewhere. Use Refresh to review.'); return; }
-  board.links = next.links; renderContent();
+  if (!next?.workspace || !Array.isArray(next.links)) throw new Error('Observation response is invalid.');
+  if (next.workspace.revision !== board.workspace.revision || next.role !== board.role) { showPlanningChangeNotice(next.role !== board.role ? 'Workspace permissions changed elsewhere · Refresh to review' : undefined); return; }
+  const currentLinks = new Map(board.links.map(link => [link.id, link])); if (next.links.length !== board.links.length || next.links.some(link => { const current = currentLinks.get(link.id); return !current || linkIdentitySignature(current) !== linkIdentitySignature(link); })) { showPlanningChangeNotice(); return; }
+  const uiState = captureUIState(); const previousLinks = board.links; board.links = next.links; if (patchObservationUI(previousLinks, board.links)) restoreUIState(uiState);
  } catch (e) { if (board === current && !busy && !integrationFormOpen && !$('editor').open) notice('Observation cache could not be reloaded. Use Refresh to retry.', true); }
  finally { observationPoll = false; }
 }, 15000);
 // Local freshness/cooldowns require no additional network requests.
 setInterval(() => {
  if (!board) return;
- document.querySelectorAll('[data-refresh-link]').forEach(node => { const link = board.links.find(l => l.id === node.dataset.refreshLink); node.disabled = !writable() || !link || !board.connector_instance || board.connector_instance !== board.integration.instance || !!link.next_refresh && Date.parse(link.next_refresh) > Date.now(); });
+ document.querySelectorAll('[data-refresh-link]').forEach(node => { const link = board.links.find(l => l.id === node.dataset.refreshLink); patchRefreshControl(node, link); });
 }, 10000);
 renderControls();
 (async () => { try { session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; workspaces = await api('/api/v2/workspaces'); options($('workspace'), workspaces.map(w => [w.id, workspaceLabel(w)])); if (!workspaces.length) { notice('No workspace membership. Ask an operator to grant your login subject access: ' + session.subject); render(); return; } await chooseWorkspace(); } catch (e) { notice(e.message, true); renderControls(); } })();
