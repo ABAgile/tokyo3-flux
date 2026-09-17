@@ -1,8 +1,8 @@
 # Native Flux planning examination stack.
 # Copy .env.example to .env and configure the session key and GitLab OAuth.
 #   docker compose up --build -d
-# Then bootstrap a workspace with your GitLab numeric user ID; see
-# README.md#compose.
+# Then sign in and create a workspace in the browser; see README.md#compose.
+# Bootstrap remains available for automation and recovery.
 #
 # Examination only: the bundled DB uses one role and non-SSL connections.
 # Its development credentials are not suitable for production. No DB port is

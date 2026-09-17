@@ -72,18 +72,19 @@ cp .env.example .env
 # Configure the session key and GitLab OAuth settings in .env.
 # Generate a session key with: openssl rand -hex 32
 docker compose up --build -d
-docker compose exec flux flux bootstrap --name 'My team' --subject GITLAB_NUMERIC_USER_ID
 ```
 
 Register the browser-visible `/auth/callback` URL in your GitLab OAuth application
 and `FLUX_GITLAB_OAUTH_REDIRECT_URL`. Login uses `read_user`; no connector token is
 needed for planning. When a read connector is configured, numeric workspace members
 also receive cached GitLab profile names and avatars for assignee display. Use your
-numeric GitLab user ID, not username. Signing in
-without membership displays your subject. Bootstrap prints the new workspace ID.
+numeric GitLab user ID, not username.
 
-Open <http://localhost:8080/>. Optionally add `--project 'My project'` to bootstrap,
-or create classifications in the UI. To add sample work to an **empty** workspace:
+Open <http://localhost:8080/> and sign in. If your account has no workspace membership,
+create one in the browser; the authenticated GitLab user becomes its initial admin.
+Multiple memberships are presented for explicit selection. Operators can still use
+`bootstrap` for automation, seeded test data, or recovery, and it prints the new workspace ID.
+To add sample work to an **empty** workspace:
 
 ```sh
 docker compose exec flux flux seed --workspace WORKSPACE_ID --subject GITLAB_NUMERIC_USER_ID
@@ -98,12 +99,14 @@ Set `FLUX_BLOBSTORE=nats` in `.env` to exercise the local JetStream Object Store
 make build
 export FLUX_DATABASE_URL='postgres://USER@127.0.0.1:5432/flux?sslmode=disable'
 ./bin/flux migrate
-./bin/flux bootstrap --name 'My team' --subject GITLAB_NUMERIC_USER_ID
 ./bin/flux serve
 ```
 
-Configure authentication as below. For a local synthetic login, bootstrap with
-`--subject fixture-user` and run `serve --demo --addr 127.0.0.1:8092`.
+After login, create the first workspace in the browser. `flux serve` intentionally refuses
+an unmigrated database. For automation, operator recovery, or a local seeded fixture, use
+`flux bootstrap --name 'My team' --subject GITLAB_NUMERIC_USER_ID` before serving. For a local
+synthetic login, bootstrap with `--subject fixture-user` or create a workspace in the UI and
+run `serve --demo --addr 127.0.0.1:8092`.
 Demo requires a loopback listener and Host header; never expose it through a proxy.
 An omitted demo session key is ephemeral and signs users out on restart.
 
@@ -159,7 +162,14 @@ flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
 ```
 
 `flux migrate`, `bootstrap`, `member`, `seed`, `serve`, `read`, `import` and
-`version` are the CLI commands. `flux plan` also namespaces the first five commands.
+`version` are the CLI commands.
+Normal setup needs only `migrate` followed by `serve`; browser onboarding creates the first
+workspace. `bootstrap` remains for non-interactive provisioning, recovery and machine/bootstrap
+subjects, while `member` grants access to non-GitLab machine identities. `seed` is optional
+sample data for an empty workspace; `import` remains a read-only dry run for legacy snapshot
+migration. Command flags are scoped to their command: `serve` accepts `--addr` and `--demo`,
+`bootstrap` accepts `--name`, `--project` and `--subject`, `member` accepts `--workspace`,
+`--subject` and `--role`, and `seed` accepts `--workspace`, `--project` and `--subject`.
 Serving requires schema 10 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
@@ -172,7 +182,7 @@ owner credential. After migration, grant the runtime role only required DML:
 ```sql
 GRANT USAGE ON SCHEMA public TO flux_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO flux_runtime;
-GRANT UPDATE ON workspaces TO flux_runtime;
+GRANT INSERT, UPDATE ON workspaces TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON memberships TO flux_runtime;
 GRANT INSERT, UPDATE ON projects, sprints, work_items TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON board_columns TO flux_runtime;
@@ -349,11 +359,12 @@ set dependencies between new items afterward using their actual IDs.
 
 ## HTTP API
 
-Authenticated JSON routes use `Cache-Control: no-store`. Under
-`/api/v2/workspaces/{workspace}`:
+Authenticated JSON routes use `Cache-Control: no-store`. The workspace collection is
+`/api/v2/workspaces`; resource routes under `/api/v2/workspaces/{workspace}` are:
 
 | Method/path | Purpose |
 | --- | --- |
+| `POST /api/v2/workspaces` | Browser-only workspace creation; requires session CSRF and idempotency headers, and makes the authenticated subject the initial admin. |
 | `GET /projects`, `GET /board` | Project list and planning board. |
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
 | `GET /gitlab/users?search=TEXT` | Admin-only active GitLab user catalog for workspace membership management; results are connector-provided and capped. |
@@ -370,7 +381,10 @@ Authenticated JSON routes use `Cache-Control: no-store`. Under
 | `GET /proposals/{id}` | Draft preview, stale problem without digest, or accepted review. |
 | `POST /changes` | Typed, transactional browser mutation. |
 
-`GET /api/v2/workspaces` lists authorized workspaces. Browser-only
+`GET /api/v2/workspaces` lists authorized workspaces. `POST /api/v2/workspaces` is browser-only:
+it accepts only `{"name":"…"}`, derives the administrator from the authenticated session,
+and creates the workspace, admin membership, default columns, idempotency receipt and audit
+event in one transaction. It rejects machine/bearer authentication. Browser-only
 `GET /api/v2/session` returns identity, optional `avatar_url`, and CSRF. `/healthz` and
 `/readyz` check liveness and DB/schema readiness independently of GitLab. Board responses
 may include observations, import receipts, and cached GitLab profile metadata on members.

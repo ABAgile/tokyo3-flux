@@ -108,6 +108,88 @@ func execSQL(t *testing.T, s *Store, sql string) {
 	}
 }
 
+func TestPostgresWorkspaceCreation(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	key := strings.Repeat("k", 16)
+	created, err := s.CreateWorkspace(ctx, "Team Alpha", "alice", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" || created.Name != "Team Alpha" || created.Role != "admin" || created.Revision != 1 {
+		t.Fatalf("created workspace = %+v", created)
+	}
+	board := getBoard(t, s, created.ID)
+	if len(board.Projects) != 0 || len(board.Columns) != 4 || len(board.Members) != 1 || board.Members[0].Subject != "alice" || board.Members[0].Role != "admin" {
+		t.Fatalf("created workspace board = %+v", board)
+	}
+	wantColumns := []struct {
+		name, category string
+		wip            int
+	}{{"Ready", "todo", 0}, {"In progress", "doing", 3}, {"In review", "doing", 3}, {"Done", "done", 0}}
+	for i, want := range wantColumns {
+		column := board.Columns[i]
+		if column.Name != want.name || column.Category != want.category || column.Position != i || column.WIP != want.wip {
+			t.Fatalf("default column %d = %+v", i, column)
+		}
+	}
+	var audits, receipts int
+	if err = s.pool.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE workspace_id=$1 AND action='workspace.create'", created.ID).Scan(&audits); err != nil || audits != 1 {
+		t.Fatalf("workspace audit count = %d: %v", audits, err)
+	}
+	if err = s.pool.QueryRow(ctx, "SELECT count(*) FROM idempotency_keys WHERE workspace_id=$1 AND actor=$2 AND key=$3", created.ID, "alice", key).Scan(&receipts); err != nil || receipts != 1 {
+		t.Fatalf("workspace receipt count = %d: %v", receipts, err)
+	}
+	retried, err := s.CreateWorkspace(ctx, "Team Alpha", "alice", key)
+	if err != nil || retried.ID != created.ID {
+		t.Fatalf("idempotent workspace retry = %+v: %v", retried, err)
+	}
+	parallelKey := strings.Repeat("q", 16)
+	results := make(chan struct {
+		workspace p.Workspace
+		err       error
+	}, 2)
+	var group sync.WaitGroup
+	for range 2 {
+		group.Go(func() {
+			workspace, err := s.CreateWorkspace(ctx, "Team Beta", "alice", parallelKey)
+			results <- struct {
+				workspace p.Workspace
+				err       error
+			}{workspace, err}
+		})
+	}
+	group.Wait()
+	close(results)
+	for result := range results {
+		if result.err != nil || result.workspace.Name != "Team Beta" {
+			t.Fatalf("concurrent workspace creation = %+v: %v", result.workspace, result.err)
+		}
+	}
+	if _, err = s.CreateWorkspace(ctx, "Different name", "alice", key); !errors.Is(err, p.ErrConflict) {
+		t.Fatalf("idempotency key reuse error = %v", err)
+	}
+	var workspaceCount int
+	if err = s.pool.QueryRow(ctx, "SELECT count(*) FROM workspaces").Scan(&workspaceCount); err != nil || workspaceCount != 2 {
+		t.Fatalf("workspace count = %d: %v", workspaceCount, err)
+	}
+}
+
+func TestPostgresWorkspaceCreationRollsBack(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	execSQL(t, s, "ALTER TABLE audit_events ADD CONSTRAINT injected_failure CHECK(false) NOT VALID")
+	if _, err := s.CreateWorkspace(ctx, "Rollback", "alice", strings.Repeat("r", 16)); err == nil {
+		t.Fatal("workspace creation accepted an unavailable audit sink")
+	}
+	for _, table := range []string{"workspaces", "memberships", "board_columns", "audit_events", "idempotency_keys"} {
+		var count int
+		if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s partial commit: %d: %v", table, count, err)
+		}
+	}
+}
+
 func TestPostgresNativeLifecycle(t *testing.T) {
 	s := testStore(t)
 	b := bootstrap(t, s)

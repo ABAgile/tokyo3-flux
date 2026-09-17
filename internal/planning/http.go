@@ -30,6 +30,10 @@ type Repository interface {
 	History(context.Context, string, string, int64) ([]Event, error)
 }
 
+type WorkspaceCreator interface {
+	CreateWorkspace(context.Context, string, string, string) (Workspace, error)
+}
+
 type GitLabProjectRepository interface {
 	GitLabProjects(context.Context, string, string) ([]GitLabProject, error)
 }
@@ -111,6 +115,44 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 	mux.HandleFunc("GET /api/v2/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		v, err := h.repo.Workspaces(r.Context(), h.subject(r, machine))
 		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("POST /api/v2/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if machine || r.Header.Get("Authorization") != "" {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
+			h.failure(w, r, ErrForbidden)
+			return
+		}
+		if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		creator, ok := h.repo.(WorkspaceCreator)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		var input struct {
+			Name string `json:"name"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&input); err != nil {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		if err := dec.Decode(new(any)); err != io.EOF {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		workspace, err := creator.CreateWorkspace(r.Context(), input.Name, h.subject(r, false), r.Header.Get("Idempotency-Key"))
+		if err != nil {
+			h.failure(w, r, err)
+			return
+		}
+		respond(w, http.StatusCreated, workspace)
 	})
 	mux.HandleFunc("GET /api/v2/workspaces/{workspace}/projects", func(w http.ResponseWriter, r *http.Request) {
 		v, err := h.repo.Projects(r.Context(), r.PathValue("workspace"), h.subject(r, machine))

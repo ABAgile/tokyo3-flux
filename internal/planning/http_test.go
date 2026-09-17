@@ -22,11 +22,12 @@ import (
 )
 
 type fakeRepository struct {
-	changes     int
-	commentAdds int
-	subject     string
-	err         error
-	attachment  Attachment
+	changes          int
+	workspaceCreates int
+	commentAdds      int
+	subject          string
+	err              error
+	attachment       Attachment
 }
 
 func (f *fakeRepository) Workspaces(_ context.Context, subject string) ([]Workspace, error) {
@@ -36,6 +37,11 @@ func (f *fakeRepository) Workspaces(_ context.Context, subject string) ([]Worksp
 func (f *fakeRepository) Projects(_ context.Context, _, subject string) ([]Project, error) {
 	f.subject = subject
 	return []Project{}, f.err
+}
+func (f *fakeRepository) CreateWorkspace(_ context.Context, name, subject, _ string) (Workspace, error) {
+	f.workspaceCreates++
+	f.subject = subject
+	return Workspace{ID: "created", Name: name, Role: "admin", Revision: 1}, f.err
 }
 func (f *fakeRepository) GitLabProjects(_ context.Context, _, subject string) ([]GitLabProject, error) {
 	f.subject = subject
@@ -130,12 +136,15 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	}
 	root := "http://localhost/api/v2/workspaces/w"
 	tests := []struct {
-		name, method, path, body, token, auth string
-		cookie                                bool
-		status                                int
+		name, method, path, url, body, token, auth string
+		cookie                                     bool
+		status                                     int
 	}{
 		{name: "anonymous", method: "GET", path: "/board", status: 303},
 		{name: "read", method: "GET", path: "/board", cookie: true, status: 200},
+		{name: "create workspace", method: "POST", url: "http://localhost/api/v2/workspaces", body: `{"name":"Team Alpha"}`, cookie: true, token: csrf, status: 201},
+		{name: "create workspace bearer", method: "POST", url: "http://localhost/api/v2/workspaces", body: `{"name":"Team Alpha"}`, cookie: true, token: csrf, auth: "Bearer browser-credential", status: 403},
+		{name: "create workspace unknown field", method: "POST", url: "http://localhost/api/v2/workspaces", body: `{"name":"Team Alpha","subject":"spoofed"}`, cookie: true, token: csrf, status: 400},
 		{name: "comments", method: "GET", path: "/items/a/comments", cookie: true, status: 200},
 		{name: "comment missing csrf", method: "POST", path: "/items/a/comments", body: `{"body":"hello"}`, cookie: true, status: 403},
 		{name: "comment", method: "POST", path: "/items/a/comments", body: `{"body":"hello"}`, cookie: true, token: csrf, status: 200},
@@ -170,7 +179,11 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(tc.method, root+tc.path, strings.NewReader(tc.body))
+			target := tc.url
+			if target == "" {
+				target = root + tc.path
+			}
+			r := httptest.NewRequest(tc.method, target, strings.NewReader(tc.body))
 			if tc.cookie {
 				r.AddCookie(cookies[0])
 			}
@@ -185,8 +198,17 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 			}
 		})
 	}
-	if repo.changes != 1 || repo.commentAdds != 1 {
-		t.Fatalf("unexpected writes reached repository: planning=%d comments=%d", repo.changes, repo.commentAdds)
+	missingKey := httptest.NewRequest("POST", "http://localhost/api/v2/workspaces", strings.NewReader(`{"name":"Missing key"}`))
+	missingKey.AddCookie(cookies[0])
+	missingKey.Header.Set("Content-Type", "application/json")
+	missingKey.Header.Set("X-CSRF-Token", csrf)
+	missingKeyResponse := httptest.NewRecorder()
+	browser.ServeHTTP(missingKeyResponse, missingKey)
+	if missingKeyResponse.Code != http.StatusBadRequest {
+		t.Fatalf("missing workspace idempotency key got %d", missingKeyResponse.Code)
+	}
+	if repo.changes != 1 || repo.commentAdds != 1 || repo.workspaceCreates != 1 || repo.subject != "fixture-user" {
+		t.Fatalf("unexpected writes reached repository: planning=%d comments=%d workspaces=%d subject=%q", repo.changes, repo.commentAdds, repo.workspaceCreates, repo.subject)
 	}
 	for _, path := range []string{"/api/v2/session", "/api/v2/workspaces", "/api/v2/workspaces/w/projects", "/api/v2/workspaces/w/gitlab/projects", "/api/v2/workspaces/w/gitlab/users?search=alex"} {
 		r := httptest.NewRequest("GET", "http://localhost"+path, nil)
@@ -211,6 +233,14 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("machine %s got %d", method, w.Code)
 		}
+	}
+	machineWorkspace := httptest.NewRecorder()
+	machineWorkspaceRequest := httptest.NewRequest("POST", "http://localhost/api/v2/workspaces", strings.NewReader(`{"name":"Machine workspace"}`))
+	machineWorkspaceRequest.Header.Set("Authorization", "Bearer "+strings.Repeat("m", 32))
+	machineWorkspaceRequest.Header.Set("Content-Type", "application/json")
+	machine.ServeHTTP(machineWorkspace, machineWorkspaceRequest)
+	if machineWorkspace.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("machine workspace creation got %d", machineWorkspace.Code)
 	}
 	machineProjects := httptest.NewRecorder()
 	machineProjectRequest := httptest.NewRequest("GET", root+"/gitlab/projects", nil)

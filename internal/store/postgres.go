@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	_ "embed"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -101,7 +102,7 @@ func (s *Store) Ready(ctx context.Context) error {
 	var version int
 	err := s.pool.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version)
 	if err != nil || version != 10 {
-		return errors.New("native schema unavailable: run flux plan migrate")
+		return errors.New("native schema unavailable: run flux migrate")
 	}
 	return nil
 }
@@ -216,6 +217,111 @@ func (s *Store) Bootstrap(ctx context.Context, name, project, subject string) (p
 		return result, err
 	}
 	return result, tx.Commit(ctx)
+}
+
+// CreateWorkspace is the browser workspace-registration transaction. Its
+// request receipt is anchored by the audit request ID because a new workspace
+// has no workspace-scoped idempotency namespace until it exists.
+func (s *Store) CreateWorkspace(ctx context.Context, name, subject, key string) (p.Workspace, error) {
+	name = strings.TrimSpace(name)
+	subject = strings.TrimSpace(subject)
+	if name == "" || len(name) > 120 || strings.ContainsAny(name, "\x00\r\n") || subject == "" || len(subject) > 200 || strings.ContainsAny(subject, "\x00\r\n") {
+		return p.Workspace{}, fmt.Errorf("%w: workspace name and authenticated subject are required", p.ErrInvalid)
+	}
+	if len(key) < 16 || len(key) > 120 || strings.ContainsAny(key, "\x00\r\n") {
+		return p.Workspace{}, fmt.Errorf("%w: Idempotency-Key must be 16–120 characters", p.ErrInvalid)
+	}
+	digest := workspaceCreateDigest(name)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return p.Workspace{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// There is no workspace ID to lock before creation. Serialize the same
+	// actor/key pair so a lost response cannot create a second workspace.
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", workspaceCreateLock(subject, key)); err != nil {
+		return p.Workspace{}, err
+	}
+	replay := func(wid, savedDigest string) (p.Workspace, error) {
+		if savedDigest != digest {
+			return p.Workspace{}, p.ErrConflict
+		}
+		var result p.Workspace
+		err = tx.QueryRow(ctx, `SELECT w.id,w.name,w.revision,m.role
+ FROM workspaces w JOIN memberships m ON m.workspace_id=w.id
+ WHERE w.id=$1 AND m.subject=$2`, wid, subject).
+			Scan(&result.ID, &result.Name, &result.Revision, &result.Role)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return p.Workspace{}, p.ErrConflict
+		}
+		if err != nil {
+			return p.Workspace{}, err
+		}
+		return result, tx.Commit(ctx)
+	}
+	var receiptWorkspace, receiptDigest string
+	err = tx.QueryRow(ctx, `SELECT workspace_id,digest FROM idempotency_keys
+ WHERE actor=$1 AND key=$2 AND digest LIKE 'workspace:%'
+ LIMIT 1`, subject, key).Scan(&receiptWorkspace, &receiptDigest)
+	if err == nil {
+		return replay(receiptWorkspace, receiptDigest)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return p.Workspace{}, err
+	}
+	var receipt []byte
+	err = tx.QueryRow(ctx, `SELECT after_state FROM audit_events
+ WHERE actor=$1 AND action='workspace.create' AND request_id=$2
+ ORDER BY id DESC LIMIT 1`, subject, key).Scan(&receipt)
+	if err == nil {
+		var saved struct {
+			Workspace p.Workspace `json:"workspace"`
+			Digest    string      `json:"digest"`
+		}
+		if json.Unmarshal(receipt, &saved) != nil || saved.Workspace.ID == "" || saved.Digest == "" {
+			return p.Workspace{}, p.ErrConflict
+		}
+		return replay(saved.Workspace.ID, saved.Digest)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return p.Workspace{}, err
+	}
+
+	wid := p.NewID()
+	result := p.Workspace{ID: wid, Name: name, Role: "admin", Revision: 1}
+	if _, err = tx.Exec(ctx, "INSERT INTO workspaces(id,name) VALUES($1,$2)", wid, name); err != nil {
+		return p.Workspace{}, err
+	}
+	if _, err = tx.Exec(ctx, "INSERT INTO memberships(workspace_id,subject,role) VALUES($1,$2,'admin')", wid, subject); err != nil {
+		return p.Workspace{}, err
+	}
+	for i, column := range []struct {
+		name, category string
+		wip            int
+	}{{"Ready", "todo", 0}, {"In progress", "doing", 3}, {"In review", "doing", 3}, {"Done", "done", 0}} {
+		if _, err = tx.Exec(ctx, "INSERT INTO board_columns(workspace_id,id,name,category,position,wip) VALUES($1,$2,$3,$4,$5,$6)", wid, p.NewID(), column.name, column.category, i, column.wip); err != nil {
+			return p.Workspace{}, err
+		}
+	}
+	after, _ := json.Marshal(map[string]any{"workspace": result, "digest": digest})
+	if _, err = tx.Exec(ctx, `INSERT INTO audit_events(workspace_id,actor,action,request_id,after_state,outcome)
+ VALUES($1,$2,'workspace.create',$3,$4,'success')`, wid, subject, key, after); err != nil {
+		return p.Workspace{}, err
+	}
+	if _, err = tx.Exec(ctx, "INSERT INTO idempotency_keys(workspace_id,actor,key,digest,revision) VALUES($1,$2,$3,$4,$5)", wid, subject, key, digest, result.Revision); err != nil {
+		return p.Workspace{}, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+func workspaceCreateDigest(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return "workspace:" + hex.EncodeToString(sum[:])
+}
+
+func workspaceCreateLock(subject, key string) int64 {
+	sum := sha256.Sum256([]byte(subject + "\x00" + key))
+	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
 func (s *Store) Workspaces(ctx context.Context, subject string) ([]p.Workspace, error) {

@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
+let workspaceGate = 'loading', workspaceCreating = false, workspaceCreateKey = '', workspaceCreateName = '', membershipPoll = false;
 let pendingPlanningURLState;
 let projectSearch = '', projectAssigneeFilter = 'all', projectLabelFilter = 'all';
 let selectedItemID = '', detailPane, detailState;
@@ -35,6 +36,27 @@ function notice(text, error = false) { $('notice').textContent = text; $('notice
 function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') { const banner = $('planning-change'); if (planningChangeNotice && !banner.hidden && $('planning-change-text').textContent === text) return; planningChangeNotice = true; $('planning-change-text').textContent = text; banner.hidden = false; }
 function clearPlanningChangeNotice() { planningChangeNotice = false; $('planning-change').hidden = true; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
+function workspaceURLState() { return new URL(window.location.href).searchParams.get('workspace') || ''; }
+function workspacePreference() { return workspaceURLState() || localStorage.getItem('flux-plan-workspace') || ''; }
+function persistWorkspaceURL(id) {
+ const url = new URL(window.location.href);
+ if (id) { url.searchParams.set('workspace', id); localStorage.setItem('flux-plan-workspace', id); }
+ else { url.searchParams.delete('workspace'); localStorage.removeItem('flux-plan-workspace'); }
+ window.history.replaceState(null, '', url);
+}
+function validWorkspaceList(data) { return Array.isArray(data) && data.every(workspace => workspace && typeof workspace.id === 'string' && workspace.id && typeof workspace.name === 'string' && workspace.name && typeof workspace.role === 'string' && Number.isSafeInteger(workspace.revision)); }
+function workspaceListSignature(list) { return JSON.stringify(list.map(workspace => [workspace.id, workspace.name, workspace.role, workspace.revision])); }
+function updateWorkspaceOptions(selected = '') {
+ const signature = workspaceListSignature(workspaces); const select = $('workspace');
+ if (select.dataset.signature === signature && select.value === selected) return;
+ options(select, workspaces.map(workspace => [workspace.id, workspaceLabel(workspace)]), selected);
+ select.dataset.signature = signature;
+}
+async function loadWorkspaces(selected = '') {
+ const next = await api('/api/v2/workspaces');
+ if (!validWorkspaceList(next)) throw new Error('Workspace list is invalid. Refresh to retry.');
+ workspaces = next; updateWorkspaceOptions(selected && workspaces.some(workspace => workspace.id === selected) ? selected : ''); return next;
+}
 function planningURLState() {
  const params = new URLSearchParams(window.location.search); const mode = params.get('mode');
  return {mode: mode === 'list' || mode === 'board' ? mode : undefined, project: params.get('project') || undefined, scope: params.get('scope') || undefined};
@@ -87,12 +109,38 @@ function restoreUIState(state) {
 }
 async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); if (r.status === 204) return null; let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
 function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownRequests.clear(); burndownErrors.clear(); }
+function enterWorkspaceGate(mode, message) {
+ if (detailState) closeDetail({force:true, focus:false});
+ if ($('editor').open && !busy) closeEditor();
+ board = undefined; root = undefined; workspaceGate = mode; pendingPlanningURLState = undefined; persistWorkspaceURL('');
+ if (message) notice(message);
+ render();
+}
+async function refreshWorkspaceGate() {
+ if (busy || loading || integrationFormOpen) return false;
+ const generation = ++loadGeneration; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
+ try {
+  const next = await loadWorkspaces(''); if (generation !== loadGeneration) return false;
+  if (next.length === 1) { loading = false; return await chooseWorkspace(next[0].id); }
+  workspaceGate = next.length ? 'select' : 'create';
+  if (!next.length) persistWorkspaceURL('');
+  notice(next.length ? 'Choose a workspace to continue.' : 'No workspace yet. Create one to get started.'); return true;
+ } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
+ finally { if (generation === loadGeneration) { loading = false; render(); } }
+}
 async function refresh() {
- if (!root || busy || integrationFormOpen) return;
+ if (busy || integrationFormOpen) return false;
+ if (!root) return refreshWorkspaceGate();
  const generation = ++loadGeneration; let uiState; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
  try {
+  const selectedID = board?.workspace?.id || $('workspace').value;
+  const memberships = await loadWorkspaces(selectedID); if (generation !== loadGeneration) return false;
+  if (!selectedID || !memberships.some(workspace => workspace.id === selectedID)) {
+   enterWorkspaceGate(memberships.length ? 'select' : 'create', memberships.length ? 'Workspace access changed. Choose an available workspace.' : 'Workspace access changed. Create a workspace to get started.');
+   return false;
+  }
   const next = await api(root + '/board'); if (generation !== loadGeneration) return false;
-  uiState = captureUIState(); board = mergeBoardData(board, next); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0;
+  uiState = captureUIState(); board = mergeBoardData(board, next); workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0;
   if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true;
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
@@ -106,7 +154,7 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? board?.items.find(value => value.id === e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('workspace').disabled = busy || loading || integrationFormOpen; $('project').disabled = busy || loading; $('assignee').disabled = busy || loading; $('label').disabled = busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? board?.items.find(value => value.id === e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; document.querySelector('.toolbar').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; }
 let drag;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
@@ -298,9 +346,24 @@ function sprintPanel(s, items = scopeItems(s)) {
  if (s.state === 'closed') info.append(el('small', 'Scope preserved at closure. Card details reflect current work; historical state is retained in audit.', 'muted'));
  panel.append(info, metrics, actions); if (expanded) panel.append(renderBurndown(s)); panel.dataset.renderSignature = JSON.stringify({s, expanded, data:expanded ? burndownData.get(currentBurndownKey(s.id)) || null : null, error:expanded ? burndownErrors.get(currentBurndownKey(s.id)) || null : null}); return panel;
 }
+function renderWorkspaceSelection(content) {
+ const gate = el('section', undefined, 'workspace-gate'); gate.setAttribute('aria-label', 'Choose a workspace'); gate.append(el('p', 'Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.', 'help'));
+ const list = el('div', undefined, 'workspace-choice-list'); list.setAttribute('role', 'list'); workspaces.forEach(workspace => { const choice = button('', () => { void chooseWorkspace(workspace.id); }, 'workspace-choice'); choice.dataset.workspaceChoice = workspace.id; choice.setAttribute('aria-label', `Open ${workspace.name}`); const copy = el('span', undefined, 'workspace-choice-copy'); copy.append(el('strong', workspace.name), el('small', `${workspace.role} access`, 'muted')); choice.append(copy, el('span', 'Open →', 'workspace-choice-action')); list.append(choice); }); gate.append(list);
+ const actions = el('div', undefined, 'actions workspace-gate-actions'); actions.append(button('Create a workspace', showWorkspaceCreate, 'primary')); gate.append(actions); content.replaceChildren(gate);
+}
+function renderWorkspaceCreation(content) {
+ const gate = el('section', undefined, 'workspace-gate'); gate.setAttribute('aria-label', 'Create a workspace'); gate.append(el('p', session?.name ? `You are signed in as ${session.name}. Create a workspace to start planning; you will be its initial administrator.` : 'Create a workspace to start planning; your signed-in account will be its initial administrator.', 'help'));
+ const form = el('form', undefined, 'workspace-create-form'); const input = field(form, 'name', 'Workspace name'); input.id = 'workspace-name'; input.required = true; input.maxLength = 120; input.autocomplete = 'organization'; input.placeholder = 'e.g. Team Alpha'; const status = el('p', '', 'workspace-create-status'); status.dataset.workspaceCreateStatus = 'true'; status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); form.append(status); const actions = el('div', undefined, 'actions'); const submit = button('Create workspace', undefined, 'primary'); submit.type = 'submit'; actions.append(submit); if (workspaces.length) actions.append(button('Back to workspace selection', showWorkspaceSelection)); form.append(actions); form.addEventListener('submit', createWorkspace); gate.append(form); content.replaceChildren(gate); input.focus();
+}
 function render() {
  renderControls();
- if (!board) { $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('content').replaceChildren(el('p', 'Choose an available workspace to begin. Projects are optional.', 'empty')); return; }
+ if (!board) {
+  $('content').setAttribute('aria-busy', String(workspaceGate === 'loading' || loading)); $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('planning-change').hidden = true;
+  if (workspaceGate === 'select') { $('title').textContent = 'Choose a workspace'; $('subtitle').textContent = 'Select a shared planning space to continue.'; renderWorkspaceSelection($('content')); }
+  else if (workspaceGate === 'create') { $('title').textContent = workspaces.length ? 'Create a workspace' : 'Create your first workspace'; $('subtitle').textContent = 'Set up a shared planning space for your team.'; renderWorkspaceCreation($('content')); }
+  else { $('title').textContent = 'Loading planning data'; $('subtitle').textContent = 'Checking workspace access…'; $('content').replaceChildren(el('p', 'Loading workspace access…', 'empty')); }
+  return;
+ }
  const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
  const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
  const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
@@ -502,7 +565,7 @@ function reconcileKeyedChildren(parent, nextNodes, keyOf, patch = patchNode, res
 function renderColumn(col, items) {
  const section = el('section', undefined, 'column'); section.dataset.column = col.id; section.setAttribute('aria-label', col.name);
  const peers = items.filter(item => item.column_id === col.id); const total = board.items.filter(item => !item.archived && item.column_id === col.id).length;
- const head = el('div', undefined, 'column-head'); head.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip, shown:peers.length, total}); head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} workspace WIP` : 'No workspace WIP limit'}`)); makeDraggable(head, 'list', col.id, col.name);
+ const head = el('div', undefined, 'column-head'); head.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip, shown:peers.length, total}); head.append(el('h3', col.name), el('small', `${peers.length} shown · ${columnWIPLabel(col, total)}`)); makeDraggable(head, 'list', col.id, col.name);
  dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; section.append(empty); }
  section.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip}); return section;
 }
@@ -598,7 +661,7 @@ function listRow(item) {
 function listSection(column, items) {
  const section = el('details', undefined, 'list-section'); section.dataset.column = column.id; section.open = true; section.setAttribute('aria-label', column.name);
  const peers = items.filter(item => item.column_id === column.id); const total = board.items.filter(item => !item.archived && item.column_id === column.id).length;
- const head = el('summary', undefined, 'list-section-head'); head.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip, shown:peers.length, total}); const title = el('span', undefined, 'list-section-title'); title.append(el('h3', column.name)); const summary = el('span', `${peers.length} shown · ${column.wip ? `${total}/${column.wip} workspace WIP` : 'No workspace WIP limit'}`, 'list-section-summary'); head.append(title, summary); makeDraggable(head, 'list', column.id, column.name);
+ const head = el('summary', undefined, 'list-section-head'); head.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip, shown:peers.length, total}); const title = el('span', undefined, 'list-section-title'); title.append(el('h3', column.name)); const summary = el('span', `${peers.length} shown · ${columnWIPLabel(column, total)}`, 'list-section-summary'); head.append(title, summary); makeDraggable(head, 'list', column.id, column.name);
  dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: column.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === column.id) + 1]?.id || '' : column.id}), 'x');
  const body = el('div', undefined, 'list-section-body'); body.append(...peers.map(item => listRow(item))); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; body.append(empty); } section.append(head, body); section.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip}); return section;
 }
@@ -647,14 +710,35 @@ function renderContent() {
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
-function workspaceLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
+function workspaceLabel(workspace) { return workspace.name; }
+function workspaceHistoryLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
+function columnWIPLabel(column, total) { return column.wip ? `${total}/${column.wip} WIP` : 'No limit'; }
+function showWorkspaceSelection() { if (busy || loading) return; workspaceGate = 'select'; render(); document.querySelector('[data-workspace-choice]')?.focus(); }
+function showWorkspaceCreate() { if (busy || loading || integrationFormOpen) return; workspaceCreateKey = ''; workspaceCreateName = ''; if (board) { enterWorkspaceGate('create', 'Create a workspace to add another planning space.'); return; } workspaceGate = 'create'; render(); }
+async function createWorkspace(event) {
+ event.preventDefault(); if (workspaceCreating || busy || loading) return;
+ const form = event.currentTarget; const input = form.elements.name; const status = form.querySelector('[data-workspace-create-status]'); const submit = form.querySelector('button[type="submit"]'); const name = String(input.value || '').trim();
+ const setStatus = (text, error = false) => { status.textContent = text || ''; status.hidden = !text; status.className = error ? 'workspace-create-status error' : 'workspace-create-status'; status.setAttribute('role', error ? 'alert' : 'status'); };
+ if (!name || name.length > 120 || /[\u0000\r\n]/.test(name)) { setStatus('Workspace name must be between 1 and 120 characters.', true); input.focus(); return; }
+ if (workspaceCreateName !== name || !workspaceCreateKey) { workspaceCreateName = name; workspaceCreateKey = requestKey(); }
+ workspaceCreating = true; submit.disabled = true; input.disabled = true; setStatus('Creating workspace…');
+ try {
+  const created = await api('/api/v2/workspaces', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf,'Idempotency-Key':workspaceCreateKey}, body:JSON.stringify({name})});
+  if (!validWorkspaceList([created])) throw new Error('Workspace response is invalid. Refresh to retry.');
+  const next = await loadWorkspaces(created.id); if (!next.some(workspace => workspace.id === created.id)) throw new Error('The new workspace is not available yet. Refresh to retry.');
+  pendingPlanningURLState = undefined; if (!await chooseWorkspace(created.id)) throw new Error('Workspace created, but its board could not be opened. Refresh to retry.'); workspaceCreateKey = ''; workspaceCreateName = '';
+ } catch (error) {
+  if (!document.querySelector('[data-workspace-create-status]')) { workspaceGate = 'create'; root = undefined; render(); }
+  const currentForm = document.querySelector('.workspace-create-form'); const currentStatus = currentForm?.querySelector('[data-workspace-create-status]'); const currentInput = currentForm?.elements.name; if (currentInput && !currentInput.value) currentInput.value = workspaceCreateName || name; if (currentStatus) { currentStatus.textContent = error.message; currentStatus.hidden = false; currentStatus.className = 'workspace-create-status error'; currentStatus.setAttribute('role', 'alert'); } if (currentInput) currentInput.focus();
+ } finally { workspaceCreating = false; const currentForm = document.querySelector('.workspace-create-form'); if (currentForm) { currentForm.elements.name.disabled = false; currentForm.querySelector('button[type="submit"]').disabled = false; } renderControls(); }
+}
 function historyActorLabel(subject) {
  const member = board.members.find(candidate => candidate.subject === subject);
  const name = member ? memberListingInfo(member).name : subject === session?.subject ? String(session.name || '').trim() : '';
  return name ? `${name} (${subject})` : subject;
 }
 function renderHistory(content) {
- const label = workspaceLabel(board.workspace); content.append(el('p', label, 'muted'));
+ const label = workspaceHistoryLabel(board.workspace); content.append(el('p', label, 'muted'));
  if (!history.length) content.append(el('p', 'No planning changes yet.', 'empty'));
  history.forEach(e => { const row = el('article', undefined, 'history-row'); row.append(el('strong', e.action.replaceAll('.', ' · ')), el('p', `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`, 'muted')); if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id')); if (e.reason) row.append(el('p', e.reason)); content.append(row); });
  if (historyMore) content.append(button('Load older changes', async () => { try { await loadHistory(); renderContent(); } catch (e) { notice(e.message, true); } }));
@@ -1539,7 +1623,7 @@ document.addEventListener('pointerdown', e => { document.querySelectorAll('.atta
 function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; render(); persistPlanningURL(); }
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
 $('proposals').onclick = () => showProposals();
-$('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
+$('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('new-workspace').onclick = showWorkspaceCreate; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
 $('presentation-board').onclick = () => setPresentation('board'); $('presentation-list').onclick = () => setPresentation('list');
 $('scope').onchange = () => { render(); persistPlanningURL(); };
 $('label').onchange = $('search').oninput = renderContent;
@@ -1547,17 +1631,19 @@ $('project').onchange = () => { resetBurndown(); render(); if (!burndownRequests
 $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
 document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); });
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
-async function chooseWorkspace() {
- if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return; }
+async function chooseWorkspace(workspaceID = '') {
+ if (busy || loading) return false;
+ if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return false; }
+ const selectedID = workspaceID || $('workspace').value;
+ if (!workspaces.some(workspace => workspace.id === selectedID)) return false;
  const urlState = pendingPlanningURLState; pendingPlanningURLState = undefined;
  integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
- clearPlanningChangeNotice(); board = undefined; resetBurndown(); burndownExpanded.clear(); projectSearch = ''; projectAssigneeFilter = 'all'; projectLabelFilter = 'all'; $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
- root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
+ clearPlanningChangeNotice(); board = undefined; workspaceGate = 'loading'; updateWorkspaceOptions(selectedID); resetBurndown(); burndownExpanded.clear(); projectSearch = ''; projectAssigneeFilter = 'all'; projectLabelFilter = 'all'; $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`; render();
  const refreshed = await refresh();
- if (!refreshed) { if (urlState) pendingPlanningURLState = urlState; return; }
- if (urlState) applyPlanningURLState(urlState); else persistPlanningURL();
+ if (!refreshed) { if (urlState && workspaceGate === 'loading') pendingPlanningURLState = urlState; return false; }
+ workspaceGate = ''; persistWorkspaceURL(selectedID); if (urlState) applyPlanningURLState(urlState); else persistPlanningURL(); return true;
 }
-$('workspace').onchange = chooseWorkspace;
+$('workspace').onchange = () => { void chooseWorkspace(); };
 let observationPoll = false;
 setInterval(async () => {
  if (!board?.refresh_seconds || busy || loading || integrationFormOpen || drag || document.hidden || $('editor').open || observationPoll) return;
@@ -1572,10 +1658,28 @@ setInterval(async () => {
  } catch (e) { if (board === current && !busy && !integrationFormOpen && !$('editor').open) notice('Observation cache could not be reloaded. Use Refresh to retry.', true); }
  finally { observationPoll = false; }
 }, 15000);
+setInterval(async () => {
+ if (!board || busy || loading || integrationFormOpen || drag || document.hidden || $('editor').open || membershipPoll) return;
+ const current = board, selectedID = board.workspace.id, before = workspaceListSignature(workspaces); membershipPoll = true;
+ try {
+  const next = await loadWorkspaces(selectedID);
+  if (board !== current || busy || loading || integrationFormOpen || document.hidden) return;
+  if (!next.some(workspace => workspace.id === selectedID)) { enterWorkspaceGate(next.length ? 'select' : 'create', next.length ? 'Workspace access changed. Choose an available workspace.' : 'Workspace access changed. Create a workspace to get started.'); return; }
+  if (workspaceListSignature(next) !== before) showPlanningChangeNotice('Workspace membership changed · Refresh to review');
+ } catch (e) { if (board === current && !busy && !integrationFormOpen) notice('Workspace access could not be reloaded. Use Refresh to retry.', true); }
+ finally { membershipPoll = false; }
+}, 30000);
 // Local freshness/cooldowns require no additional network requests.
 setInterval(() => {
  if (!board) return;
  document.querySelectorAll('[data-refresh-link]').forEach(node => { const link = board.links.find(l => l.id === node.dataset.refreshLink); patchRefreshControl(node, link); });
 }, 10000);
 renderControls();
-(async () => { try { session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; workspaces = await api('/api/v2/workspaces'); options($('workspace'), workspaces.map(w => [w.id, workspaceLabel(w)])); if (!workspaces.length) { notice('No workspace membership. Ask an operator to grant your login subject access: ' + session.subject); render(); return; } await chooseWorkspace(); } catch (e) { notice(e.message, true); renderControls(); } })();
+(async () => { try {
+ session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; const next = await loadWorkspaces(''); const preferred = workspacePreference();
+ if (!next.length) { pendingPlanningURLState = undefined; workspaceGate = 'create'; persistWorkspaceURL(''); notice('No workspace yet. Create one to get started.'); render(); return; }
+ if (preferred && next.some(workspace => workspace.id === preferred)) { await chooseWorkspace(preferred); return; }
+ if (preferred) persistWorkspaceURL('');
+ if (next.length === 1) { await chooseWorkspace(next[0].id); return; }
+ workspaceGate = 'select'; notice('Choose a workspace to continue.'); render();
+ } catch (e) { notice(e.message, true); render(); } })();

@@ -12,7 +12,7 @@ import (
 )
 
 func TestPlanValidation(t *testing.T) {
-	for _, args := range [][]string{nil, {"unknown"}, {"serve", "--demo", "--addr", "0.0.0.0:8080"}, {"bootstrap"}, {"member"}, {"seed"}, {"migrate", "extra"}, {"serve", "--bad"}} {
+	for _, args := range [][]string{nil, {"unknown"}, {"serve", "--demo", "--addr", "0.0.0.0:8080"}, {"serve", "--name", "unused"}, {"migrate", "--addr", "unused"}, {"bootstrap"}, {"bootstrap", "--workspace", "unused"}, {"member"}, {"member", "--name", "unused"}, {"seed"}, {"seed", "--demo"}, {"migrate", "extra"}, {"serve", "--bad"}} {
 		var out bytes.Buffer
 		if err := runPlan(args, &out, &out); err == nil {
 			t.Fatalf("accepted %v", args)
@@ -20,8 +20,11 @@ func TestPlanValidation(t *testing.T) {
 	}
 	t.Setenv("FLUX_SESSION_KEY", "")
 	var out bytes.Buffer
-	if err := run([]string{"plan", "serve"}, &out, &out); err == nil {
+	if err := run([]string{"serve"}, &out, &out); err == nil {
 		t.Fatal("production without session key")
+	}
+	if err := run([]string{"plan", "serve"}, &out, &out); err == nil {
+		t.Fatal("accepted retired plan alias")
 	}
 }
 func TestReadConnectorValidationBeforeDatabase(t *testing.T) {

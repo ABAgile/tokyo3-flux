@@ -30,10 +30,13 @@ a validated HTTPS Gravatar avatar URL.
 
 - Sidebar 208px on desktop, top navigation below 900px. Main padding 32px on desktop, 16px below
   900px. Navigation icons use a fixed 24px column so menu labels align. The workspace control has
-  an icon-only Refresh action beside its label. The sidebar footer is right-aligned. The theme
+  icon-only Create and Refresh actions beside its label. The sidebar footer is right-aligned. The theme
   control is an icon beside a single account cell; identity and Sign out appear on separate lines.
-  Board columns use a responsive grid with a minimum 240px width; wrap columns rather than causing
-  page-level horizontal scroll.
+  Before a board is entered, a dedicated workspace gate asks users to choose among multiple
+  memberships or create their first workspace; a single membership may open directly. Creation uses
+  a labeled native form and makes the authenticated subject the initial administrator. The sidebar
+  workspace selector remains available for switching after entry. Board columns use a responsive grid
+  with a minimum 240px width; wrap columns rather than causing page-level horizontal scroll.
 - One shared board belongs to each workspace; projects classify items optionally. Project, assignee
   and label filters sit beside Scope in the planning toolbar (including unassigned and named
   assignees), never in the sidebar and never as a planning boundary. The planning toolbar also
@@ -41,8 +44,8 @@ a validated HTTPS Gravatar avatar URL.
   filtered work by the ordered board columns without changing navigation or scope semantics. Scope
   lists Active sprints, Backlog, and All open work in that order. WIP counts the whole workspace
   column, regardless of filtering. List sections remain visible when empty and can be expanded,
-  collapsed, and used as drop targets. Workspace-wide WIP remains explicitly labeled even when a
-  project lens is active. Selecting a named project shows current non-archived Remaining, Done,
+  collapsed, and used as drop targets. Compact column summaries show the count as x/n WIP or No limit,
+  even when a project lens is active. Selecting a named project shows current non-archived Remaining, Done,
   Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics. Desktop
   List rows use an Asana-like table grid with separate
   Title, Project, Assignee, Labels, Sprints, and Links / Status columns plus a shared header;

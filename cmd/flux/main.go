@@ -27,8 +27,6 @@ func run(args []string, stdout, stderr io.Writer) error {
 	switch args[0] {
 	case "serve", "migrate", "bootstrap", "member", "seed":
 		return runPlan(args, stdout, stderr)
-	case "plan":
-		return runPlan(args[1:], stdout, stderr) // Native command namespace, not a legacy runtime.
 	case "read":
 		return runRead(args[1:], stdout, stderr)
 	case "import":
@@ -44,7 +42,18 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, "Flux — native planning\n\nflux serve|migrate|bootstrap|member|seed [flags]\nflux read --workspace ID --view board|item|triage|sprints|review|failures|links|catalog|imports|history [--target ID --offset N --revision N --limit N]\nflux import --workspace ID --input snapshot.json --mapping mapping.json (dry run only)\nflux version\n\nBrowser membership, CSRF, revision checks and human approval are required for planning writes. Machine credentials are read-only.")
+	fmt.Fprintln(w, `Flux — native planning
+
+flux serve [--addr ADDR] [--demo]
+flux migrate
+flux bootstrap --subject ID [--name NAME] [--project NAME]
+flux member --workspace ID --subject ID [--role viewer|member|admin]
+flux seed --workspace ID --subject ID [--project ID]
+flux read --workspace ID --view board|item|triage|sprints|review|failures|links|catalog|imports|history [--target ID --offset N --revision N --limit N]
+flux import --workspace ID --input snapshot.json --mapping mapping.json (dry run only)
+flux version
+
+Browser membership, CSRF, revision checks and human approval are required for planning writes. Machine credentials are read-only.`)
 }
 func envOrDefault(name, fallback string) string {
 	if value := os.Getenv(name); value != "" {

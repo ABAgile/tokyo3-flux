@@ -28,44 +28,57 @@ import (
 
 func runPlan(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: flux plan migrate|bootstrap|member|seed|serve")
+		return errors.New("usage: flux migrate|bootstrap|member|seed|serve")
 	}
 	cmd := args[0]
-	flags := flag.NewFlagSet("plan "+cmd, flag.ContinueOnError)
+	flags := flag.NewFlagSet("flux "+cmd, flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	addr := flags.String("addr", envOrDefault("FLUX_ADDR", "127.0.0.1:8080"), "HTTP listen address")
-	demo := flags.Bool("demo", false, "loopback-only synthetic login; never enable in production")
-	name := flags.String("name", "Workspace", "workspace name for bootstrap")
-	project := flags.String("project", "", "optional project ID for seed (or optional initial project name for bootstrap)")
-	workspace := flags.String("workspace", "", "workspace ID")
-	subject := flags.String("subject", "", "explicit login subject (GitLab numeric user ID, or fixture-user for demo)")
-	memberRole := flags.String("role", "member", "viewer, member, or admin")
+	var addr, name, project, workspace, subject, memberRole string
+	var demo bool
+	switch cmd {
+	case "serve":
+		flags.StringVar(&addr, "addr", envOrDefault("FLUX_ADDR", "127.0.0.1:8080"), "HTTP listen address")
+		flags.BoolVar(&demo, "demo", false, "loopback-only synthetic login; never enable in production")
+	case "bootstrap":
+		flags.StringVar(&name, "name", "Workspace", "workspace name")
+		flags.StringVar(&project, "project", "", "optional initial project name")
+		flags.StringVar(&subject, "subject", "", "explicit admin subject")
+	case "member":
+		flags.StringVar(&workspace, "workspace", "", "workspace ID")
+		flags.StringVar(&subject, "subject", "", "member subject")
+		flags.StringVar(&memberRole, "role", "member", "viewer, member, or admin")
+	case "seed":
+		flags.StringVar(&workspace, "workspace", "", "workspace ID")
+		flags.StringVar(&project, "project", "", "optional project ID")
+		flags.StringVar(&subject, "subject", "", "member subject used for seeded records")
+	case "migrate":
+	default:
+		return fmt.Errorf("unknown planning command %q", cmd)
+	}
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("plan commands accept flags only")
+		return errors.New("planning commands accept flags only")
 	}
 	switch cmd {
 	case "migrate":
 	case "bootstrap":
-		if *subject == "" {
+		if subject == "" {
 			return errors.New("bootstrap requires --subject ID; --project NAME is optional")
 		}
 	case "member":
-		if *workspace == "" || *subject == "" || (*memberRole != "viewer" && *memberRole != "member" && *memberRole != "admin") {
+		if workspace == "" || subject == "" || (memberRole != "viewer" && memberRole != "member" && memberRole != "admin") {
 			return errors.New("member requires --workspace ID, --subject ID and valid --role")
 		}
 	case "seed":
-		if *workspace == "" || *subject == "" {
+		if workspace == "" || subject == "" {
 			return errors.New("seed requires --workspace ID --subject ID; --project ID is optional")
 		}
 	case "serve":
-		if *demo && !isLoopbackAddress(*addr) {
+		if demo && !isLoopbackAddress(addr) {
 			return errors.New("demo mode requires a loopback listen address")
 		}
-	default:
-		return fmt.Errorf("unknown plan command %q", cmd)
 	}
 	app := cli.App{Name: "flux", EnvPrefix: "FLUX"}
 	material := app.DB()
@@ -78,7 +91,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	var machine *fluxauth.MachineToken
 	machineSubject := strings.TrimSpace(os.Getenv("FLUX_API_SUBJECT"))
 	if cmd == "serve" {
-		key, err := serveSessionKey(os.Getenv("FLUX_SESSION_KEY"), *demo)
+		key, err := serveSessionKey(os.Getenv("FLUX_SESSION_KEY"), demo)
 		if err != nil {
 			return err
 		}
@@ -93,7 +106,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		if machine != nil && machineSubject == "" {
 			return errors.New("FLUX_API_SUBJECT is required with FLUX_API_TOKEN; grant it explicit viewer membership")
 		}
-		if *demo {
+		if demo {
 			auth, err = fluxauth.NewFixture(sessions)
 		} else {
 			var a *fluxauth.Authenticator
@@ -144,15 +157,15 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	switch cmd {
 	case "bootstrap":
-		v, e := db.Bootstrap(ctx, *name, *project, *subject)
+		v, e := db.Bootstrap(ctx, name, project, subject)
 		if e != nil {
 			return e
 		}
 		return json.NewEncoder(stdout).Encode(v)
 	case "member":
-		return db.SetMember(ctx, *workspace, *subject, *memberRole)
+		return db.SetMember(ctx, workspace, subject, memberRole)
 	case "seed":
-		return seedPlanning(ctx, db, *workspace, *project, *subject)
+		return seedPlanning(ctx, db, workspace, project, subject)
 	}
 	rt := app.Setup(context.Background())
 	defer rt.Shutdown()
@@ -161,7 +174,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	defer attachments.Close()
-	api := planning.NewHTTP(db, sessions, machineSubject, *demo, rt.Log, attachments)
+	api := planning.NewHTTP(db, sessions, machineSubject, demo, rt.Log, attachments)
 	routes := http.NewServeMux()
 	if connectorSettings.WebhookSecret != "" {
 		hook, err := integration.NewWebhook(connectorSettings.WebhookSecret, connectorSettings.Client.Instance(), db.EnqueueWebhook, rt.Log)
@@ -199,7 +212,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	contentSecurityPolicy := "default-src 'self'; script-src 'self'; style-src 'self'; img-src " + strings.Join(imageSources, " ") + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if *demo {
+		if demo {
 			host := r.Host
 			if h, _, e := net.SplitHostPort(host); e == nil {
 				host = h
@@ -215,8 +228,8 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		routes.ServeHTTP(w, r)
 	})
-	server := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
-	rt.Log.Info("native Flux planning started", "addr", *addr, "demo", *demo)
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	rt.Log.Info("native Flux planning started", "addr", addr, "demo", demo)
 	components := []baserun.Component{baserun.HTTPServer(server, 10*time.Second, false)}
 	if connectorSettings.Interval > 0 {
 		components = append(components, func(ctx context.Context) error { return db.RunRefresh(ctx, rt.Log) })
