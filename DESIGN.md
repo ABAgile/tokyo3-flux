@@ -41,7 +41,10 @@ a validated HTTPS Gravatar avatar URL.
   filtered work by the ordered board columns without changing navigation or scope semantics. Scope
   lists Active sprints, Backlog, and All open work in that order. WIP counts the whole workspace
   column, regardless of filtering. List sections remain visible when empty and can be expanded,
-  collapsed, and used as drop targets. Desktop List rows use an Asana-like table grid with separate
+  collapsed, and used as drop targets. Workspace-wide WIP remains explicitly labeled even when a
+  project lens is active. Selecting a named project shows current non-archived Remaining, Done,
+  Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics. Desktop
+  List rows use an Asana-like table grid with separate
   Title, Project, Assignee, Labels, Sprints, and Links / Status columns plus a shared header;
   descriptions are not shown and the title cell is title-only. Links / Status owns blocked/archived
   state, a Board-aligned `GitLab links · count` header with View observations beside the label
@@ -107,7 +110,14 @@ a validated HTTPS Gravatar avatar URL.
   Archived cards and viewers cannot drag.
 - Projects and GitLab integration share a single-column Projects maintenance view, with GitLab
   integration first. Its show state displays approved GitLab project chips; `Edit integration` keeps
-  the existing inline approval form. Project editing uses its existing dialog. Members have a dedicated Members
+  the existing inline approval form. Project editing uses its existing dialog. The workspace project
+  list uses the plain page layout rather than a `maintenance-section` panel. Its compact horizontal
+  filter bar sits below the title with the Assignee select first, the Label select second, a
+  non-expanding accessible case-insensitive name search third, and a right-aligned visible project
+  count. Assignee and Label filters cover current non-archived item fields, with Unassigned and No
+  labels matching empty values; no-match states are explicit. The Sprints page keeps Project and Assignee in the compact planning toolbar, followed by Search;
+  those controls filter sprint metrics, while Search case-insensitively matches sprint names and goals
+  and shows a visible sprint count. Members have a dedicated Members
   view where admins can search available GitLab users, add or remove members, change roles, and maintain
   display names; adding a user defaults the workspace name to the GitLab profile name and shows the
   stored GitLab subject as a read-only field. Listings show the name, optional GitLab username and a
@@ -185,7 +195,11 @@ a validated HTTPS Gravatar avatar URL.
   validation/conflict, offer explicit refresh, and show successful saves.
 - Viewer mode disables write actions. Archive view and history preserve completed work. History
   entries identify the current workspace as `workspace name (id)` and render known member actors as
-  `name (subject)`. Loading, no-work, no-workspace, unavailable, and stale-revision states must be
+  `name (subject)`. Project maintenance rows offer a View scope action that selects the project
+  lens and All open work, while new items inherit that project. Project scope defaults to List;
+  changing the Project filter on Kanban preserves the current presentation. Board/List mode,
+  project and scope are persisted as shareable URL query state. Loading, no-work, no-workspace, unavailable, and
+  stale-revision states must be
   explicit. Render user Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system. Verify both themes at 1440px,
   768px, and 390px and keyboard-only planning workflows.

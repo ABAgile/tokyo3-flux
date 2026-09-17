@@ -1,6 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
+let pendingPlanningURLState;
+let projectSearch = '', projectAssigneeFilter = 'all', projectLabelFilter = 'all';
 let selectedItemID = '', detailPane, detailState;
 let attachmentTooltip, attachmentTooltipTarget, observationTooltipTarget;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
@@ -33,6 +35,20 @@ function notice(text, error = false) { $('notice').textContent = text; $('notice
 function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') { const banner = $('planning-change'); if (planningChangeNotice && !banner.hidden && $('planning-change-text').textContent === text) return; planningChangeNotice = true; $('planning-change-text').textContent = text; banner.hidden = false; }
 function clearPlanningChangeNotice() { planningChangeNotice = false; $('planning-change').hidden = true; }
 function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
+function planningURLState() {
+ const params = new URLSearchParams(window.location.search); const mode = params.get('mode');
+ return {mode: mode === 'list' || mode === 'board' ? mode : undefined, project: params.get('project') || undefined, scope: params.get('scope') || undefined};
+}
+function persistPlanningURL() {
+ if (!board) return; const url = new URL(window.location.href); url.searchParams.set('mode', presentation); url.searchParams.set('project', $('project').value || 'all'); url.searchParams.set('scope', $('scope').value || 'active'); window.history.replaceState(null, '', url);
+}
+function applyPlanningURLState(state = planningURLState()) {
+ if (!board) return;
+ const project = state.project && (state.project === 'all' || state.project === 'none' || board.projects.some(value => value.id === state.project)) ? state.project : 'all'; presentation = state.mode === 'list' || (!state.mode && project !== 'all' && project !== 'none') ? 'list' : 'board'; $('project').value = project;
+ const requestedScope = state.scope; const validScope = requestedScope && (['active', 'backlog', 'all'].includes(requestedScope) || board.sprints.some(value => value.id === requestedScope)); $('scope').value = validScope ? requestedScope : project !== 'all' && project !== 'none' ? 'all' : 'active';
+ render(); persistPlanningURL();
+}
+pendingPlanningURLState = planningURLState();
 function mergeEntities(previous = [], next = [], key) {
  const existing = new Map(previous.map(value => [key(value), value]));
  return next.map(value => { const current = existing.get(key(value)); if (!current) return value; Object.keys(current).forEach(name => { if (!(name in value)) delete current[name]; }); Object.assign(current, value); return current; });
@@ -249,6 +265,15 @@ function pipelineLinkView(link) {
 function activeSprints() { return board.sprints.filter(s => s.state === 'active'); }
 function projectName(id) { return board.projects.find(p => p.id === id)?.name || 'No project'; }
 function labelInfo(name) { return board.labels.find(label => label.name === name) || {name, color: '#dcefe4'}; }
+function renderProjectSummary() {
+ const summary = $('project-summary'); const projectID = $('project').value; const project = board.projects.find(value => value.id === projectID);
+ if (view !== 'board' || !project || ['all', 'none'].includes(projectID)) { summary.hidden = true; summary.replaceChildren(); return; }
+ const items = board.items.filter(item => !item.archived && item.project_id === projectID); const openSprints = board.sprints.filter(sprint => sprint.state !== 'closed' && items.some(item => item.sprint_ids.includes(sprint.id))); const active = openSprints.filter(sprint => sprint.state === 'active'); const remaining = items.filter(item => !done(item)).length; const completed = items.length - remaining; const blockedCount = items.filter(blocked).length; const unscheduled = items.filter(item => !done(item) && !item.sprint_ids.length).length;
+ const head = el('div', undefined, 'project-summary-head'); const intro = el('div', undefined, 'project-summary-title'); intro.append(el('p', 'PROJECT LENS', 'eyebrow'), el('h2', `${project.name} project`), el('p', `${items.length} item${items.length === 1 ? '' : 's'} · ${openSprints.length} sprint${openSprints.length === 1 ? '' : 's'} · ${blockedCount} blocked`, 'muted'), el('p', 'Current work only · archived history is excluded.', 'help')); head.append(intro);
+ const metrics = el('div', undefined, 'metrics project-summary-metrics'); [[remaining, 'Remaining'], [completed, 'Done'], [blockedCount, 'Blocked'], [unscheduled, 'Unscheduled']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); metrics.append(metric); });
+ const coverage = el('div', undefined, 'project-sprint-coverage'); coverage.append(el('span', 'Active sprint coverage', 'project-sprint-coverage-label')); active.forEach(sprint => { const count = items.filter(item => item.sprint_ids.includes(sprint.id)).length; coverage.append(el('span', `${sprint.name} · ${count}`, 'badge')); }); if (unscheduled) coverage.append(el('span', `Backlog · ${unscheduled}`, 'badge')); if (!active.length && !unscheduled) coverage.append(el('span', 'None', 'muted'));
+ summary.hidden = false; summary.setAttribute('aria-label', `${project.name} project summary`); summary.replaceChildren(head, metrics, coverage);
+}
 function labelForeground(color) {
  const match = /^#([0-9a-f]{6})$/i.exec(color || ''); if (!match) return 'var(--ink)';
  const value = Number.parseInt(match[1], 16); const channels = [value >> 16 & 255, value >> 8 & 255, value & 255].map(channel => { channel /= 255; return channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4; });
@@ -260,13 +285,13 @@ function styleLabelOptions(select) { [...select.options].forEach(option => { con
 function done(item) { return board.columns.find(c => c.id === item.column_id)?.category === 'done'; }
 function blocked(item) { return item.dependencies.some(id => { const dep = board.items.find(i => i.id === id); return dep && !done(dep); }); }
 function scopeItems(sprint) { return sprint.state === 'closed' ? board.items.filter(i => board.closed_scope.some(s => s.sprint_id === sprint.id && s.item_id === i.id)) : board.items.filter(i => !i.archived && i.sprint_ids.includes(sprint.id)); }
-function sprintPanel(s) {
+function sprintPanel(s, items = scopeItems(s)) {
  const panel = el('article', undefined, 'sprint-panel'); panel.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); info.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name), el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
- const items = scopeItems(s); const metrics = el('div', undefined, 'metrics');
+ const metrics = el('div', undefined, 'metrics');
  for (const [n, label] of [[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked now']]) { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(n)), el('span', label)); metrics.append(metric); }
  const actions = el('div', undefined, 'actions');
  const expanded = burndownExpanded.has(s.id); const toggle = button(expanded ? 'Hide burn down' : 'Show burn down', () => { if (expanded) burndownExpanded.delete(s.id); else burndownExpanded.add(s.id); render(); [...document.querySelectorAll('[data-burndown-toggle]')].find(element => element.dataset.burndownToggle === s.id)?.focus(); }, 'quiet'); toggle.dataset.burndownToggle = s.id; toggle.setAttribute('aria-expanded', String(expanded)); if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`); toggle.disabled = busy || loading; actions.append(toggle);
- actions.append(button('View scope', () => { view = 'board'; $('scope').value = s.id; render(); }));
+ actions.append(button('View scope', () => { view = 'board'; $('scope').value = s.id; render(); persistPlanningURL(); }));
  if (s.state !== 'closed') actions.append(writeButton('Edit sprint', () => editSprint(s)));
  if (s.state === 'planned') actions.append(writeButton('Start sprint', () => quick({ kind: 'sprint.start', target: s.id }), 'primary'));
  if (s.state === 'active') actions.append(writeButton('Close sprint', () => closeSprint(s)));
@@ -275,20 +300,20 @@ function sprintPanel(s) {
 }
 function render() {
  renderControls();
- if (!board) { $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('content').replaceChildren(el('p', 'Choose an available workspace to begin. Projects are optional.', 'empty')); return; }
+ if (!board) { $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('content').replaceChildren(el('p', 'Choose an available workspace to begin. Projects are optional.', 'empty')); return; }
  const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
  const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
  const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
  const titles = { board: presentation === 'list' ? 'Planning list' : 'Kanban board', sprints: 'Sprints', projects: 'Projects', labels: 'Labels', members: 'Members', archive: 'Archive', history: 'History' };
  const subtitles = { projects: 'Organize workspace projects and GitLab integration.', labels: 'Maintain labels used to classify work.', members: 'Manage workspace members, roles, and names.' };
- $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : subtitles[view] || 'Plan intentionally. Keep work moving.';
+ $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : subtitles[view] || 'Plan intentionally. Keep work moving.'; $('search').placeholder = view === 'sprints' ? 'Find sprints…' : 'Find work…';
  document.querySelectorAll('[data-view]').forEach(b => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
  const active = activeSprints();
  const selected = $('scope').value; options($('scope'), [['active', 'Active sprints'], ['backlog', 'Backlog'], ['all', 'All open work'], ...board.sprints.map(s => [s.id, `${s.name} (${s.state})`])], selected); if (!$('scope').value) $('scope').value = 'active';
  const selectedSprint = board.sprints.find(s => s.id === $('scope').value); const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
  $('sprint-summary').setAttribute('aria-label', selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints');
- renderSprintSummary(view === 'board' ? summarySprints : []);
- $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'sprints' || view === 'history'; document.querySelector('.toolbar').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
+ renderProjectSummary(); renderSprintSummary(view === 'board' ? summarySprints : []);
+ $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'history'; document.querySelector('.toolbar').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
  renderContent();
 }
 function filteredItems() {
@@ -351,7 +376,7 @@ function card(item, peers) {
  c.dataset.item = item.id;
  makeDraggable(c, 'card', item.id, item.title);
  dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
- const meta = el('div', undefined, 'card-meta'); meta.append(el('small', projectName(item.project_id), 'card-project'), assigneeView(item.assignee));
+ const meta = el('div', undefined, 'card-meta'); meta.append(el('span', projectName(item.project_id), 'badge card-project'), assigneeView(item.assignee));
  c.append(top, meta);
  const sprintTags = el('div', undefined, 'tags'); sprintTags.dataset.cardSection = 'sprints'; item.sprint_ids.forEach(id => { const tag = el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'); tag.dataset.sprintId = id; sprintTags.append(tag); }); c.append(sprintTags);
  const tags = el('div', undefined, 'tags'); tags.dataset.cardSection = 'labels'; item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
@@ -477,7 +502,7 @@ function reconcileKeyedChildren(parent, nextNodes, keyOf, patch = patchNode, res
 function renderColumn(col, items) {
  const section = el('section', undefined, 'column'); section.dataset.column = col.id; section.setAttribute('aria-label', col.name);
  const peers = items.filter(item => item.column_id === col.id); const total = board.items.filter(item => !item.archived && item.column_id === col.id).length;
- const head = el('div', undefined, 'column-head'); head.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip, shown:peers.length, total}); head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} WIP` : 'No limit'}`)); makeDraggable(head, 'list', col.id, col.name);
+ const head = el('div', undefined, 'column-head'); head.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip, shown:peers.length, total}); head.append(el('h3', col.name), el('small', `${peers.length} shown · ${col.wip ? `${total}/${col.wip} workspace WIP` : 'No workspace WIP limit'}`)); makeDraggable(head, 'list', col.id, col.name);
  dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; section.append(empty); }
  section.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip}); return section;
 }
@@ -573,7 +598,7 @@ function listRow(item) {
 function listSection(column, items) {
  const section = el('details', undefined, 'list-section'); section.dataset.column = column.id; section.open = true; section.setAttribute('aria-label', column.name);
  const peers = items.filter(item => item.column_id === column.id); const total = board.items.filter(item => !item.archived && item.column_id === column.id).length;
- const head = el('summary', undefined, 'list-section-head'); head.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip, shown:peers.length, total}); const title = el('span', undefined, 'list-section-title'); title.append(el('h3', column.name)); const summary = el('span', `${peers.length} shown · ${column.wip ? `${total}/${column.wip} WIP` : 'No limit'}`, 'list-section-summary'); head.append(title, summary); makeDraggable(head, 'list', column.id, column.name);
+ const head = el('summary', undefined, 'list-section-head'); head.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip, shown:peers.length, total}); const title = el('span', undefined, 'list-section-title'); title.append(el('h3', column.name)); const summary = el('span', `${peers.length} shown · ${column.wip ? `${total}/${column.wip} workspace WIP` : 'No workspace WIP limit'}`, 'list-section-summary'); head.append(title, summary); makeDraggable(head, 'list', column.id, column.name);
  dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: column.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === column.id) + 1]?.id || '' : column.id}), 'x');
  const body = el('div', undefined, 'list-section-body'); body.append(...peers.map(item => listRow(item))); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; body.append(empty); } section.append(head, body); section.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip}); return section;
 }
@@ -589,16 +614,25 @@ function renderListPresentationContent(content, items) {
  } else { layout = current; sections = layout.querySelector(':scope > .planning-list > .list-sections'); }
  const nextSections = board.columns.map(column => listSection(column, items)); reconcileKeyedChildren(sections, nextSections, node => `column:${node.dataset.column}`, patchListSection); syncListSelection(); updateDetailPaneVisibility();
 }
+function sprintFilterItems(sprint) {
+ const project = $('project').value; const assignee = $('assignee').value;
+ return scopeItems(sprint).filter(item => { if (project === 'none' && item.project_id) return false; if (project !== 'all' && project !== 'none' && item.project_id !== project) return false; if (assignee === 'none' && item.assignee) return false; if (assignee !== 'all' && assignee !== 'none' && item.assignee !== assignee) return false; return true; });
+}
+function renderSprintRows(list) {
+ const search = $('search').value.trim(); const query = search.toLowerCase(); const matches = board.sprints.filter(sprint => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query)); $('count').textContent = `${matches.length} sprint${matches.length === 1 ? '' : 'sprints'}`; list.replaceChildren();
+ if (!matches.length) { const empty = el('p', board.sprints.length && query ? `No sprints match “${search}”.` : 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty'); empty.dataset.empty = 'true'; list.append(empty); return; }
+ matches.forEach(sprint => list.append(sprintPanel(sprint, sprintFilterItems(sprint))));
+}
 function renderSprintPage(content) {
  const head = el('div', undefined, 'section-head'); head.dataset.renderSignature = 'sprint-page-head'; head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary'));
- const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; board.sprints.forEach(sprint => list.append(sprintPanel(sprint))); if (!board.sprints.length) { const empty = el('p', 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty'); empty.dataset.empty = 'true'; list.append(empty); }
+ const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; renderSprintRows(list);
  const currentHead = content.firstElementChild; const currentList = content.children[1];
  if (!currentHead || !currentList || currentList.dataset.contentView !== list.dataset.contentView) { content.replaceChildren(head, list); return; }
  patchNode(currentHead, head); reconcileKeyedChildren(currentList, [...list.children], keyedNodeKey);
 }
 function renderSprintSummary(sprints) {
  const summary = $('sprint-summary'); if (view !== 'board') { summary.replaceChildren(); return; }
- const next = sprints.map(sprintPanel); if (!next.length) { const empty = el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty'); empty.dataset.empty = 'true'; next.push(empty); }
+ const next = sprints.map(sprint => sprintPanel(sprint)); if (!next.length) { const empty = el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty'); empty.dataset.empty = 'true'; next.push(empty); }
  reconcileKeyedChildren(summary, next, keyedNodeKey);
 }
 function renderContent() {
@@ -606,7 +640,7 @@ function renderContent() {
  if (view === 'projects') { content.replaceChildren(); renderProjects(content); return; }
  if (view === 'labels') { content.replaceChildren(); renderLabels(content); return; }
  if (view === 'members') { content.replaceChildren(); renderMembers(content); return; }
- if (view === 'sprints') { $('count').textContent = ''; renderSprintPage(content); return; }
+ if (view === 'sprints') { renderSprintPage(content); return; }
  if (view === 'history') { content.replaceChildren(); renderHistory(content); return; }
  const items = filteredItems(); $('count').textContent = `${items.length} items · workspace revision ${board.workspace.revision}`;
  if (view === 'board' && presentation === 'list') renderListPresentationContent(content, items); else if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
@@ -1205,6 +1239,16 @@ function integrationProjectChips(projectIDs) {
  projectIDs.forEach(id => { const project = catalog.get(String(id)); const label = project ? gitlabProjectLabel(project) : `GitLab project #${id}`; const chip = el('span', label, 'badge integration-project-chip'); chip.title = label; chips.append(chip); });
  return chips;
 }
+function openProject(project) {
+ if (!board || !project || busy || loading || integrationFormOpen) return;
+ if (detailState && !closeDetail({focus:false})) return;
+ view = 'board'; presentation = 'list'; $('project').value = project.id; $('scope').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('search').value = ''; render(); persistPlanningURL();
+}
+function renderProjectRows(list, count) {
+ const query = projectSearch.trim().toLowerCase(); const matches = board.projects.filter(project => { if (!project.name.toLowerCase().includes(query)) return false; if (projectAssigneeFilter === 'all' && projectLabelFilter === 'all') return true; return board.items.some(item => { if (item.archived || item.project_id !== project.id) return false; if (projectAssigneeFilter !== 'all' && (projectAssigneeFilter === 'none' ? item.assignee : item.assignee !== projectAssigneeFilter)) return false; const labels = item.labels || []; if (projectLabelFilter !== 'all' && (projectLabelFilter === 'none' ? labels.length : !labels.includes(projectLabelFilter))) return false; return true; }); }); if (count) count.textContent = `${matches.length} project${matches.length === 1 ? '' : 's'}`; list.replaceChildren();
+ if (!matches.length) { const assignee = projectAssigneeFilter === 'none' ? 'Unassigned' : memberName(projectAssigneeFilter); const label = projectLabelFilter === 'none' ? 'No labels' : projectLabelFilter; const message = !query && projectAssigneeFilter === 'all' && projectLabelFilter === 'all' ? 'No projects yet. Items can remain unclassified.' : query && projectAssigneeFilter === 'all' && projectLabelFilter === 'all' ? `No projects match “${projectSearch.trim()}”.` : !query && projectAssigneeFilter !== 'all' && projectLabelFilter === 'all' ? `No projects match assignee “${assignee}”.` : !query && projectAssigneeFilter === 'all' && projectLabelFilter !== 'all' ? `No projects match label “${label}”.` : 'No projects match the current filters.'; list.append(el('p', message, 'empty')); return; }
+ matches.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const actions = el('div', undefined, 'actions'); const open = button('View scope', () => openProject(project)); open.disabled = busy || loading || integrationFormOpen; const edit = writeButton('Edit project', () => editProject(project)); edit.dataset.write = 'true'; actions.append(open, edit); row.append(info, actions); list.append(row); });
+}
 function renderProjects(content) {
  const approvedIDs = board.integration?.projects || [];
  if (!integrationFormOpen && board.connector_instance && approvedIDs.length && !integrationCatalogLoaded && !integrationCatalogLoading) void loadIntegrationCatalog();
@@ -1222,8 +1266,10 @@ function renderProjects(content) {
   if (integrationCatalogError) integration.append(el('p', `Project names are unavailable; approved IDs remain visible. ${integrationCatalogError}`, 'help'));
   if (!board.connector_instance) integration.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.', 'help'));
  }
- const projects = el('section', undefined, 'maintenance-section'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject); projects.append(projectHead, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
- if (!board.projects.length) projects.append(el('p', 'No projects yet. Items can remain unclassified.', 'empty')); else { const list = el('div', undefined, 'maintenance-list'); board.projects.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const edit = writeButton('Edit project', () => editProject(project)); edit.dataset.write = 'true'; row.append(info, edit); list.append(row); }); projects.append(list); }
+ const projects = el('section', undefined, 'workspace-projects'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject);
+ const projectFilters = el('div', undefined, 'project-filter-bar'); const projectFilterControls = el('div', undefined, 'actions'); const assigneeFilter = el('select'); assigneeFilter.setAttribute('aria-label', 'Assignee'); options(assigneeFilter, [['all', 'Any assignee'], ['none', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])], projectAssigneeFilter); if (!assigneeFilter.value) { projectAssigneeFilter = 'all'; assigneeFilter.value = 'all'; } const assigneeLabel = el('label', 'Assignee', 'project-assignee-filter'); assigneeLabel.append(assigneeFilter); const labelFilter = el('select'); labelFilter.setAttribute('aria-label', 'Label'); options(labelFilter, [['all', 'Any label'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], projectLabelFilter); if (!labelFilter.value) { projectLabelFilter = 'all'; labelFilter.value = 'all'; } const labelLabel = el('label', 'Label', 'project-label-filter'); labelLabel.append(labelFilter); const filter = el('label', 'Search', 'project-name-filter'); const input = el('input'); input.type = 'search'; input.value = projectSearch; input.placeholder = 'Find projects…'; input.maxLength = 120; input.setAttribute('aria-label', 'Search'); filter.append(input); projectFilterControls.append(assigneeLabel, labelLabel, filter); const projectCount = el('span', undefined, 'project-filter-count muted'); projectCount.setAttribute('aria-live', 'polite'); projectFilters.append(projectFilterControls, projectCount);
+ projects.append(projectHead, projectFilters, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide. Assignee and Label filters match projects with current non-archived work matching the selected fields; Unassigned and No labels match empty values.', 'help'));
+ const list = el('div', undefined, 'maintenance-list'); renderProjectRows(list, projectCount); input.addEventListener('input', () => { projectSearch = input.value; renderProjectRows(list, projectCount); }); assigneeFilter.addEventListener('change', () => { projectAssigneeFilter = assigneeFilter.value; renderProjectRows(list, projectCount); }); labelFilter.addEventListener('change', () => { projectLabelFilter = labelFilter.value; renderProjectRows(list, projectCount); }); projects.append(list);
  sections.append(integration, projects); content.append(sections);
 }
 function editLabel(label) {
@@ -1490,22 +1536,26 @@ document.addEventListener('focusin', e => { const target = attachmentLinkTarget(
 document.addEventListener('focusout', e => { const target = attachmentLinkTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover')) return; hideAttachmentTooltip(target); });
 window.addEventListener('resize', repositionAttachmentTooltip); document.addEventListener('scroll', repositionAttachmentTooltip, true);
 document.addEventListener('pointerdown', e => { document.querySelectorAll('.attachment-actions[open],.card-attachments[open]').forEach(menu => { if (!menu.contains(e.target)) menu.open = false; }); const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
-function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; render(); }
+function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; render(); persistPlanningURL(); }
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
 $('proposals').onclick = () => showProposals();
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
 $('presentation-board').onclick = () => setPresentation('board'); $('presentation-list').onclick = () => setPresentation('list');
-$('scope').onchange = render;
+$('scope').onchange = () => { render(); persistPlanningURL(); };
 $('label').onchange = $('search').oninput = renderContent;
-$('project').onchange = $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
+$('project').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); persistPlanningURL(); };
+$('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
 document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); });
 document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace() {
  if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return; }
+ const urlState = pendingPlanningURLState; pendingPlanningURLState = undefined;
  integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
- clearPlanningChangeNotice(); board = undefined; resetBurndown(); burndownExpanded.clear(); $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
+ clearPlanningChangeNotice(); board = undefined; resetBurndown(); burndownExpanded.clear(); projectSearch = ''; projectAssigneeFilter = 'all'; projectLabelFilter = 'all'; $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; render();
  root = `/api/v2/workspaces/${encodeURIComponent($('workspace').value)}`;
- await refresh();
+ const refreshed = await refresh();
+ if (!refreshed) { if (urlState) pendingPlanningURLState = urlState; return; }
+ if (urlState) applyPlanningURLState(urlState); else persistPlanningURL();
 }
 $('workspace').onchange = chooseWorkspace;
 let observationPoll = false;
