@@ -226,3 +226,39 @@ func TestRefreshRetentionAndShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPruneAuditKeepsBurndownWindow(t *testing.T) {
+	s, b := linkedBoard(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(observedMR)) })
+	ctx := context.Background()
+	for _, age := range []int{DefaultAuditRetentionDays + 5, p.MaxBurndownDays - 1} {
+		_, err := s.pool.Exec(ctx, `INSERT INTO audit_events(workspace_id,actor,action,request_id,after_state,outcome,at)
+ VALUES($1,'tester','item.create',$2,'{"columns":[]}','success',now()-make_interval(days => $3))`,
+			b.Workspace.ID, p.NewID(), age)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.PruneAudit(ctx, MinAuditRetentionDays-1); err == nil {
+		t.Fatal("prune accepted a window shorter than the burn-down horizon")
+	}
+	removed, err := s.PruneAudit(ctx, DefaultAuditRetentionDays)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed < 1 {
+		t.Fatalf("prune removed %d expired audit events", removed)
+	}
+	var expired, retained int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE at<now()-make_interval(days => $1)", DefaultAuditRetentionDays).Scan(&expired); err != nil {
+		t.Fatal(err)
+	}
+	if expired != 0 {
+		t.Fatalf("expired audit rows remain: %d", expired)
+	}
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE actor='tester'").Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained != 1 {
+		t.Fatalf("retention removed history inside the burn-down window: %d", retained)
+	}
+}

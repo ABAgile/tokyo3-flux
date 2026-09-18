@@ -28,13 +28,14 @@ import (
 
 func runPlan(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: flux migrate|bootstrap|member|seed|serve")
+		return errors.New("usage: flux migrate|bootstrap|member|seed|prune|serve")
 	}
 	cmd := args[0]
 	flags := flag.NewFlagSet("flux "+cmd, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	var addr, name, project, workspace, subject, memberRole string
 	var demo bool
+	var retentionDays int
 	switch cmd {
 	case "serve":
 		flags.StringVar(&addr, "addr", envOrDefault("FLUX_ADDR", "127.0.0.1:8080"), "HTTP listen address")
@@ -51,6 +52,8 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		flags.StringVar(&workspace, "workspace", "", "workspace ID")
 		flags.StringVar(&project, "project", "", "optional project ID")
 		flags.StringVar(&subject, "subject", "", "member subject used for seeded records")
+	case "prune":
+		flags.IntVar(&retentionDays, "days", store.DefaultAuditRetentionDays, "delete audit events older than this many days")
 	case "migrate":
 	default:
 		return fmt.Errorf("unknown planning command %q", cmd)
@@ -75,6 +78,10 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		if workspace == "" || subject == "" {
 			return errors.New("seed requires --workspace ID --subject ID; --project ID is optional")
 		}
+	case "prune":
+		if retentionDays < store.MinAuditRetentionDays {
+			return fmt.Errorf("prune requires --days of at least %d so burn-down history survives", store.MinAuditRetentionDays)
+		}
 	case "serve":
 		if demo && !isLoopbackAddress(addr) {
 			return errors.New("demo mode requires a loopback listen address")
@@ -82,7 +89,9 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	app := cli.App{Name: "flux", EnvPrefix: "FLUX"}
 	material := app.DB()
-	if cmd == "migrate" || cmd == "bootstrap" || cmd == "member" {
+	// Pruning audit history is an admin-credential operation; the runtime role
+	// has no DELETE on audit_events.
+	if cmd == "migrate" || cmd == "bootstrap" || cmd == "member" || cmd == "prune" {
 		material = app.AdminDB()
 	}
 	// Validate auth before opening databases or starting workers.
@@ -166,6 +175,17 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		return db.SetMember(ctx, workspace, subject, memberRole)
 	case "seed":
 		return seedPlanning(ctx, db, workspace, project, subject)
+	case "prune":
+		// Draining a long backlog takes many batches, so pruning gets its own
+		// deadline rather than the short startup one.
+		pruneCtx, pruneCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer pruneCancel()
+		removed, e := db.PruneAudit(pruneCtx, retentionDays)
+		if e != nil {
+			return e
+		}
+		_, e = fmt.Fprintf(stdout, "pruned %d audit events older than %d days\n", removed, retentionDays)
+		return e
 	}
 	rt := app.Setup(context.Background())
 	defer rt.Shutdown()

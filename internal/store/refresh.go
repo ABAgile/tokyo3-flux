@@ -82,6 +82,8 @@ func (s *Store) refreshBatch(ctx context.Context, log *slog.Logger) error {
 	cleanup, done := context.WithTimeout(ctx, 3*time.Second)
 	defer done()
 	// Bounded retention work; receipts contain only hashes and routing metadata.
+	// Audit retention is deliberately not here: the runtime role has no DELETE on
+	// audit_events, so it is an operator command (see Store.PruneAudit).
 	_, err = s.pool.Exec(cleanup, `DELETE FROM webhook_deliveries WHERE (workspace_id,instance,delivery_id) IN (SELECT workspace_id,instance,delivery_id FROM webhook_deliveries WHERE received_at<now()-interval '7 days' ORDER BY received_at LIMIT 500)`)
 	return err
 }

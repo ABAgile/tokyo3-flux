@@ -162,9 +162,10 @@ even when the configured subject has an administrator role.
 ```sh
 flux member --workspace WORKSPACE_ID --subject GITLAB_NUMERIC_USER_ID --role member
 flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
+flux prune --days 400
 ```
 
-`flux migrate`, `bootstrap`, `member`, `seed`, `serve`, `read`, `import` and
+`flux migrate`, `bootstrap`, `member`, `seed`, `prune`, `serve`, `read`, `import` and
 `version` are the CLI commands.
 Normal setup needs only `migrate` followed by `serve`; browser onboarding creates the first
 workspace. `bootstrap` remains for non-interactive provisioning, recovery and machine/bootstrap
@@ -173,6 +174,11 @@ sample data for an empty workspace; `import` remains a read-only dry run for leg
 migration. Command flags are scoped to their command: `serve` accepts `--addr` and `--demo`,
 `bootstrap` accepts `--name`, `--project` and `--subject`, `member` accepts `--workspace`,
 `--subject` and `--role`, and `seed` accepts `--workspace`, `--project` and `--subject`.
+`prune` accepts `--days` (default 400, minimum 366) and deletes audit events older than that
+window in bounded batches. It uses admin credentials because the runtime role has no DELETE on
+`audit_events`, and the minimum keeps a full-length sprint's burn-down history intact. Schedule
+it periodically: every planning change records a board snapshot, so the table grows with
+activity and never shrinks on its own.
 Serving requires schema 11 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
@@ -204,7 +210,8 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
 
 Do not grant runtime schema ownership/CREATE, or
 history/audit UPDATE/DELETE. Check PUBLIC privileges too. Audit and refresh-run
-records have no automatic purge; plan retention and backup policies.
+records have no automatic purge from the serving process; schedule `flux prune`
+with admin credentials and plan backup policies alongside it.
 
 ## GitLab observations
 
@@ -446,7 +453,10 @@ Items carry title, Markdown description, column_id, `project_ids` (zero or more 
 associations; legacy `project_id` mirrors the first), assignee, labels, dependencies, sprint_ids
 and attachment metadata. Attachment bytes never enter planning
 commands or revision snapshots; planning commands retain `reason` only for their explicit
-rationale fields.
+rationale fields. Audit snapshots record planning structure — identity, title, column, project,
+assignee, labels, sprint scope and archived state — but not attachment metadata or the item
+description, which is the only unbounded field on a board. Who changed what, when and why
+remains fully recorded in planning history.
 
 Labels may use names such as `type::bug` or `priority::high`; each workspace label
 also has a selectable palette color shown on cards. Columns have name, category
