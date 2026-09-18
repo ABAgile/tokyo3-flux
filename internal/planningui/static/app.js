@@ -1,5 +1,9 @@
-'use strict';
-const $ = id => document.getElementById(id);
+// Flux planning shell. Loaded as an ES module, so strict mode is implicit.
+import {$, el, button, options, svgNode, syncAttributes, field} from './modules/dom.js';
+import {api, requestKey} from './modules/api.js';
+import {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, workspaceLabel, workspaceHistoryLabel, columnWIPLabel} from './modules/format.js';
+import {renderMarkdown, markdownEditor} from './modules/markdown.js';
+
 let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
 let workspaceGate = 'loading', workspaceCreating = false, workspaceCreateKey = '', workspaceCreateName = '', membershipPoll = false;
 let pendingPlanningURLState;
@@ -24,11 +28,9 @@ const LABEL_PALETTE = Object.freeze([
  '#748ffc', '#5c7cfa', '#4c6ef5', '#4263eb', '#364fc7', '#3f37c9', '#3730a3', '#2b2d6e',
  '#c77dff', '#b26fff', '#9d4edd', '#8338ec', '#7209b7', '#6a0dad', '#5a189a', '#3c096c'
 ]);
-function el(tag, text, className) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; }
 function updateThemeControl() { const dark = document.documentElement.dataset.theme === 'dark'; $('theme').firstElementChild.textContent = dark ? '☀' : '☾'; $('theme').title = dark ? 'Switch to light theme' : 'Switch to dark theme'; }
 $('theme').onclick = () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; localStorage.setItem('flux-plan-theme', next); updateThemeControl(); };
 updateThemeControl();
-function button(text, fn, className) { const b = el('button', text, className); b.type = 'button'; b.onclick = fn; return b; }
 function actionIconButton(label, icon, fn, className) { const b = button('', fn, `action-icon${className ? ` ${className}` : ''}`); b.dataset.icon = icon; b.dataset.actionLabel = label; b.setAttribute('aria-label', label); b.title = label; return b; }
 function writeIconButton(label, icon, fn, className) { const b = actionIconButton(label, icon, fn, className); b.dataset.write = 'true'; b.disabled = !writable() || integrationFormOpen; return b; }
 function adminIconButton(label, icon, fn, className) { const b = actionIconButton(label, icon, fn, className); b.dataset.adminWrite = 'true'; b.disabled = !adminWritable() || integrationFormOpen; return b; }
@@ -41,7 +43,6 @@ function adminButton(text, fn, className) { const b = button(text, fn, className
 function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
 function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') { const banner = $('planning-change'); if (planningChangeNotice && !banner.hidden && $('planning-change-text').textContent === text) return; planningChangeNotice = true; $('planning-change-text').textContent = text; banner.hidden = false; }
 function clearPlanningChangeNotice() { planningChangeNotice = false; $('planning-change').hidden = true; }
-function options(select, entries, value) { select.replaceChildren(...entries.map(([id, text]) => { const o = el('option', text); o.value = id; return o; })); if (value !== undefined) select.value = value; }
 function workspaceURLState() { return new URL(window.location.href).searchParams.get('workspace') || ''; }
 function workspacePreference() { return workspaceURLState() || localStorage.getItem('flux-plan-workspace') || ''; }
 function persistWorkspaceURL(id) {
@@ -113,7 +114,6 @@ function restoreUIState(state) {
  try { target.focus({preventScroll:true}); } catch { target.focus(); }
  if (state.selection && 'selectionStart' in target) { try { target.setSelectionRange(state.selection.start, state.selection.end, state.selection.direction); } catch {} }
 }
-async function api(path, init = {}) { const r = await fetch(path, { ...init, headers: { 'Accept': 'application/json', ...init.headers } }); if (r.redirected) throw new Error('Session expired. Reload the page to sign in.'); if (r.status === 204) return null; let data; try { data = await r.json(); } catch { throw new Error('Planning service unavailable. Refresh to retry.'); } if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`); return data; }
 function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownRequests.clear(); burndownErrors.clear(); }
 function enterWorkspaceGate(mode, message) {
  if (detailState) closeDetail({force:true, focus:false});
@@ -151,7 +151,6 @@ async function refresh() {
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
 }
-function requestKey() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join(''); }
 async function change(command, key = requestKey()) {
  if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
  busy = true; renderControls(); notice('Saving changes…');
@@ -191,7 +190,6 @@ function memberListingInfo(member) {
  const name = String(member.name || '').trim() || (member.subject === session?.subject && String(session.name || '').trim()) || String(member.username || '').trim() || 'Unnamed member';
  return {name, avatarURL: member.avatar_url || (member.subject === session?.subject && session.avatar_url) || ''};
 }
-function initials(name) { const words = name.trim().split(/\s+/).filter(Boolean); return words.length ? words.slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase() : '—'; }
 function avatarView(name, avatarURL) {
  const avatar = el('span', undefined, 'avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(name), 'avatar-fallback'));
  if (avatarURL) { const image = el('img'); image.src = avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
@@ -223,28 +221,8 @@ function cardLinkView(link, focusKey) {
  if (url) { node.href = url; node.target = '_blank'; node.rel = 'noopener noreferrer'; }
  return node;
 }
-function attachmentSize(size) {
- if (!Number.isFinite(size) || size < 0) return 'unknown size';
- if (size < 1024) return `${size} B`;
- const units = ['KiB', 'MiB', 'GiB']; let value = size; let index = -1;
- while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
- return `${value >= 10 || Number.isInteger(value) ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
-}
 function attachmentHref(item, attachment, base = root) {
  return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
-}
-function attachmentKind(attachment) {
- const type = String(attachment.content_type || '');
- if (type.startsWith('image/')) return 'IMG';
- if (type.startsWith('video/')) return 'VID';
- if (type.startsWith('audio/')) return 'AUD';
- if (type === 'application/pdf') return 'PDF';
- if (type.includes('zip') || type.includes('tar') || type.includes('gzip')) return 'ZIP';
- const extension = String(attachment.name || '').split('.').at(-1)?.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
- return extension || 'FILE';
-}
-function attachmentTypeDescription(attachment) {
- const type = String(attachment.content_type || '').trim(); return type ? `${attachmentKind(attachment)} file · ${type}` : `${attachmentKind(attachment)} file`;
 }
 function attachmentFileMark(attachment) {
  const mark = el('span', attachmentKind(attachment), 'attachment-file-mark'); mark.setAttribute('aria-hidden', 'true'); return mark;
@@ -335,12 +313,6 @@ function renderProjectSummary() {
  const metrics = el('div', undefined, 'metrics project-summary-metrics'); [[items.length, 'In scope'], [completed, 'Done'], [blockedCount, 'Blocked'], [unscheduled, 'Unscheduled']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); metrics.append(metric); });
  const coverage = el('div', undefined, 'project-sprint-coverage'); coverage.append(el('span', 'Active sprint coverage', 'project-sprint-coverage-label')); active.forEach(sprint => { const count = items.filter(item => item.sprint_ids.includes(sprint.id)).length; coverage.append(el('span', `${sprint.name} · ${count}`, 'badge')); }); if (unscheduled) coverage.append(el('span', `Backlog · ${unscheduled}`, 'badge')); if (!active.length && !unscheduled) coverage.append(el('span', 'None', 'muted'));
  summary.hidden = false; summary.setAttribute('aria-label', `${project.name} project summary`); summary.replaceChildren(head, metrics, coverage);
-}
-function labelForeground(color) {
- const match = /^#([0-9a-f]{6})$/i.exec(color || ''); if (!match) return 'var(--ink)';
- const value = Number.parseInt(match[1], 16); const channels = [value >> 16 & 255, value >> 8 & 255, value & 255].map(channel => { channel /= 255; return channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4; });
- const luminance = channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
- return luminance > .21 ? 'var(--label-ink)' : 'var(--label-contrast)';
 }
 function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge label-badge'); badge.dataset.label = name; badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
 function styleLabelOptions(select) { [...select.options].forEach(option => { const label = labelInfo(option.value); option.style.backgroundColor = label.color; option.style.color = labelForeground(label.color); }); }
@@ -505,13 +477,11 @@ function patchObservationUI(previousLinks, nextLinks) {
 }
 function currentBurndownKey(sprintID) { return [board?.workspace.revision || 0, sprintID, $('project').value, $('assignee').value].join('|'); }
 function selectedFilterText(id) { return $(id).selectedOptions[0]?.textContent || 'All'; }
-function svgNode(tag, attributes = {}) { const node = document.createElementNS('http://www.w3.org/2000/svg', tag); Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, value)); return node; }
 function burndownSegments(points, key, x, y) {
  const segments = []; let segment = [];
  const flush = () => { if (segment.length > 1) segments.push(segment.join(' ')); segment = []; };
  points.forEach((point, index) => { if (!Number.isFinite(point[key])) { flush(); return; } segment.push(`${x(index)},${y(point[key])}`); }); flush(); return segments;
 }
-function burndownDateLabel(date) { const value = new Date(`${date}T00:00:00Z`); return Number.isNaN(value.getTime()) ? date : value.toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'}); }
 function burndownSVG(data) {
  const width = 760, height = 220, left = 48, right = 20, top = 16, bottom = 36, plotWidth = width - left - right, plotHeight = height - top - bottom, points = data.points;
  const values = points.flatMap(point => [point.scope, point.remaining]).filter(Number.isFinite); const maximum = Math.max(1, ...values);
@@ -554,10 +524,6 @@ async function requestBurndown(sprintID, force = false) {
  try { const query = new URLSearchParams({sprint:sprintID, project:$('project').value, assignee:$('assignee').value}); const next = await api(currentRoot + '/burndown?' + query); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!next || !Array.isArray(next.points) || !next.sprint) throw new Error('Burn-down data is invalid. Refresh to retry.'); if (next.revision !== currentBoard.workspace.revision) throw new Error('Planning changed while loading. Refresh to review.'); burndownData.set(key, next); burndownErrors.delete(key); }
  catch (e) { if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; burndownErrors.set(key, e.message); }
  finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'sprints') render(); }
-}
-function syncAttributes(target, source) {
- [...target.attributes].forEach(attribute => { if (!source.hasAttribute(attribute.name)) target.removeAttribute(attribute.name); });
- [...source.attributes].forEach(attribute => { if (target.getAttribute(attribute.name) !== attribute.value) target.setAttribute(attribute.name, attribute.value); });
 }
 function patchNode(target, next) {
  if (target === next) return target;
@@ -738,9 +704,6 @@ async function loadArchive(reset = false) {
  if (!Array.isArray(page)) throw new Error('Archive response is invalid. Refresh to retry.');
  archiveItems = reset ? page : [...archiveItems, ...page]; archiveOffset = offset + page.length; archiveMore = page.length === ARCHIVE_PAGE;
 }
-function workspaceLabel(workspace) { return workspace.name; }
-function workspaceHistoryLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
-function columnWIPLabel(column, total) { return column.wip ? `${total}/${column.wip} WIP` : 'No limit'; }
 function showWorkspaceSelection() { if (busy || loading) return; workspaceGate = 'select'; render(); document.querySelector('[data-workspace-choice]')?.focus(); }
 function showWorkspaceCreate() { if (busy || loading || integrationFormOpen) return; workspaceCreateKey = ''; workspaceCreateName = ''; if (board) { enterWorkspaceGate('create', 'Create a workspace to add another planning space.'); return; } workspaceGate = 'create'; render(); }
 async function createWorkspace(event) {
@@ -770,117 +733,6 @@ function renderHistory(content) {
  if (!history.length) content.append(el('p', 'No planning changes yet.', 'empty'));
  history.forEach(e => { const row = el('article', undefined, 'history-row'); row.append(el('strong', e.action.replaceAll('.', ' · ')), el('p', `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`, 'muted')); if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id')); if (e.reason) row.append(el('p', e.reason)); content.append(row); });
  if (historyMore) content.append(button('Load older changes', async () => { try { await loadHistory(); renderContent(); } catch (e) { notice(e.message, true); } }));
-}
-function field(parent, name, title, value = '', type = 'text', entries) {
- const label = el('label', title); const input = el(entries ? 'select' : type === 'textarea' ? 'textarea' : 'input'); input.name = name;
- if (entries) options(input, entries, value); else { if (type !== 'textarea') input.type = type; input.value = value; }
- label.append(input); parent.append(label); return input;
-}
-function markdownURL(value) {
- const raw = String(value || '').trim(); if (!raw || /[\u0000-\u001f\u007f]/.test(raw)) return '';
- try { const url = new URL(raw, location.href); if (!['http:', 'https:', 'mailto:'].includes(url.protocol)) return ''; return url.href; } catch { return ''; }
-}
-function markdownEscaped(value) { return value === String.fromCharCode(92) || '`*_[]~'.includes(value); }
-function appendMarkdownInline(parent, source) {
- let i = 0;
- while (i < source.length) {
-  if (source[i] === String.fromCharCode(92) && i + 1 < source.length && markdownEscaped(source[i + 1])) { parent.append(document.createTextNode(source[i + 1])); i += 2; continue; }
-  if (source[i] === '`') {
-   const match = /^`+/.exec(source.slice(i)); const marker = match?.[0]; const end = marker ? source.indexOf(marker, i + marker.length) : -1;
-   if (marker && end > i + marker.length) { parent.append(el('code', source.slice(i + marker.length, end), 'markdown-inline-code')); i = end + marker.length; continue; }
-  }
-  if (source.startsWith('![', i)) { parent.append(document.createTextNode('![')); i += 2; continue; }
-  const link = /^([^\]\n]+)\]\(([^)\s]+)(?:\s+["'][^"\n]*["'])?\)/.exec(source.slice(i).startsWith('[') ? source.slice(i).slice(1) : '');
-  if (source[i] === '[' && link) {
-   const whole = '[' + link[0]; const href = markdownURL(link[2]);
-   if (href) { const anchor = el('a'); anchor.href = href; if (new URL(href, location.href).origin !== location.origin) { anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; } appendMarkdownInline(anchor, link[1]); parent.append(anchor); } else parent.append(document.createTextNode(whole));
-   i += whole.length; continue;
-  }
-  const auto = /^<((?:https?|mailto):[^<>\s]+)>/.exec(source.slice(i));
-  if (auto) {
-   const href = markdownURL(auto[1]); if (href) { const anchor = el('a', auto[1]); anchor.href = href; if (new URL(href, location.href).origin !== location.origin) { anchor.target = '_blank'; anchor.rel = 'noopener noreferrer'; } parent.append(anchor); } else parent.append(document.createTextNode(auto[0]));
-   i += auto[0].length; continue;
-  }
-  let formatted = false;
-  for (const [marker, tag] of [['**', 'strong'], ['__', 'strong'], ['~~', 'del'], ['*', 'em'], ['_', 'em']]) {
-   if (!source.startsWith(marker, i)) continue;
-   if ((marker === '*' || marker === '_') && /\w/.test(source[i - 1] || '') && /\w/.test(source[i + marker.length] || '')) continue;
-   const end = source.indexOf(marker, i + marker.length); if (end <= i + marker.length) continue;
-   const node = el(tag); appendMarkdownInline(node, source.slice(i + marker.length, end)); parent.append(node); i = end + marker.length; formatted = true; break;
-  }
-  if (formatted) continue;
-  parent.append(document.createTextNode(source[i])); i++;
- }
-}
-function markdownBlockStart(line) { return /^\s{0,3}(?:#{1,6}\s|`{3,}|~{3,}|>\s?|[-+*]\s+|\d+[.)]\s+|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line); }
-function markdownTableCells(line) {
- const value = line.trim(); if (!value.includes('|')) return null; const withoutStart = value.startsWith('|') ? value.slice(1) : value; const source = withoutStart.endsWith('|') ? withoutStart.slice(0, -1) : withoutStart; const cells = []; let cell = ''; let escaped = false;
- for (const character of source) { if (character === '|' && !escaped) { cells.push(cell.trim()); cell = ''; } else cell += character; escaped = character === '\\' && !escaped; if (character !== '\\') escaped = false; }
- cells.push(cell.trim()); return cells;
-}
-function renderMarkdown(parent, source) {
- parent.replaceChildren(); const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n'); let index = 0;
- while (index < lines.length) {
-  if (!lines[index].trim()) { index++; continue; }
-  const tableHeader = markdownTableCells(lines[index]); const tableRule = index + 1 < lines.length ? markdownTableCells(lines[index + 1]) : null;
-  if (tableHeader?.length && tableRule?.length === tableHeader.length && tableRule.every(cell => /^:?-{3,}:?$/.test(cell))) {
-   const table = el('table', undefined, 'markdown-table'); const alignments = tableRule.map(cell => cell.startsWith(':') && cell.endsWith(':') ? 'center' : cell.startsWith(':') ? 'left' : cell.endsWith(':') ? 'right' : '');
-   const row = (tag, cells) => { const result = el('tr'); cells.forEach((cell, cellIndex) => { const node = el(tag); if (alignments[cellIndex]) node.style.textAlign = alignments[cellIndex]; appendMarkdownInline(node, cell); result.append(node); }); return result; };
-   const head = el('thead'); head.append(row('th', tableHeader)); const body = el('tbody'); index += 2;
-   while (index < lines.length && lines[index].trim()) { const cells = markdownTableCells(lines[index]); if (!cells || cells.length !== tableHeader.length) break; body.append(row('td', cells)); index++; }
-   table.append(head, body); parent.append(table); continue;
-  }
-  const fence = /^\s{0,3}(`{3,}|~{3,})\s*(.*)$/.exec(lines[index]);
-  if (fence) {
-   const marker = fence[1]; const code = []; index++;
-   while (index < lines.length) { const trimmed = lines[index].trim(); if (trimmed.length >= marker.length && [...trimmed].every(character => character === marker[0])) { index++; break; } code.push(lines[index++]); }
-   const pre = el('pre', undefined, 'markdown-code-block'); pre.append(el('code', code.join('\n'))); parent.append(pre); continue;
-  }
-  const heading = /^\s{0,3}(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/.exec(lines[index]);
-  if (heading) { const node = el('h' + heading[1].length); appendMarkdownInline(node, heading[2]); parent.append(node); index++; continue; }
-  if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(lines[index])) { parent.append(el('hr', undefined, 'markdown-rule')); index++; continue; }
-  const quote = /^\s{0,3}>\s?(.*)$/.exec(lines[index]);
-  if (quote) {
-   const quoteLines = [];
-   while (index < lines.length) { const line = /^\s{0,3}>\s?(.*)$/.exec(lines[index]); if (!line) break; quoteLines.push(line[1]); index++; }
-   const blockquote = el('blockquote'); renderMarkdown(blockquote, quoteLines.join('\n')); parent.append(blockquote); continue;
-  }
-  const unordered = /^\s{0,3}[-+*]\s+(.+)$/.exec(lines[index]); const ordered = /^\s{0,3}\d+[.)]\s+(.+)$/.exec(lines[index]);
-  if (unordered || ordered) {
-   const list = el(ordered ? 'ol' : 'ul'); const pattern = ordered ? /^\s{0,3}\d+[.)]\s+(.+)$/ : /^\s{0,3}[-+*]\s+(.+)$/;
-   while (index < lines.length) { const item = pattern.exec(lines[index]); if (!item) break; const listItem = el('li'); const task = /^\[([ xX])\]\s+(.+)$/.exec(item[1]); if (task) { const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.checked = task[1].toLowerCase() === 'x'; checkbox.disabled = true; checkbox.tabIndex = -1; checkbox.setAttribute('aria-label', checkbox.checked ? 'Completed task' : 'Incomplete task'); listItem.className = 'markdown-task'; listItem.append(checkbox); appendMarkdownInline(listItem, task[2]); } else appendMarkdownInline(listItem, item[1]); list.append(listItem); index++; }
-   parent.append(list); continue;
-  }
-  const paragraphLines = [lines[index++]];
-  while (index < lines.length && lines[index].trim() && !markdownBlockStart(lines[index])) paragraphLines.push(lines[index++]);
-  const paragraph = el('p'); paragraphLines.forEach((line, lineIndex) => { if (lineIndex) paragraph.append(el('br')); appendMarkdownInline(paragraph, line); }); parent.append(paragraph);
- }
-}
-function markdownEditor(parent, name, title, value = '', maxLength = 4000, readOnly = false, previewByDefault = false) {
- const group = el('div', undefined, 'markdown-field'); const inputID = 'markdown-' + requestKey(); const label = el('label', undefined, 'markdown-label'); label.htmlFor = inputID; label.append(el('span', title)); group.append(label);
- if (readOnly) { const preview = el('div', undefined, 'markdown-preview'); renderMarkdown(preview, value); if (!String(value || '').trim()) preview.append(el('p', 'No content.', 'help')); group.append(preview); parent.append(group); return {input: null, refresh: () => {}}; }
- const editor = el('div', undefined, 'markdown-editor'); const toolbar = el('div', undefined, 'markdown-toolbar'); const subject = title === 'Description' ? 'description' : 'comment'; let previewing = previewByDefault;
- const modeButton = button(previewByDefault ? 'Edit' : 'Preview', () => setMode(!previewing), 'markdown-mode'); modeButton.setAttribute('aria-label', `Preview ${subject}`); modeButton.title = `Preview ${subject}`; toolbar.append(modeButton);
- const input = el('textarea'); input.id = inputID; input.name = name; input.value = value || ''; input.maxLength = maxLength; input.placeholder = 'Write Markdown…'; input.spellcheck = true; input.dataset.markdownControl = 'true'; const preview = el('div', undefined, 'markdown-preview'); preview.hidden = true; preview.tabIndex = 0;
- function replaceSelection(transform, placeholder = 'text') { const start = input.selectionStart ?? input.value.length; const end = input.selectionEnd ?? start; const selected = input.value.slice(start, end) || placeholder; input.setRangeText(transform(selected), start, end, 'select'); input.dispatchEvent(new Event('input', {bubbles: true})); input.focus(); }
- const tools = [], dividers = []; function addDivider() { const divider = el('span', undefined, 'markdown-divider'); divider.setAttribute('role', 'separator'); divider.setAttribute('aria-orientation', 'vertical'); divider.setAttribute('aria-hidden', 'true'); dividers.push(divider); toolbar.append(divider); }
- function addTool(label, icon, transform, placeholder) { const tool = button(icon, () => replaceSelection(transform, placeholder), 'markdown-tool'); tool.setAttribute('aria-label', label); tool.title = label; tools.push(tool); toolbar.append(tool); }
- const prefixLines = (text, prefix) => text.split('\n').map(line => prefix + line).join('\n');
- addDivider(); addTool('Bold', 'B', text => `**${text}**`, 'bold text'); addTool('Italic', 'I', text => `_${text}_`, 'italic text'); addTool('Strikethrough', 'S', text => `~~${text}~~`, 'struck text');
- addDivider(); addTool('Inline code', '<>', text => '`' + text + '`', 'code'); addTool('Code block', '▣', text => '```\n' + text + '\n```', 'code block'); addTool('Link', '↗', text => `[${text}](https://example.com)`, 'link text');
- addDivider(); addTool('Heading', 'H', text => prefixLines(text, '## '), 'heading'); addTool('Insert table', '▦', text => '\n\n| ' + text + ' | Header 2 |\n| --- | --- |\n| Cell 1 | Cell 2 |\n\n', 'Header 1');
- addDivider(); addTool('Bulleted list', '•', text => prefixLines(text, '- '), 'list item'); addTool('Numbered list', '1.', text => text.split('\n').map((line, index) => `${index + 1}. ${line}`).join('\n'), 'list item'); addTool('Task list', '☑', text => prefixLines(text, '- [ ] '), 'task item');
- addDivider(); addTool('Quote', '❝', text => prefixLines(text, '> '), 'quoted text'); addTool('Horizontal rule', '—', () => '---', '');
- function renderPreview() { renderMarkdown(preview, input.value); if (!input.value.trim()) preview.append(el('p', 'Nothing to preview yet.', 'help')); }
- function updateModeButton() { const label = previewing ? `Edit ${subject}` : `Preview ${subject}`; modeButton.textContent = previewing ? 'Edit' : 'Preview'; modeButton.setAttribute('aria-label', label); modeButton.title = label; }
- function setMode(next) { previewing = next; updateModeButton(); tools.concat(dividers).forEach(control => { control.hidden = next; }); input.hidden = next; preview.hidden = !next; if (next) renderPreview(); else input.focus(); }
- const refresh = () => { if (previewing) renderPreview(); }; input.addEventListener('input', refresh); input.addEventListener('keydown', event => {
-  if (!(event.ctrlKey || event.metaKey) || event.altKey) return; const key = event.key.toLowerCase();
-  if (key === 'b') { event.preventDefault(); replaceSelection(text => `**${text}**`, 'bold text'); }
-  else if (key === 'i') { event.preventDefault(); replaceSelection(text => `_${text}_`, 'italic text'); }
-  else if (key === 'k') { event.preventDefault(); replaceSelection(text => `[${text}](https://example.com)`, 'link text'); }
-  else if (event.shiftKey && key === 'x') { event.preventDefault(); replaceSelection(text => `~~${text}~~`, 'struck text'); }
- }); editor.append(toolbar, input, preview); group.append(editor); parent.append(group); if (previewByDefault) setMode(true); else updateModeButton(); return {input, refresh};
 }
 function helpPopover(text, name = 'Help') {
  const wrapper = el('span', undefined, 'help-popover'); const trigger = button('?', () => toggle(), 'help-trigger'); const content = el('span', text, 'help-popover-content');

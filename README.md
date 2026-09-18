@@ -493,6 +493,7 @@ make check
 go test -race ./...
 make build
 node --check internal/planningui/static/app.js
+for m in internal/planningui/static/modules/*.js; do node --check "$m"; done
 node tests/extension.test.mjs
 docker compose config -q
 ```

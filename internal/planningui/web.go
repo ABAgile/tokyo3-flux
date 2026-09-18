@@ -5,6 +5,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 //go:embed static/*
@@ -22,11 +23,25 @@ func Handler() http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/styles.css" {
+		if !servedAsset(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		server.ServeHTTP(w, r)
 	})
+}
+
+// servedAsset is the exact allowlist of browser-reachable paths. The shell is
+// an ES module, so its imports under /modules/ must be reachable too; only
+// single-segment .js names are accepted, which keeps directory listings and
+// traversal attempts out of the file server.
+func servedAsset(path string) bool {
+	switch path {
+	case "/", "/app.js", "/styles.css":
+		return true
+	}
+	name, ok := strings.CutPrefix(path, "/modules/")
+	return ok && name != "" && strings.HasSuffix(name, ".js") &&
+		!strings.ContainsAny(name, "/\\") && !strings.Contains(name, "..")
 }

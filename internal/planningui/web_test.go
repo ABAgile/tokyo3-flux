@@ -8,7 +8,8 @@ import (
 
 func TestNativeAssets(t *testing.T) {
 	h := Handler()
-	for _, path := range []string{"/", "/app.js", "/styles.css"} {
+	for _, path := range []string{"/", "/app.js", "/styles.css",
+		"/modules/dom.js", "/modules/api.js", "/modules/format.js", "/modules/markdown.js"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || w.Body.Len() == 0 {
@@ -18,7 +19,8 @@ func TestNativeAssets(t *testing.T) {
 			t.Fatal("planning shell missing")
 		}
 	}
-	for _, path := range []string{"/missing", "/static/", "/index.html"} {
+	for _, path := range []string{"/missing", "/static/", "/index.html",
+		"/modules/", "/modules/missing.js", "/modules/nested/dom.js", "/modules/../app.js", "/modules/dom.css"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 404 {
