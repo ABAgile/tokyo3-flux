@@ -37,30 +37,38 @@ a validated HTTPS Gravatar avatar URL.
   a labeled native form and makes the authenticated subject the initial administrator. The sidebar
   workspace selector remains available for switching after entry. Board columns use a responsive grid
   with a minimum 240px width; wrap columns rather than causing page-level horizontal scroll.
-- One shared board belongs to each workspace; projects classify items optionally. Project, assignee
-  and label filters sit beside Scope in the planning toolbar (including unassigned and named
-  assignees), never in the sidebar and never as a planning boundary. The planning toolbar also
+- One shared board belongs to each workspace; projects classify items optionally, and a work item
+  may belong to multiple projects. Project, assignee and label filters sit beside Scope in the
+  planning toolbar (including unassigned and named assignees), never in the sidebar and never as a
+  planning boundary. The planning toolbar also
   offers a Board/List presentation toggle; Kanban is the default, while List groups the same
   filtered work by the ordered board columns without changing navigation or scope semantics. Scope
   lists Active sprints, Backlog, and All open work in that order. WIP counts the whole workspace
   column, regardless of filtering. List sections remain visible when empty and can be expanded,
   collapsed, and used as drop targets. Compact column summaries show the count as x/n WIP or No limit,
-  even when a project lens is active. Selecting a named project shows current non-archived Remaining, Done,
-  Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics. Desktop
-  List rows use an Asana-like table grid with separate
+  even when a project lens is active. Selecting a named project shows current non-archived In scope, Done,
+  Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics. The project
+  lens uses the same full-width panel flow as sprint summaries, with a standard section gap between them.
+  Desktop List rows use an Asana-like table grid with separate
   Title, Project, Assignee, Labels, Sprints, and Links / Status columns plus a shared header;
   descriptions are not shown and the title cell is title-only. Links / Status owns blocked/archived
   state, a Board-aligned `GitLab links · count` header with View observations beside the label
   and left-aligned when wrapped, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width
   border. Observation status popovers are positioned against the viewport so list containers
-  do not clip the last row. The Project cell shows only the project. When the detail pane is open,
+  do not clip the last row. The Project cell shows all associated projects. When the detail pane is open,
   List hides the Sprints and Links / Status columns and expands the desktop detail track to
   `minmax(420px, 520px)` so the selected editor has more room. At 480px and below, cells become
   labeled stacked fields without page-level horizontal scrolling. With no selected item, desktop
   List uses a `minmax(0, 1fr) minmax(360px, 440px)` work-list/detail-pane split; below the desktop
   breakpoint, the detail pane becomes a full-width stacked section. Project management uses the
-  existing dialog/controls, not a new component variant.
-- Cards show project (or No project) and all open sprint memberships as badges; project and assignee
+  existing dialog/controls, not a new component variant. Repeated secondary maintenance actions use compact
+  icon buttons on wide layouts with accessible labels and native tooltips; labels return at narrow touch
+  widths. This applies to project/sprint/member/label row and panel actions, including lifecycle and
+  destructive actions; create/add primary actions retain visible text. Sprint panels use a compact two-column
+  header: sprint information spans the left, actions sit in the top-right, and metrics sit below the actions; an
+  expanded burn-down spans the full panel width. At constrained widths, the header becomes a single column and
+  metrics use a full-width wrapping row.
+- Cards show all associated projects (or No project) and all open sprint memberships as badges; project and assignee
   share a metadata row, with the assignee aligned right. Cards show attachments in a compact Asana-like
   collapsed file dropdown at the bottom of the card, separated by a divider and using a fixed-size
   open/close cue with a paperclip/count cue; opening it reveals a vertical quick-download list with
@@ -74,8 +82,9 @@ a validated HTTPS Gravatar avatar URL.
   and above, the item editor puts title and description on the left and selection controls on the
   right; it stacks below that width.
   Wide layouts place comments below the description in the left pane; stacked layouts place them
-  after the controls. Project and assignee use the same filterable single-selection dropdown as
-  the other selection fields. The control pane orders Assignee, Labels, Project, Open sprints,
+  after the controls. Assignee uses the same filterable single-selection dropdown as the other
+  selection fields; Project uses a filterable multi-selection dropdown and supports No project as
+  its mutually exclusive empty choice. The control pane orders Assignee, Labels, Project, Open sprints,
   Depends on and GitLab links, followed by a divider and the native `Move to` select.
   Selection fields start in display mode; their Edit link reveals the native select or checkbox
   menu.
@@ -175,11 +184,13 @@ a validated HTTPS Gravatar avatar URL.
   the original document for copying/revision; never automatically rebase. Accepted reviews retain
   the exact historical diff, not a recomputed current diff. All controls use the existing
   dialog/form patterns; viewers cannot import/review-write.
-- Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close actions, and a
-  read-only burn-down toggle. The chart expands inside the same panel on the Kanban board and Sprint
+- Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close/re-open actions,
+  and a read-only burn-down toggle. Re-opening a closed sprint restores its preserved scope as an
+  active sprint while retaining any other open sprint assignments. The chart expands inside the same
+  panel on the Kanban board and Sprint
   planning displays; collapse state does not alter planning data. Selecting a closed sprint in the
-  board Scope filter shows its corresponding read-only panel. Below 900px, the goal
-  spans the full panel width above metrics/actions. Closing requires a rationale and an explicit
+  board Scope filter shows its corresponding read-only panel. At constrained content widths, the goal
+  spans the full panel width above metrics/actions, which stack without overlap; below 900px the compact panel spacing is used. Closing requires a rationale and an explicit
   additional carry-over choice (none, or another open sprint). Existing other sprint memberships are
   retained.
 - Burn-down plots remaining native work-item count by day, a dashed ideal line, and the recorded

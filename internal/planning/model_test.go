@@ -59,7 +59,7 @@ func TestApplyValidation(t *testing.T) {
 func TestWorkspaceValidation(t *testing.T) {
 	cases := map[string]func(*Board){
 		"title": func(b *Board) { b.Items[0].Title = " " }, "assignee": func(b *Board) { b.Items[0].Assignee = "outsider" },
-		"foreign project": func(b *Board) { b.Items[0].ProjectID = "foreign" }, "foreign sprint": func(b *Board) { b.Items[0].SprintIDs = []string{"foreign"} },
+		"foreign project": func(b *Board) { b.Items[0].ProjectID = "foreign" }, "duplicate project": func(b *Board) { b.Items[0].ProjectIDs = []string{"p1", "p1"} }, "foreign sprint": func(b *Board) { b.Items[0].SprintIDs = []string{"foreign"} },
 		"closed sprint": func(b *Board) { b.Sprints[0].State = "closed"; b.Items[0].SprintIDs = []string{"s1"} }, "duplicate sprint": func(b *Board) { b.Items[0].SprintIDs = []string{"s1", "s1"} },
 		"self dependency": func(b *Board) { b.Items[0].Dependencies = []string{"a"} }, "foreign dependency": func(b *Board) { b.Items[0].Dependencies = []string{"foreign"} },
 		"cycle":           func(b *Board) { b.Items[0].Dependencies = []string{"b"}; b.Items[1].Dependencies = []string{"a"} },
@@ -177,6 +177,41 @@ func TestCloseWithoutAdditionalSprintPreservesOtherScope(t *testing.T) {
 	mustApply(t, &b, Command{Kind: "sprint.close", Target: "s1", Reason: "Close only this sprint"})
 	if !slices.Equal(b.Items[0].SprintIDs, []string{"s2"}) || len(b.Items[1].SprintIDs) != 0 || len(b.ClosedScope) != 2 {
 		t.Fatal("closing removed another sprint")
+	}
+}
+func TestReopenSprintRestoresPreservedScope(t *testing.T) {
+	b := testBoard()
+	b.Sprints[0].State = "active"
+	b.Items[0].SprintIDs = []string{"s1", "s2"}
+	b.Items[1].SprintIDs = []string{"s1"}
+	b.Items[1].ColumnID = "done"
+	mustApply(t, &b, Command{Kind: "sprint.close", Target: "s1", Destination: "s2", Reason: "Pause for review"})
+	if b.Sprints[0].State != "closed" || !slices.Equal(b.Items[0].SprintIDs, []string{"s2"}) || len(b.ClosedScope) != 2 {
+		t.Fatalf("close setup lost scope: %+v", b)
+	}
+	mustApply(t, &b, Command{Kind: "sprint.reopen", Target: "s1"})
+	if b.Sprints[0].State != "active" || !slices.Contains(b.Items[0].SprintIDs, "s1") || !slices.Contains(b.Items[0].SprintIDs, "s2") || !slices.Equal(b.Items[1].SprintIDs, []string{"s1"}) {
+		t.Fatalf("reopen did not restore scope: %+v", b)
+	}
+	if len(b.ClosedScope) != 2 {
+		t.Fatal("reopen discarded closed-scope history")
+	}
+	if err := Apply(&b, Command{Kind: "sprint.reopen", Target: "s1", Revision: b.Workspace.Revision}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("reopened sprint accepted twice: %v", err)
+	}
+}
+func TestMultiProjectAssociations(t *testing.T) {
+	b := testBoard()
+	item := Item{Title: "Shared project work", ColumnID: "ready", ProjectIDs: []string{"p1", "p2"}}
+	mustApply(t, &b, Command{Kind: "item.create", Item: &item})
+	created := b.Items[len(b.Items)-1]
+	if !slices.Equal(created.ProjectIDs, []string{"p1", "p2"}) || created.ProjectID != "p1" {
+		t.Fatalf("project associations were not normalized: %+v", created)
+	}
+	created.ProjectIDs = []string{"p2"}
+	mustApply(t, &b, Command{Kind: "item.update", Target: created.ID, Item: &created})
+	if !slices.Equal(b.Items[itemIndex(&b, created.ID)].ProjectIDs, []string{"p2"}) {
+		t.Fatalf("project association update was not applied: %+v", b.Items[itemIndex(&b, created.ID)])
 	}
 }
 func TestProjectSprintColumnEdits(t *testing.T) {

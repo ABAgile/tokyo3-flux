@@ -55,6 +55,9 @@ var commentsMigration string
 //go:embed 010_attachments.sql
 var attachmentsMigration string
 
+//go:embed 011_item_projects.sql
+var itemProjectsMigration string
+
 type Store struct {
 	refreshInterval time.Duration
 	pool            *pgxpool.Pool
@@ -101,7 +104,7 @@ func (s *Store) Close() { s.pool.Close() }
 func (s *Store) Ready(ctx context.Context) error {
 	var version int
 	err := s.pool.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version)
-	if err != nil || version != 10 {
+	if err != nil || version != 11 {
 		return errors.New("native schema unavailable: run flux migrate")
 	}
 	return nil
@@ -126,7 +129,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 10 {
+		if version < 1 || version > 11 {
 			return errors.New("unsupported native schema version")
 		}
 	} else if _, err = tx.Exec(ctx, schema); err != nil {
@@ -174,6 +177,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	if version < 10 {
 		if _, err = tx.Exec(ctx, attachmentsMigration); err != nil {
+			return err
+		}
+	}
+	if version < 11 {
+		if _, err = tx.Exec(ctx, itemProjectsMigration); err != nil {
 			return err
 		}
 	}
@@ -650,6 +658,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 		return b, err
 	}
 	rows, err = tx.Query(ctx, `SELECT i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.rank,i.revision,i.archived,
+ ARRAY(SELECT p.project_id FROM item_projects p WHERE p.workspace_id=i.workspace_id AND p.item_id=i.id ORDER BY (p.project_id=i.project_id) DESC, p.project_id),
  ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
  ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
  ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id)
@@ -659,9 +668,15 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 	}
 	for rows.Next() {
 		var v p.Item
-		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
+		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
 			rows.Close()
 			return b, err
+		}
+		if len(v.ProjectIDs) == 0 && v.ProjectID != "" {
+			v.ProjectIDs = []string{v.ProjectID}
+		}
+		if v.ProjectID == "" && len(v.ProjectIDs) > 0 {
+			v.ProjectID = v.ProjectIDs[0]
 		}
 		v.Attachments = []p.Attachment{}
 		b.Items = append(b.Items, v)
@@ -979,7 +994,15 @@ func save(ctx context.Context, tx pgx.Tx, b p.Board) error {
 		}
 	}
 	for _, it := range b.Items {
-		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, it.ProjectID, it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
+		projectIDs := it.ProjectIDs
+		if projectIDs == nil && it.ProjectID != "" {
+			projectIDs = []string{it.ProjectID}
+		}
+		legacyProjectID := ""
+		if len(projectIDs) > 0 {
+			legacyProjectID = projectIDs[0]
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, legacyProjectID, it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
 			return err
 		}
 	}
@@ -997,10 +1020,22 @@ func save(ctx context.Context, tx pgx.Tx, b p.Board) error {
 	if _, err := tx.Exec(ctx, "DELETE FROM dependencies WHERE workspace_id=$1", wid); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(ctx, "DELETE FROM item_projects WHERE workspace_id=$1", wid); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, "DELETE FROM item_sprints WHERE workspace_id=$1", wid); err != nil {
 		return err
 	}
 	for _, it := range b.Items {
+		projectIDs := it.ProjectIDs
+		if projectIDs == nil && it.ProjectID != "" {
+			projectIDs = []string{it.ProjectID}
+		}
+		for _, projectID := range projectIDs {
+			if _, err := tx.Exec(ctx, "INSERT INTO item_projects(workspace_id,item_id,project_id) VALUES($1,$2,$3)", wid, it.ID, projectID); err != nil {
+				return err
+			}
+		}
 		for _, sid := range it.SprintIDs {
 			if _, err := tx.Exec(ctx, "INSERT INTO item_sprints(workspace_id,item_id,sprint_id) VALUES($1,$2,$3)", wid, it.ID, sid); err != nil {
 				return err

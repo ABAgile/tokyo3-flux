@@ -224,7 +224,7 @@ func TestPostgresNativeLifecycle(t *testing.T) {
 		t.Fatal("optional classification")
 	}
 	it = b.Items[0]
-	it.ProjectID = projects[0].ID
+	it.ProjectIDs = []string{projects[0].ID}
 	it.Description = "Acceptance criteria"
 	apply(t, s, &b, p.Command{Kind: "item.update", Target: it.ID, Item: &it})
 	apply(t, s, &b, p.Command{Kind: "item.archive", Target: it.ID})
@@ -242,6 +242,27 @@ func TestPostgresNativeLifecycle(t *testing.T) {
 	}
 	if _, err = s.Change(ctx, wid, "alice", p.NewID(), c); !errors.Is(err, p.ErrConflict) {
 		t.Fatal("stale revision:", err)
+	}
+}
+func TestPostgresMultiProjectPersistence(t *testing.T) {
+	s := testStore(t)
+	b := bootstrap(t, s)
+	apply(t, s, &b, p.Command{Kind: "project.save", Project: &p.Project{Name: "Second"}})
+	item := newItem(b, "Shared classification")
+	item.ProjectIDs = []string{b.Projects[0].ID, b.Projects[1].ID}
+	apply(t, s, &b, p.Command{Kind: "item.create", Item: &item})
+	if !slices.Equal(b.Items[0].ProjectIDs, []string{b.Projects[0].ID, b.Projects[1].ID}) || b.Items[0].ProjectID != b.Projects[0].ID {
+		t.Fatalf("multiple project associations were not loaded: %+v", b.Items[0])
+	}
+	var count int
+	if err := s.pool.QueryRow(context.Background(), "SELECT count(*) FROM item_projects WHERE workspace_id=$1 AND item_id=$2", b.Workspace.ID, b.Items[0].ID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("stored project associations = %d: %v", count, err)
+	}
+	item = b.Items[0]
+	item.ProjectIDs = []string{b.Projects[1].ID}
+	apply(t, s, &b, p.Command{Kind: "item.update", Target: item.ID, Item: &item})
+	if !slices.Equal(b.Items[0].ProjectIDs, []string{b.Projects[1].ID}) {
+		t.Fatalf("updated project associations were not loaded: %+v", b.Items[0])
 	}
 }
 func TestPostgresPermissionsAndIsolation(t *testing.T) {
@@ -416,7 +437,7 @@ func TestPostgresMultiSprintAndCrossProjectDependencies(t *testing.T) {
 		t.Fatal("column delete")
 	}
 	it = b.Items[0]
-	it.ProjectID = ""
+	it.ProjectIDs = []string{}
 	apply(t, s, &b, p.Command{Kind: "item.update", Target: it.ID, Item: &it})
 	if b.Items[0].ProjectID != "" {
 		t.Fatal("clearing project")
@@ -505,7 +526,7 @@ func TestMigrateWorkspacePreservesLegacyData(t *testing.T) {
 	for _, it := range b.Items {
 		switch it.ID {
 		case "a":
-			if it.ProjectID != "p1" || !slices.Equal(it.SprintIDs, []string{"s1"}) || !slices.Equal(it.Labels, []string{"native", "priority::normal"}) || !slices.Equal(it.Dependencies, []string{"c"}) {
+			if it.ProjectID != "p1" || !slices.Equal(it.ProjectIDs, []string{"p1"}) || !slices.Equal(it.SprintIDs, []string{"s1"}) || !slices.Equal(it.Labels, []string{"native", "priority::normal"}) || !slices.Equal(it.Dependencies, []string{"c"}) {
 				t.Fatal(it)
 			}
 		case "c":

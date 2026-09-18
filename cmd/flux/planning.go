@@ -292,7 +292,7 @@ func seedPlanning(ctx context.Context, db *store.Store, wid, pid, subject string
 		it := planning.Item{Title: sample.title, Description: sample.description, ColumnID: b.Columns[sample.column].ID, Assignee: subject, Labels: sample.labels}
 		if sample.sprint {
 			it.SprintIDs = []string{sid}
-			it.ProjectID = pid
+			it.ProjectIDs = []string{pid}
 		}
 		if err = apply(planning.Command{Kind: "item.create", Item: &it}); err != nil {
 			return err

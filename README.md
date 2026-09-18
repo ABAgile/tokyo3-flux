@@ -1,24 +1,26 @@
 # Flux
 
 Flux is a project-management application with workspace-wide Kanban boards,
-a backlog scope, optional projects, labels, dependencies and concurrent sprints.
+a backlog scope, workspace projects, labels, dependencies and concurrent sprints.
 GitLab supplies read-only merge-request and pipeline observations. Pi can read
 planning evidence and draft suggestions for a human to review and approve.
 
 ## Planning model
 
 - A workspace owns its board, membership, ordering, WIP limits and sprints.
-  Projects optionally classify work; filtering never partitions WIP or permissions. The home board
+  Projects optionally classify work, and each item may be associated with multiple projects;
+  filtering never partitions WIP or permissions. The home board
   defaults to Active sprints, with backlog available from Scope. The Projects, Members and Labels
   views maintain workspace configuration, with GitLab integration grouped under Projects and its
   approval form shown inline after Edit integration.
-- Each item has one column, an optional project, assignee, labels, dependencies
+- Each item has one column, zero or more project associations, an assignee, labels, dependencies
   and zero or more open sprint memberships. Labels may use `scope::value` names and
   workspace-selected colors from the fixed 64-swatch palette; maintain them from the
   dedicated Labels view. Unfinished unscheduled
   work is backlog.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
-  memberships and optionally assigns unfinished work to another open sprint.
+  memberships and optionally assigns unfinished work to another open sprint. Closed sprints can
+  be re-opened, restoring their preserved scope while retaining other memberships.
   Closed-scope metrics describe current cards, not historical completion.
 - Item comments are a separate flat, append-only stream. Each comment retains its
   author and creation time; members and admins can add comments, viewers can read
@@ -43,8 +45,9 @@ planning evidence and draft suggestions for a human to review and approve.
   title and description on the left, with selection controls on the right. Wide layouts put
   the Asana-like attachments section and then comments below the description in the left pane;
   stacked layouts put controls, attachments and comments in that order. The control pane orders Assignee, Labels, Project, Open sprints, Depends on and GitLab links,
-  then separates the native Move to select with a divider. Project and Assignee use the same
-  single-selection dropdown as the other fields. Selection fields start in display mode and Edit
+  then separates the native Move to select with a divider. Assignee uses a single-selection
+  dropdown; Project supports multiple selections, including a mutually exclusive No project
+  choice. Selection fields start in display mode and Edit
   reveals the control. GitLab links accept a pasted MR URL below the picker; Enter or Get appends
   the resolved link, while Add link provides the search fallback. The footer keeps Save, Archive
   and Cancel visible while fields
@@ -170,10 +173,11 @@ sample data for an empty workspace; `import` remains a read-only dry run for leg
 migration. Command flags are scoped to their command: `serve` accepts `--addr` and `--demo`,
 `bootstrap` accepts `--name`, `--project` and `--subject`, `member` accepts `--workspace`,
 `--subject` and `--role`, and `seed` accepts `--workspace`, `--project` and `--subject`.
-Serving requires schema 10 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 11 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
-comments; migration 010 adds attachment metadata. Back up and restore-test
+comments; migration 010 adds attachment metadata; migration 011 adds normalized multi-project
+item associations. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -186,7 +190,7 @@ GRANT INSERT, UPDATE ON workspaces TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON memberships TO flux_runtime;
 GRANT INSERT, UPDATE ON projects, sprints, work_items TO flux_runtime;
 GRANT INSERT, UPDATE, DELETE ON board_columns TO flux_runtime;
-GRANT INSERT, DELETE ON item_labels, workspace_labels, dependencies, item_sprints TO flux_runtime;
+GRANT INSERT, DELETE ON item_labels, workspace_labels, dependencies, item_sprints, item_projects TO flux_runtime;
 GRANT INSERT ON closed_sprint_scope, work_item_events, audit_events,
   idempotency_keys TO flux_runtime;
 GRANT INSERT, UPDATE ON workspace_integrations, integration_runs, proposals TO flux_runtime;
@@ -336,7 +340,7 @@ numeric `project_id`. Supply an explicit mapping for every record:
   "records":[{
     "snapshot_id":"group/project#7", "gitlab_project_id":42, "issue_iid":7,
     "item":{
-      "column_id":"COLUMN_ID", "project_id":"", "assignee":"",
+      "column_id":"COLUMN_ID", "project_ids":[], "assignee":"",
       "description":"Acceptance criteria",
       "labels":["type::bug"], "sprint_ids":[], "dependencies":[]
     }
@@ -410,7 +414,7 @@ Command kinds and payloads:
   optional existing `target` and entity revision where applicable.
 - `column.rank` (`target`, optional `before`), `column.delete` (`target`,
   destination column); `sprint.start` (`target`), `sprint.close` (`target`, reason,
-  optional destination open sprint).
+  optional destination open sprint), `sprint.reopen` (`target`).
 - `label.save` (`name`, `color`, optional target), `label.delete` (`target`);
   admin-only `member.save` (`member:{subject,role,name}`, optional existing target),
   `member.delete` (`target`), and legacy `member.name` (`target` subject, name).
@@ -432,8 +436,9 @@ the authenticated author and server creation time, and are not included in board
 planning history, audit snapshots or burn-down snapshots. The item editor uses comments
 instead of a decision-note field.
 
-Items carry title, Markdown description, column_id, optional project_id, assignee, labels,
-dependencies, sprint_ids and attachment metadata. Attachment bytes never enter planning
+Items carry title, Markdown description, column_id, `project_ids` (zero or more project
+associations; legacy `project_id` mirrors the first), assignee, labels, dependencies, sprint_ids
+and attachment metadata. Attachment bytes never enter planning
 commands or revision snapshots; planning commands retain `reason` only for their explicit
 rationale fields.
 
@@ -444,7 +449,8 @@ also has a selectable palette color shown on cards. Columns have name, category
 
 ## Limits and development
 
-Per workspace: 1,000 items including archived work, 200 sprints, 100 projects,
+Per workspace: 1,000 items including archived work, 200 sprints, 100 projects; each item
+supports up to 100 project associations,
 12 columns for creation, 500 labels for creation, 200 registered GitLab links,
 100 approved GitLab projects and 200 pending proposals. Daily burn-down timelines
 support up to 366 days. GitLab user and MR picker responses and board-member assignee scopes

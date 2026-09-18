@@ -26,6 +26,7 @@ const (
 	MaxAttachmentBytes      = 20 << 20
 	MaxItemAttachments      = 100
 	MaxWorkspaceAttachments = 10000
+	MaxItemProjects         = 100
 	MaxAttachmentName       = 255
 	MaxAttachmentMIME       = 255
 	DefaultLabelColor       = "#dcefe4"
@@ -82,11 +83,14 @@ type Column struct {
 	WIP      int    `json:"wip"`
 }
 type Item struct {
-	ID           string       `json:"id"`
-	Title        string       `json:"title"`
-	Description  string       `json:"description"`
-	ColumnID     string       `json:"column_id"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	ColumnID    string `json:"column_id"`
+	// ProjectID is retained as the first-project compatibility field for older
+	// clients. ProjectIDs is the authoritative association list.
 	ProjectID    string       `json:"project_id"`
+	ProjectIDs   []string     `json:"project_ids"`
 	SprintIDs    []string     `json:"sprint_ids"`
 	Assignee     string       `json:"assignee"`
 	Rank         int          `json:"rank"`
@@ -366,6 +370,7 @@ func Apply(b *Board, c Command) error {
 		item.Archived = false
 		item.Rank = len(b.Items)
 		item.Attachments = []Attachment{}
+		normalizeItemProjects(&item)
 		b.Items = append(b.Items, item)
 	case "item.update":
 		if c.Item == nil {
@@ -380,6 +385,10 @@ func Apply(b *Board, c Command) error {
 			return ErrConflict
 		}
 		item := *c.Item
+		// ProjectIDs is authoritative when present; the singular field is only
+		// a fallback for legacy clients that omit the association list.
+		item.ProjectIDs = slices.Clone(itemProjectIDs(item))
+		normalizeItemProjects(&item)
 		item.ID = old.ID
 		item.Rank = old.Rank
 		item.Revision = old.Revision + 1
@@ -538,6 +547,27 @@ func Apply(b *Board, c Command) error {
 		}
 		b.Sprints[i].State = "active"
 		b.Sprints[i].Revision++
+	case "sprint.reopen":
+		i := sprintIndex(b, c.Target)
+		if i < 0 {
+			return ErrNotFound
+		}
+		if b.Sprints[i].State != "closed" {
+			return invalid("only a closed sprint can reopen")
+		}
+		for _, scope := range b.ClosedScope {
+			if scope.SprintID != c.Target {
+				continue
+			}
+			itemIndex := itemIndex(b, scope.ItemID)
+			if itemIndex < 0 || b.Items[itemIndex].Archived || slices.Contains(b.Items[itemIndex].SprintIDs, c.Target) {
+				continue
+			}
+			b.Items[itemIndex].SprintIDs = append(b.Items[itemIndex].SprintIDs, c.Target)
+			b.Items[itemIndex].Revision++
+		}
+		b.Sprints[i].State = "active"
+		b.Sprints[i].Revision++
 	case "sprint.close":
 		i := sprintIndex(b, c.Target)
 		if i < 0 {
@@ -560,7 +590,9 @@ func Apply(b *Board, c Command) error {
 			if !slices.Contains(item.SprintIDs, c.Target) {
 				continue
 			}
-			b.ClosedScope = append(b.ClosedScope, Scope{c.Target, item.ID})
+			if !slices.ContainsFunc(b.ClosedScope, func(scope Scope) bool { return scope.SprintID == c.Target && scope.ItemID == item.ID }) {
+				b.ClosedScope = append(b.ClosedScope, Scope{c.Target, item.ID})
+			}
 			item.SprintIDs = slices.DeleteFunc(item.SprintIDs, func(id string) bool { return id == c.Target })
 			if category(b, item.ColumnID) != "done" && !item.Archived && c.Destination != "" && !slices.Contains(item.SprintIDs, c.Destination) {
 				item.SprintIDs = append(item.SprintIDs, c.Destination)
@@ -613,6 +645,24 @@ func reorder(b *Board, id, before string) error {
 	b.Items = slices.Insert(b.Items, at, item)
 	return nil
 }
+func itemProjectIDs(item Item) []string {
+	if item.ProjectIDs != nil {
+		return item.ProjectIDs
+	}
+	if item.ProjectID != "" {
+		return []string{item.ProjectID}
+	}
+	return []string{}
+}
+
+func normalizeItemProjects(item *Item) {
+	item.ProjectIDs = slices.Clone(itemProjectIDs(*item))
+	item.ProjectID = ""
+	if len(item.ProjectIDs) > 0 {
+		item.ProjectID = item.ProjectIDs[0]
+	}
+}
+
 func itemIndex(b *Board, id string) int {
 	return slices.IndexFunc(b.Items, func(v Item) bool { return v.ID == id })
 }
@@ -677,8 +727,16 @@ func Validate(b *Board) error {
 		if item.Assignee != "" && !slices.ContainsFunc(b.Members, func(m Member) bool { return m.Subject == item.Assignee }) {
 			return invalid("assignee must be a workspace member")
 		}
-		if item.ProjectID != "" && !slices.ContainsFunc(b.Projects, func(v Project) bool { return v.ID == item.ProjectID }) {
-			return invalid("project must belong to this workspace")
+		projects := itemProjectIDs(item)
+		if len(projects) > MaxItemProjects {
+			return invalid("too many project associations")
+		}
+		seenProjects := map[string]bool{}
+		for _, projectID := range projects {
+			if projectID == "" || !slices.ContainsFunc(b.Projects, func(v Project) bool { return v.ID == projectID }) || seenProjects[projectID] {
+				return invalid("projects must be unique and belong to this workspace")
+			}
+			seenProjects[projectID] = true
 		}
 		sprints := map[string]bool{}
 		for _, id := range item.SprintIDs {
