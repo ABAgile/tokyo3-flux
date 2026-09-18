@@ -7,6 +7,9 @@ let projectSearch = '', projectAssigneeFilter = 'all', projectLabelFilter = 'all
 let selectedItemID = '', detailPane, detailState;
 let attachmentTooltip, attachmentTooltipTarget, observationTooltipTarget;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
+// Archived work is paged from its own endpoint; the board payload carries only
+// the live working set plus archived items still referenced by scope or dependencies.
+let archiveItems = [], archiveOffset = 0, archiveMore = false;
 let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
 const theme = localStorage.getItem('flux-plan-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -143,8 +146,8 @@ async function refresh() {
    return false;
   }
   const next = await api(root + '/board'); if (generation !== loadGeneration) return false;
-  uiState = captureUIState(); board = mergeBoardData(board, next); workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0;
-  if (view === 'history') await loadHistory(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true;
+  uiState = captureUIState(); board = mergeBoardData(board, next); workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); observationDigest = ''; observationReadAt = 0;
+  if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true;
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
 }
@@ -157,23 +160,23 @@ async function change(command, key = requestKey()) {
  const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? board?.items.find(value => value.id === e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; document.querySelector('.toolbar').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? findItem(e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; document.querySelector('.toolbar').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; }
 let drag;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
 document.addEventListener('drop', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
 function clearDropMarks() { document.querySelectorAll('.drop-before,.drop-after,.drop-end').forEach(e => e.classList.remove('drop-before', 'drop-after', 'drop-end')); }
 function makeDraggable(node, type, id, name) {
- node.dataset.dragType = type; node.draggable = writable() && !(type === 'card' && board.items.find(value => value.id === id)?.archived); node.setAttribute('aria-label', `Drag ${type} ${name}`);
+ node.dataset.dragType = type; node.draggable = writable() && !(type === 'card' && findItem(id)?.archived); node.setAttribute('aria-label', `Drag ${type} ${name}`);
  node.addEventListener('dragstart', e => {
-  if (!writable() || (type === 'card' && board.items.find(value => value.id === id)?.archived) || (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))) { e.preventDefault(); return; }
+  if (!writable() || (type === 'card' && findItem(id)?.archived) || (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))) { e.preventDefault(); return; }
   e.stopPropagation(); drag = {type, id, revision: board.workspace.revision, root}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
  });
  node.addEventListener('dragend', () => { drag = undefined; clearDropMarks(); });
  return node;
 }
 function dropZone(node, type, command, axis = 'y') {
- function accepts() { return drag?.type === type && drag.root === root && writable() && !(type === 'card' && board.items.find(value => value.id === node.dataset.item)?.archived); }
+ function accepts() { return drag?.type === type && drag.root === root && writable() && !(type === 'card' && findItem(node.dataset.item)?.archived); }
  function after(e) { const r = node.getBoundingClientRect(); return axis === 'x' ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2; }
  node.addEventListener('dragover', e => { if (!accepts()) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; clearDropMarks(); node.classList.add(axis === 'end' ? 'drop-end' : after(e) ? 'drop-after' : 'drop-before'); });
  node.addEventListener('dragleave', e => { if (!node.contains(e.relatedTarget)) node.classList.remove('drop-before', 'drop-after', 'drop-end'); });
@@ -342,7 +345,10 @@ function labelForeground(color) {
 function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge label-badge'); badge.dataset.label = name; badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
 function styleLabelOptions(select) { [...select.options].forEach(option => { const label = labelInfo(option.value); option.style.backgroundColor = label.color; option.style.color = labelForeground(label.color); }); }
 function done(item) { return board.columns.find(c => c.id === item.column_id)?.category === 'done'; }
-function blocked(item) { return item.dependencies.some(id => { const dep = board.items.find(i => i.id === id); return dep && !done(dep); }); }
+// Dependency targets may be archived, so resolution spans the board payload and
+// the loaded archive page.
+function findItem(id) { return board?.items.find(value => value.id === id) || archiveItems.find(value => value.id === id); }
+function blocked(item) { return item.dependencies.some(id => { const dep = findItem(id); return dep && !done(dep); }); }
 function scopeItems(sprint) { return sprint.state === 'closed' ? board.items.filter(i => board.closed_scope.some(s => s.sprint_id === sprint.id && s.item_id === i.id)) : board.items.filter(i => !i.archived && i.sprint_ids.includes(sprint.id)); }
 function sprintPanel(s, items = scopeItems(s)) {
  const panel = el('article', undefined, 'sprint-panel'); panel.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); const titleRow = el('div', undefined, 'sprint-title-row'); const titleCopy = el('div', undefined, 'sprint-title-copy'); titleCopy.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name)); titleRow.append(titleCopy); info.append(titleRow, el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
@@ -393,7 +399,7 @@ function render() {
 }
 function filteredItems() {
  const query = $('search').value.toLowerCase(); const scope = $('scope').value; const sprint = board.sprints.find(s => s.id === scope);
- return board.items.filter(i => {
+ return (view === 'archive' ? archiveItems : board.items).filter(i => {
   if (view === 'archive') { if (!i.archived) return false; } else if (i.archived && sprint?.state !== 'closed') return false;
   if (view !== 'archive') { if (scope === 'active' && !activeSprints().some(s => i.sprint_ids.includes(s.id))) return false; if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false; if (sprint && !scopeItems(sprint).some(v => v.id === i.id)) return false; }
   const project = $('project').value; const projectIDs = itemProjectIDs(i); if (project === 'none' && projectIDs.length) return false; if (project !== 'all' && project !== 'none' && !projectIDs.includes(project)) return false;
@@ -717,11 +723,21 @@ function renderContent() {
  if (view === 'members') { content.replaceChildren(); renderMembers(content); return; }
  if (view === 'sprints') { renderSprintPage(content); return; }
  if (view === 'history') { content.replaceChildren(); renderHistory(content); return; }
- const items = filteredItems(); $('count').textContent = `${items.length} items · workspace revision ${board.workspace.revision}`;
+ const items = filteredItems(); $('count').textContent = view === 'archive' ? `${items.length} archived${archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}` : `${items.length} items · workspace revision ${board.workspace.revision}`;
  if (view === 'board' && presentation === 'list') renderListPresentationContent(content, items); else if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
+ content.querySelector(':scope > .archive-more')?.remove();
+ if (view === 'archive' && archiveMore) { const more = button('Load older archived work', async () => { try { await loadArchive(); renderContent(); } catch (e) { notice(e.message, true); } }, 'archive-more'); more.disabled = busy || loading; content.append(more); }
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
+const ARCHIVE_PAGE = 50;
+function resetArchive() { archiveItems = []; archiveOffset = 0; archiveMore = false; }
+async function loadArchive(reset = false) {
+ const offset = reset ? 0 : archiveOffset;
+ const page = await api(`${root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`);
+ if (!Array.isArray(page)) throw new Error('Archive response is invalid. Refresh to retry.');
+ archiveItems = reset ? page : [...archiveItems, ...page]; archiveOffset = offset + page.length; archiveMore = page.length === ARCHIVE_PAGE;
+}
 function workspaceLabel(workspace) { return workspace.name; }
 function workspaceHistoryLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
 function columnWIPLabel(column, total) { return column.wip ? `${total}/${column.wip} WIP` : 'No limit'; }
@@ -1642,7 +1658,7 @@ $('label').onchange = $('search').oninput = renderContent;
 $('project').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); persistPlanningURL(); };
 $('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
 document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); });
-document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } render(); }; });
+document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } if (view === 'archive') { try { await loadArchive(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace(workspaceID = '') {
  if (busy || loading) return false;
  if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return false; }
@@ -1656,16 +1672,30 @@ async function chooseWorkspace(workspaceID = '') {
  workspaceGate = ''; persistWorkspaceURL(selectedID); if (urlState) applyPlanningURLState(urlState); else persistPlanningURL(); return true;
 }
 $('workspace').onchange = () => { void chooseWorkspace(); };
-let observationPoll = false;
+let observationPoll = false, observationDigest = '', observationReadAt = 0;
+// A digest that only ever reports "unchanged" is indistinguishable from a
+// working one, so the board is re-read on a timer regardless of the digest.
+// This bounds staleness if the digest ever stops tracking the board payload.
+const OBSERVATION_FALLBACK_MS = 120000;
+// The poll asks for the workspace revision and an observation digest first. A
+// board read follows only when the digest moved, so an idle board costs two
+// indexed lookups instead of a full board load every fifteen seconds.
 setInterval(async () => {
  if (!board?.refresh_seconds || busy || loading || integrationFormOpen || drag || document.hidden || $('editor').open || observationPoll) return;
  const current = board, path = root; observationPoll = true;
  try {
+  const state = await api(path + '/revision');
+  if (board !== current || root !== path || busy || loading || integrationFormOpen || drag || $('editor').open) return;
+  if (!state || !Number.isSafeInteger(state.revision) || typeof state.role !== 'string') throw new Error('Workspace state response is invalid.');
+  if (state.revision !== board.workspace.revision || state.role !== board.role) { showPlanningChangeNotice(state.role !== board.role ? 'Workspace permissions changed elsewhere · Refresh to review' : undefined); return; }
+  const digest = String(state.links_digest || '');
+  if (observationDigest && digest === observationDigest && Date.now() - observationReadAt < OBSERVATION_FALLBACK_MS) return;
   const next = await api(path + '/board');
   if (board !== current || root !== path || busy || loading || integrationFormOpen || drag || $('editor').open) return;
   if (!next?.workspace || !Array.isArray(next.links)) throw new Error('Observation response is invalid.');
   if (next.workspace.revision !== board.workspace.revision || next.role !== board.role) { showPlanningChangeNotice(next.role !== board.role ? 'Workspace permissions changed elsewhere · Refresh to review' : undefined); return; }
   const currentLinks = new Map(board.links.map(link => [link.id, link])); if (next.links.length !== board.links.length || next.links.some(link => { const current = currentLinks.get(link.id); return !current || linkIdentitySignature(current) !== linkIdentitySignature(link); })) { showPlanningChangeNotice(); return; }
+  observationDigest = digest; observationReadAt = Date.now();
   const uiState = captureUIState(); const previousLinks = board.links; board.links = next.links; if (patchObservationUI(previousLinks, board.links)) restoreUIState(uiState);
  } catch (e) { if (board === current && !busy && !integrationFormOpen && !$('editor').open) notice('Observation cache could not be reloaded. Use Refresh to retry.', true); }
  finally { observationPoll = false; }

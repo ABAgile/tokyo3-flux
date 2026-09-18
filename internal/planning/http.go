@@ -70,6 +70,26 @@ type AttachmentStore interface {
 	Delete(context.Context, string) error
 }
 
+// WorkspaceState is a cheap freshness probe. Clients poll it instead of
+// refetching the whole board just to learn that nothing changed.
+type WorkspaceState struct {
+	Revision int64  `json:"revision"`
+	Role     string `json:"role"`
+	// Links digests the observation state the board would report, so a client
+	// can tell a GitLab-only update from a planning change without a board read.
+	Links string `json:"links_digest"`
+}
+
+type StateRepository interface {
+	WorkspaceState(context.Context, string, string) (WorkspaceState, error)
+}
+
+// ArchiveRepository serves archived work in pages. Archived items are excluded
+// from the board payload, so this is the only way a browser reaches them.
+type ArchiveRepository interface {
+	ArchivedItems(context.Context, string, string, int, int) ([]Item, error)
+}
+
 type ProposalRepository interface {
 	Proposals(context.Context, string, string, int64) ([]ProposalSummary, error)
 	Review(context.Context, string, string, string) (ProposalPreview, error)
@@ -229,6 +249,37 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			v.Role = "viewer"
 			v.Workspace.Role = "viewer"
 		}
+		if err == nil {
+			v = BrowserBoard(v)
+		}
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/revision", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := h.repo.(StateRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		v, err := repo.WorkspaceState(r.Context(), r.PathValue("workspace"), h.subject(r, machine))
+		if machine {
+			v.Role = "viewer"
+		}
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/archive", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := h.repo.(ArchiveRepository)
+		if !ok {
+			h.failure(w, r, ErrNotFound)
+			return
+		}
+		query := r.URL.Query()
+		offset, offsetErr := strconv.Atoi(defaultQuery(query.Get("offset"), "0"))
+		limit, limitErr := strconv.Atoi(defaultQuery(query.Get("limit"), strconv.Itoa(ArchivePageLimit)))
+		if offsetErr != nil || limitErr != nil || offset < 0 || limit <= 0 || limit > ArchivePageLimit {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := repo.ArchivedItems(r.Context(), r.PathValue("workspace"), h.subject(r, machine), offset, limit)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/gitlab/projects", func(w http.ResponseWriter, r *http.Request) {

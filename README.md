@@ -369,7 +369,9 @@ Authenticated JSON routes use `Cache-Control: no-store`. The workspace collectio
 | Method/path | Purpose |
 | --- | --- |
 | `POST /api/v2/workspaces` | Browser-only workspace creation; requires session CSRF and idempotency headers, and makes the authenticated subject the initial admin. |
-| `GET /projects`, `GET /board` | Project list and planning board. |
+| `GET /projects`, `GET /board` | Project list and planning board. The board carries the live working set; archived items appear only while closed sprint scope or a dependency edge still references them. |
+| `GET /revision` | Cheap freshness probe returning workspace revision, caller role, and a GitLab observation digest, so clients poll without reading the board. |
+| `GET /archive?offset=N&limit=N` | One page of archived work items, up to 50 per request, ordered with the board. |
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
 | `GET /gitlab/users?search=TEXT` | Admin-only active GitLab user catalog for workspace membership management; results are connector-provided and capped. |
 | `GET /gitlab/merge-requests?project=ID&scope=recent\|assigned_to_me\|board_members&search=TEXT` | Search merge requests in one currently approved project; browser members/admins only. Numeric search targets an exact project-scoped IID; assignment scopes use workspace GitLab member IDs. |
