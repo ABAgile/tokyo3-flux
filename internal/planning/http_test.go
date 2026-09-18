@@ -51,12 +51,20 @@ func (f *fakeRepository) GitLabUsers(_ context.Context, _, subject, _ string) ([
 	f.subject = subject
 	return []GitLabUser{{ID: 42, Username: "alex", Name: "Alex Example"}}, f.err
 }
-func (f *fakeRepository) GitLabMergeRequests(_ context.Context, _, subject string, project int64, _ string) ([]GitLabMergeRequest, error) {
+func (f *fakeRepository) Proposals(_ context.Context, _, subject string, _ int64) ([]ProposalSummary, error) {
+	f.subject = subject
+	return []ProposalSummary{}, f.err
+}
+func (f *fakeRepository) Review(_ context.Context, _, subject, _ string) (ProposalPreview, error) {
+	f.subject = subject
+	return ProposalPreview{}, f.err
+}
+func (f *fakeRepository) gitLabMergeRequests(_ context.Context, _, subject string, project int64, _ string) ([]GitLabMergeRequest, error) {
 	f.subject = subject
 	return []GitLabMergeRequest{{ProjectID: project, IID: 7, Title: "Latest change", State: "opened"}}, f.err
 }
 func (f *fakeRepository) GitLabMergeRequestsFor(ctx context.Context, workspace, subject string, project int64, search, _ string) ([]GitLabMergeRequest, error) {
-	return f.GitLabMergeRequests(ctx, workspace, subject, project, search)
+	return f.gitLabMergeRequests(ctx, workspace, subject, project, search)
 }
 func (f *fakeRepository) Board(_ context.Context, _, subject string) (Board, error) {
 	f.subject = subject
@@ -124,7 +132,7 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		t.Fatal("no session")
 	}
 	repo := &fakeRepository{}
-	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	browser := manager.Gate(h.Handler(false))
 	var csrf string
 	mint := manager.Gate(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { csrf, err = manager.CSRFToken(r, "planning") }))

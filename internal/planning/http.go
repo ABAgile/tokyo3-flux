@@ -21,8 +21,23 @@ import (
 	"github.com/abagile/tokyo3-base/session"
 )
 
-// Repository is the native planning API's transaction boundary.
+// Repository is the native planning API's transaction boundary. It is a
+// single compile-time contract: every route's dependency is declared here, so
+// an incompletely wired store fails to build instead of returning 404 at
+// request time.
 type Repository interface {
+	PlanningRepository
+	WorkspaceCreator
+	GitLabRepository
+	BurndownRepository
+	CommentRepository
+	AttachmentRepository
+	ProposalRepository
+}
+
+// PlanningRepository is the native planning core: board reads and the
+// revision-checked command path.
+type PlanningRepository interface {
 	Workspaces(context.Context, string) ([]Workspace, error)
 	Projects(context.Context, string, string) ([]Project, error)
 	Board(context.Context, string, string) (Board, error)
@@ -34,16 +49,11 @@ type WorkspaceCreator interface {
 	CreateWorkspace(context.Context, string, string, string) (Workspace, error)
 }
 
-type GitLabProjectRepository interface {
+// GitLabRepository backs the connector-sourced pickers. Every method is a
+// read-only catalog lookup, never persisted planning state.
+type GitLabRepository interface {
 	GitLabProjects(context.Context, string, string) ([]GitLabProject, error)
-}
-type GitLabUserRepository interface {
 	GitLabUsers(context.Context, string, string, string) ([]GitLabUser, error)
-}
-type GitLabMergeRequestRepository interface {
-	GitLabMergeRequests(context.Context, string, string, int64, string) ([]GitLabMergeRequest, error)
-}
-type GitLabMergeRequestScopeRepository interface {
 	GitLabMergeRequestsFor(context.Context, string, string, int64, string, string) ([]GitLabMergeRequest, error)
 }
 
@@ -104,13 +114,11 @@ type HTTP struct {
 	blobs          AttachmentStore
 }
 
-func NewHTTP(repo Repository, sessions *session.Manager, machineSubject string, demo bool, log *slog.Logger, blobs ...AttachmentStore) *HTTP {
-	var attachmentStore AttachmentStore
-	if len(blobs) > 0 {
-		attachmentStore = blobs[0]
-	}
+// NewHTTP wires the planning API. blobs may be nil, in which case attachment
+// routes report ErrAttachmentUnavailable.
+func NewHTTP(repo Repository, sessions *session.Manager, machineSubject string, demo bool, log *slog.Logger, blobs AttachmentStore) *HTTP {
 	return &HTTP{repo: repo, sessions: sessions, machineSubject: machineSubject,
-		demo: demo, log: log, blobs: attachmentStore}
+		demo: demo, log: log, blobs: blobs}
 }
 
 func (h *HTTP) Handler(machine bool) http.Handler {
@@ -149,11 +157,6 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		creator, ok := h.repo.(WorkspaceCreator)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
 		var input struct {
 			Name string `json:"name"`
 		}
@@ -167,7 +170,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		workspace, err := creator.CreateWorkspace(r.Context(), input.Name, h.subject(r, false), r.Header.Get("Idempotency-Key"))
+		workspace, err := h.repo.CreateWorkspace(r.Context(), input.Name, h.subject(r, false), r.Header.Get("Idempotency-Key"))
 		if err != nil {
 			h.failure(w, r, err)
 			return
@@ -191,17 +194,12 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.deleteAttachment(w, r, machine)
 	})
 	mux.HandleFunc("GET "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := h.repo.(CommentRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
 		itemID := r.PathValue("item")
 		if !validItemPathID(itemID) {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		v, err := repo.Comments(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID)
+		v, err := h.repo.Comments(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("POST "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {
@@ -215,11 +213,6 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		}
 		if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
 			h.failure(w, r, ErrInvalid)
-			return
-		}
-		repo, ok := h.repo.(CommentRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
 			return
 		}
 		itemID := r.PathValue("item")
@@ -240,7 +233,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		comment, err := repo.AddComment(r.Context(), r.PathValue("workspace"), h.subject(r, false), itemID, r.Header.Get("Idempotency-Key"), input.Body)
+		comment, err := h.repo.AddComment(r.Context(), r.PathValue("workspace"), h.subject(r, false), itemID, r.Header.Get("Idempotency-Key"), input.Body)
 		h.result(w, r, comment, err)
 	})
 	mux.HandleFunc("GET "+root+"/board", func(w http.ResponseWriter, r *http.Request) {
@@ -287,12 +280,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrForbidden)
 			return
 		}
-		repo, ok := h.repo.(GitLabProjectRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
-		v, err := repo.GitLabProjects(r.Context(), r.PathValue("workspace"), h.subject(r, false))
+		v, err := h.repo.GitLabProjects(r.Context(), r.PathValue("workspace"), h.subject(r, false))
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/gitlab/users", func(w http.ResponseWriter, r *http.Request) {
@@ -300,27 +288,17 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrForbidden)
 			return
 		}
-		repo, ok := h.repo.(GitLabUserRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
 		rawSearch := r.URL.Query().Get("search")
 		if len(rawSearch) > 120 || strings.ContainsAny(rawSearch, "\r\n") {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		v, err := repo.GitLabUsers(r.Context(), r.PathValue("workspace"), h.subject(r, false), strings.TrimSpace(rawSearch))
+		v, err := h.repo.GitLabUsers(r.Context(), r.PathValue("workspace"), h.subject(r, false), strings.TrimSpace(rawSearch))
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/gitlab/merge-requests", func(w http.ResponseWriter, r *http.Request) {
 		if machine {
 			h.failure(w, r, ErrForbidden)
-			return
-		}
-		repo, ok := h.repo.(GitLabMergeRequestRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
 			return
 		}
 		query := r.URL.Query()
@@ -343,23 +321,10 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		var v []GitLabMergeRequest
-		if scopedRepo, ok := h.repo.(GitLabMergeRequestScopeRepository); ok {
-			v, err = scopedRepo.GitLabMergeRequestsFor(r.Context(), r.PathValue("workspace"), h.subject(r, false), project, search, scope)
-		} else if scope == "recent" {
-			v, err = repo.GitLabMergeRequests(r.Context(), r.PathValue("workspace"), h.subject(r, false), project, search)
-		} else {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
+		v, err := h.repo.GitLabMergeRequestsFor(r.Context(), r.PathValue("workspace"), h.subject(r, false), project, search, scope)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/burndown", func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := h.repo.(BurndownRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
 		query := r.URL.Query()
 		sprint := query.Get("sprint")
 		if sprint == "" || len(sprint) > 240 {
@@ -376,7 +341,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, err)
 			return
 		}
-		v, err := repo.Burndown(r.Context(), r.PathValue("workspace"), h.subject(r, machine), sprint, project, assignee)
+		v, err := h.repo.Burndown(r.Context(), r.PathValue("workspace"), h.subject(r, machine), sprint, project, assignee)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/read/{view}", func(w http.ResponseWriter, r *http.Request) {
@@ -397,26 +362,16 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.result(w, r, result, err)
 	})
 	mux.HandleFunc("GET "+root+"/proposals", func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := h.repo.(ProposalRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
 		before, err := strconv.ParseInt(defaultQuery(r.URL.Query().Get("before"), "0"), 10, 64)
 		if err != nil || before < 0 {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		v, err := repo.Proposals(r.Context(), r.PathValue("workspace"), h.subject(r, machine), before)
+		v, err := h.repo.Proposals(r.Context(), r.PathValue("workspace"), h.subject(r, machine), before)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/proposals/{proposal}", func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := h.repo.(ProposalRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
-		v, err := repo.Review(r.Context(), r.PathValue("workspace"), h.subject(r, machine), r.PathValue("proposal"))
+		v, err := h.repo.Review(r.Context(), r.PathValue("workspace"), h.subject(r, machine), r.PathValue("proposal"))
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/history", func(w http.ResponseWriter, r *http.Request) {
@@ -496,8 +451,7 @@ func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine 
 		h.failure(w, r, ErrForbidden)
 		return
 	}
-	repo, ok := h.repo.(AttachmentRepository)
-	if !ok || h.blobs == nil {
+	if h.blobs == nil {
 		h.failure(w, r, ErrAttachmentUnavailable)
 		return
 	}
@@ -578,7 +532,7 @@ func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine 
 		h.failure(w, r, ErrAttachmentUnavailable)
 		return
 	}
-	attachment, err := repo.AddAttachment(r.Context(), workspaceID, subject, itemID, key,
+	attachment, err := h.repo.AddAttachment(r.Context(), workspaceID, subject, itemID, key,
 		r.Header.Get("Idempotency-Key"), Attachment{
 			ItemID: itemID, Name: name, ContentType: contentType, Size: info.Size,
 			Digest: info.Digest,
@@ -602,18 +556,13 @@ func (h *HTTP) downloadAttachment(w http.ResponseWriter, r *http.Request, machin
 		h.failure(w, r, ErrAttachmentUnavailable)
 		return
 	}
-	repo, ok := h.repo.(AttachmentRepository)
-	if !ok {
-		h.failure(w, r, ErrAttachmentUnavailable)
-		return
-	}
 	itemID := r.PathValue("item")
 	id, err := parseAttachmentID(r.PathValue("attachment"))
 	if !validItemPathID(itemID) || err != nil {
 		h.failure(w, r, ErrInvalid)
 		return
 	}
-	attachment, err := repo.Attachment(r.Context(), r.PathValue("workspace"),
+	attachment, err := h.repo.Attachment(r.Context(), r.PathValue("workspace"),
 		h.subject(r, machine), itemID, id)
 	if err != nil {
 		h.failure(w, r, err)
@@ -708,18 +657,13 @@ func (h *HTTP) deleteAttachment(w http.ResponseWriter, r *http.Request, machine 
 		h.failure(w, r, ErrAttachmentUnavailable)
 		return
 	}
-	repo, ok := h.repo.(AttachmentRepository)
-	if !ok {
-		h.failure(w, r, ErrAttachmentUnavailable)
-		return
-	}
 	itemID := r.PathValue("item")
 	id, err := parseAttachmentID(r.PathValue("attachment"))
 	if !validItemPathID(itemID) || err != nil {
 		h.failure(w, r, ErrInvalid)
 		return
 	}
-	attachment, err := repo.RemoveAttachment(r.Context(), r.PathValue("workspace"),
+	attachment, err := h.repo.RemoveAttachment(r.Context(), r.PathValue("workspace"),
 		h.subject(r, false), itemID, id)
 	if err != nil {
 		h.failure(w, r, err)

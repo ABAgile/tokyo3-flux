@@ -59,7 +59,7 @@ func TestGitLabProjectCatalog(t *testing.T) {
 		t.Fatalf("projects = %+v, err = %v", projects, err)
 	}
 	apply(t, s, &b, p.Command{Kind: "integration.save", Integration: &p.Integration{Instance: connector.Instance(), Projects: []int64{42}}})
-	mergeRequests, err := s.GitLabMergeRequests(context.Background(), b.Workspace.ID, "alice", 42, "latest")
+	mergeRequests, err := s.GitLabMergeRequestsFor(context.Background(), b.Workspace.ID, "alice", 42, "latest", "recent")
 	if err != nil || len(mergeRequests) != 1 || mergeRequests[0].IID != 7 || mergeRequests[0].Title != "Latest change" {
 		t.Fatalf("merge requests = %+v, err = %v", mergeRequests, err)
 	}
@@ -81,7 +81,7 @@ func TestGitLabProjectCatalog(t *testing.T) {
 	if err != nil || len(viewerProjects) != 1 || viewerProjects[0].ID != 42 {
 		t.Fatalf("viewer catalog access = %+v, err = %v", viewerProjects, err)
 	}
-	if _, err := s.GitLabMergeRequests(context.Background(), b.Workspace.ID, "viewer", 42, "latest"); !errors.Is(err, p.ErrForbidden) {
+	if _, err := s.GitLabMergeRequestsFor(context.Background(), b.Workspace.ID, "viewer", 42, "latest", "recent"); !errors.Is(err, p.ErrForbidden) {
 		t.Fatalf("viewer merge-request search = %v", err)
 	}
 }

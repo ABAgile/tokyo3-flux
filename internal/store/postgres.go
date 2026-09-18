@@ -457,16 +457,13 @@ func (s *Store) GitLabProjects(ctx context.Context, wid, subject string) ([]p.Gi
 
 const maxGitLabAssigneeIDs = 50
 
-// GitLabMergeRequests searches only approved project coordinates. The
+// GitLabMergeRequestsFor searches only approved project coordinates. The
 // provider credential remains server-side and viewers cannot use this picker
-// to create links. Recent is the unfiltered compatibility default.
-func (s *Store) GitLabMergeRequests(ctx context.Context, wid, subject string, projectID int64, search string) ([]p.GitLabMergeRequest, error) {
-	return s.GitLabMergeRequestsFor(ctx, wid, subject, projectID, search, "recent")
-}
-
-// GitLabMergeRequestsFor applies a workspace-safe quick scope. GitLab's
-// assigned_to_me scope would refer to the server connector account, so the
-// store resolves Flux membership subjects to explicit GitLab assignee IDs.
+// to create links. "recent" is the unfiltered default scope.
+//
+// It also applies a workspace-safe quick scope: GitLab's assigned_to_me scope
+// would refer to the server connector account, so the store resolves Flux
+// membership subjects to explicit GitLab assignee IDs.
 func (s *Store) GitLabMergeRequestsFor(ctx context.Context, wid, subject string, projectID int64, search, scope string) ([]p.GitLabMergeRequest, error) {
 	memberRole, err := role(ctx, s.pool, wid, subject)
 	if err != nil {
