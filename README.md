@@ -392,6 +392,10 @@ event in one transaction. It rejects machine/bearer authentication. Browser-only
 `GET /api/v2/session` returns identity, optional `avatar_url`, and CSRF. `/healthz` and
 `/readyz` check liveness and DB/schema readiness independently of GitLab. Board responses
 may include observations, import receipts, and cached GitLab profile metadata on members.
+
+A workspace holds at most 1000 live work items; archiving returns capacity, and archived
+work is retained up to a separate 10000-item total. Restoring an item is refused when the
+live limit is already reached.
 The label catalog includes each label’s `name` and selected `color`; item labels remain names.
 The web editor offers a fixed 64-swatch palette of solid colors for labels.
 

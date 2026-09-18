@@ -663,7 +663,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
  ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
  ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
  ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id)
- FROM work_items i WHERE i.workspace_id=$1 ORDER BY rank,id LIMIT 1001`, wid)
+ FROM work_items i WHERE i.workspace_id=$1 ORDER BY rank,id LIMIT $2`, wid, p.MaxWorkspaceItems+1)
 	if err != nil {
 		return b, err
 	}
@@ -729,7 +729,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 	if err = rows.Err(); err != nil {
 		return b, err
 	}
-	if len(b.Items) > p.MaxItems {
+	if len(b.Items) > p.MaxWorkspaceItems {
 		return b, errors.New("workspace exceeds supported item limit")
 	}
 	rows, err = tx.Query(ctx, "SELECT subject,role,name FROM memberships WHERE workspace_id=$1 ORDER BY subject", wid)

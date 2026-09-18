@@ -20,7 +20,13 @@ var (
 )
 
 const (
-	MaxItems                = 1000
+	// MaxItems bounds the live working set. Archived items are excluded so a
+	// long-lived workspace cannot reach the cap through history alone and lose
+	// the ability to create work.
+	MaxItems = 1000
+	// MaxWorkspaceItems bounds the total rows a workspace may hold, archived
+	// items included, so a board load stays predictable.
+	MaxWorkspaceItems       = 10000
 	MaxCommentLength        = 4000
 	MaxItemComments         = 500
 	MaxAttachmentBytes      = 20 << 20
@@ -361,8 +367,11 @@ func Apply(b *Board, c Command) error {
 			}
 		}
 	case "item.create":
-		if c.Item == nil || len(b.Items) >= MaxItems {
+		if c.Item == nil || activeItemCount(b) >= MaxItems {
 			return invalid("item required or workspace item limit reached")
+		}
+		if len(b.Items) >= MaxWorkspaceItems {
+			return invalid("workspace item limit reached; archived work still counts toward total storage")
 		}
 		item := *c.Item
 		item.ID = NewID()
@@ -402,6 +411,11 @@ func Apply(b *Board, c Command) error {
 		i := itemIndex(b, c.Target)
 		if i < 0 {
 			return ErrNotFound
+		}
+		// Restoring returns an item to the live working set, so it must respect
+		// the same cap as creation.
+		if c.Kind == "item.restore" && b.Items[i].Archived && activeItemCount(b) >= MaxItems {
+			return invalid("workspace item limit reached; archive other work before restoring")
 		}
 		b.Items[i].Archived = c.Kind == "item.archive"
 		b.Items[i].Revision++
@@ -665,6 +679,18 @@ func normalizeItemProjects(item *Item) {
 
 func itemIndex(b *Board, id string) int {
 	return slices.IndexFunc(b.Items, func(v Item) bool { return v.ID == id })
+}
+
+// activeItemCount counts the live working set; archived items are retained for
+// history and reference but do not consume the board limit.
+func activeItemCount(b *Board) int {
+	count := 0
+	for _, item := range b.Items {
+		if !item.Archived {
+			count++
+		}
+	}
+	return count
 }
 func memberIndex(b *Board, subject string) int {
 	return slices.IndexFunc(b.Members, func(v Member) bool { return v.Subject == subject })
