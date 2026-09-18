@@ -201,14 +201,12 @@ func (c *Client) fetchProfiles(ctx context.Context, ids []int64) (map[int64]Memb
 	results := make(chan profileResult, len(ids))
 	var group sync.WaitGroup
 	for range workers {
-		group.Add(1)
-		go func() {
-			defer group.Done()
+		group.Go(func() {
 			for id := range jobs {
 				profile, found, ok := c.fetchProfile(ctx, id)
 				results <- profileResult{id: id, profile: profile, found: found, ok: ok}
 			}
-		}()
+		})
 	}
 	go func() {
 		for _, id := range ids {
