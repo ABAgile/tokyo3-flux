@@ -2,8 +2,24 @@ package store
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 )
+
+// The ladder's index must agree with the version each migration declares, so
+// Migrate cannot silently skip or replay a step after a file is added.
+func TestMigrationLadderMatchesDeclaredVersions(t *testing.T) {
+	for i, migration := range migrations {
+		want := fmt.Sprintf("UPDATE flux_schema SET version=%d;", i+2)
+		if !strings.Contains(migration, want) {
+			t.Fatalf("migration %d does not declare %q", i, want)
+		}
+	}
+	if schemaVersion != len(migrations)+1 {
+		t.Fatal(schemaVersion)
+	}
+}
 
 func TestRefreshMigrationPreservesObservations(t *testing.T) {
 	s := bareStore(t)

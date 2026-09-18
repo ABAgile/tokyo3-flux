@@ -59,6 +59,25 @@ var attachmentsMigration string
 //go:embed 011_item_projects.sql
 var itemProjectsMigration string
 
+// migrations is the ordered native schema ladder. Index i upgrades a database
+// at version i+1 to version i+2, so schemaVersion stays derived rather than
+// duplicated across Migrate and Ready.
+var migrations = []string{
+	workspaceMigration,
+	labelsMigration,
+	integrationsMigration,
+	refreshMigration,
+	proposalsMigration,
+	labelsPriorityMigration,
+	burndownMigration,
+	commentsMigration,
+	attachmentsMigration,
+	itemProjectsMigration,
+}
+
+// schemaVersion is the version serving requires; schema.sql creates version 1.
+var schemaVersion = 1 + len(migrations)
+
 type Store struct {
 	refreshInterval time.Duration
 	pool            *pgxpool.Pool
@@ -105,7 +124,7 @@ func (s *Store) Close() { s.pool.Close() }
 func (s *Store) Ready(ctx context.Context) error {
 	var version int
 	err := s.pool.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version)
-	if err != nil || version != 11 {
+	if err != nil || version != schemaVersion {
 		return errors.New("native schema unavailable: run flux migrate")
 	}
 	return nil
@@ -130,59 +149,18 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err = tx.QueryRow(ctx, "SELECT version FROM flux_schema").Scan(&version); err != nil {
 			return err
 		}
-		if version < 1 || version > 11 {
+		if version < 1 || version > schemaVersion {
 			return errors.New("unsupported native schema version")
 		}
 	} else if _, err = tx.Exec(ctx, schema); err != nil {
 		return err
 	}
-	if version == 1 {
-		if _, err = tx.Exec(ctx, workspaceMigration); err != nil {
-			return err
+	// migrations[i] upgrades version i+1 to version i+2.
+	for i, migration := range migrations {
+		if version > i+1 {
+			continue
 		}
-	}
-	if version < 3 {
-		if _, err = tx.Exec(ctx, labelsMigration); err != nil {
-			return err
-		}
-	}
-	if version < 4 {
-		if _, err = tx.Exec(ctx, integrationsMigration); err != nil {
-			return err
-		}
-	}
-	if version < 5 {
-		if _, err = tx.Exec(ctx, refreshMigration); err != nil {
-			return err
-		}
-	}
-	if version < 6 {
-		if _, err = tx.Exec(ctx, proposalsMigration); err != nil {
-			return err
-		}
-	}
-	if version < 7 {
-		if _, err = tx.Exec(ctx, labelsPriorityMigration); err != nil {
-			return err
-		}
-	}
-	if version < 8 {
-		if _, err = tx.Exec(ctx, burndownMigration); err != nil {
-			return err
-		}
-	}
-	if version < 9 {
-		if _, err = tx.Exec(ctx, commentsMigration); err != nil {
-			return err
-		}
-	}
-	if version < 10 {
-		if _, err = tx.Exec(ctx, attachmentsMigration); err != nil {
-			return err
-		}
-	}
-	if version < 11 {
-		if _, err = tx.Exec(ctx, itemProjectsMigration); err != nil {
+		if _, err = tx.Exec(ctx, migration); err != nil {
 			return err
 		}
 	}
