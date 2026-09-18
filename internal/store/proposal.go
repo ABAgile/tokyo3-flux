@@ -169,8 +169,11 @@ func (s *Store) changeProposal(ctx context.Context, tx pgx.Tx, b p.Board, subjec
 			if c.Name == "" || c.Name != preview.Digest {
 				return 0, p.ErrConflict
 			}
+			// previewProposal returns an independent deep copy, so the loaded
+			// board still describes the persisted state and can drive the diff.
+			previous := b
 			b = after
-			if err = save(ctx, tx, b); err != nil {
+			if err = save(ctx, tx, previous, b); err != nil {
 				return 0, err
 			}
 			for i, entry := range v.Document.Imports {

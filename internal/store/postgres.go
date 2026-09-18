@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -898,6 +899,9 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	if c.Kind == "link.attach" && (s.connector == nil || b.Integration.Instance != s.connector.Instance()) {
 		return 0, p.ErrInvalid
 	}
+	// Apply mutates the loaded board in place, so the persisted state is
+	// captured first and handed to save as the write-diff baseline.
+	previous := cloneSaveState(b)
 	if err = p.Apply(&b, c); err != nil {
 		return 0, err
 	}
@@ -935,7 +939,7 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 			return 0, err
 		}
 	}
-	if err = save(ctx, tx, b); err != nil {
+	if err = save(ctx, tx, previous, b); err != nil {
 		return 0, err
 	}
 	target := c.Target
@@ -973,93 +977,240 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	return b.Workspace.Revision, tx.Commit(ctx)
 }
 
-// save writes normalized rows, not an authoritative JSON board snapshot. The
-// deliberately small MVP board is locked and bounded to 1000 items.
-func save(ctx context.Context, tx pgx.Tx, b p.Board) error {
+// itemAssociation describes one child table that stores a set of strings per
+// work item. Statements are fixed literals; only bind parameters vary.
+type itemAssociation struct {
+	deleteAll  string
+	deleteSome string
+	insert     string
+	values     func(p.Item) []string
+}
+
+var itemAssociations = []itemAssociation{{
+	deleteAll:  "DELETE FROM item_labels WHERE workspace_id=$1 AND item_id=$2",
+	deleteSome: "DELETE FROM item_labels WHERE workspace_id=$1 AND item_id=$2 AND label=ANY($3::text[])",
+	insert:     "INSERT INTO item_labels(workspace_id,item_id,label) VALUES($1,$2,$3)",
+	values:     func(it p.Item) []string { return it.Labels },
+}, {
+	deleteAll:  "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2",
+	deleteSome: "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2 AND project_id=ANY($3::text[])",
+	insert:     "INSERT INTO item_projects(workspace_id,item_id,project_id) VALUES($1,$2,$3)",
+	values:     itemProjectAssociations,
+}, {
+	deleteAll:  "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2",
+	deleteSome: "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2 AND sprint_id=ANY($3::text[])",
+	insert:     "INSERT INTO item_sprints(workspace_id,item_id,sprint_id) VALUES($1,$2,$3)",
+	values:     func(it p.Item) []string { return it.SprintIDs },
+}, {
+	deleteAll:  "DELETE FROM dependencies WHERE workspace_id=$1 AND item_id=$2",
+	deleteSome: "DELETE FROM dependencies WHERE workspace_id=$1 AND item_id=$2 AND depends_on=ANY($3::text[])",
+	insert:     "INSERT INTO dependencies(workspace_id,item_id,depends_on) VALUES($1,$2,$3)",
+	values:     func(it p.Item) []string { return it.Dependencies },
+}}
+
+// itemProjectAssociations resolves the authoritative project list, falling back
+// to the legacy singular field for boards written by older clients.
+func itemProjectAssociations(it p.Item) []string {
+	if it.ProjectIDs == nil && it.ProjectID != "" {
+		return []string{it.ProjectID}
+	}
+	return it.ProjectIDs
+}
+
+func itemLegacyProjectID(it p.Item) string {
+	if ids := itemProjectAssociations(it); len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
+}
+
+// sameItemRow reports whether the work_items columns are unchanged. Child
+// associations and attachments are compared separately.
+func sameItemRow(old, next p.Item) bool {
+	return old.Title == next.Title && old.Description == next.Description &&
+		old.ColumnID == next.ColumnID && old.Assignee == next.Assignee &&
+		old.Rank == next.Rank && old.Revision == next.Revision &&
+		old.Archived == next.Archived && itemLegacyProjectID(old) == itemLegacyProjectID(next)
+}
+
+func indexByID[T any](values []T, key func(T) string) map[string]T {
+	out := make(map[string]T, len(values))
+	for _, value := range values {
+		out[key(value)] = value
+	}
+	return out
+}
+
+func stringSetDiff(old, next []string) (removed, added []string) {
+	oldSet := make(map[string]struct{}, len(old))
+	for _, value := range old {
+		oldSet[value] = struct{}{}
+	}
+	nextSet := make(map[string]struct{}, len(next))
+	for _, value := range next {
+		nextSet[value] = struct{}{}
+	}
+	for _, value := range old {
+		if _, ok := nextSet[value]; !ok {
+			removed = append(removed, value)
+		}
+	}
+	for _, value := range next {
+		if _, ok := oldSet[value]; !ok {
+			added = append(added, value)
+		}
+	}
+	return removed, added
+}
+
+// cloneSaveState copies the board subset that save persists. Apply mutates the
+// loaded board (including item slice elements) in place, so callers must clone
+// before applying a command to keep a usable write-diff baseline.
+func cloneSaveState(b p.Board) p.Board {
+	out := p.Board{
+		Workspace:   b.Workspace,
+		Projects:    slices.Clone(b.Projects),
+		Columns:     slices.Clone(b.Columns),
+		Sprints:     slices.Clone(b.Sprints),
+		Labels:      slices.Clone(b.Labels),
+		ClosedScope: slices.Clone(b.ClosedScope),
+		Items:       make([]p.Item, len(b.Items)),
+	}
+	for i, item := range b.Items {
+		item.ProjectIDs = slices.Clone(item.ProjectIDs)
+		item.SprintIDs = slices.Clone(item.SprintIDs)
+		item.Labels = slices.Clone(item.Labels)
+		item.Dependencies = slices.Clone(item.Dependencies)
+		item.Attachments = nil
+		out.Items[i] = item
+	}
+	return out
+}
+
+// save writes normalized rows, not an authoritative JSON board snapshot. It
+// persists only the difference between the loaded board and the applied board,
+// so write cost tracks the size of the change rather than the size of the
+// workspace. The deliberately small MVP board is locked and bounded to 1000
+// items. Parent rows are written before child rows, child rows are removed
+// before the workspace label catalog they reference, and columns are dropped
+// only after every item has been moved off them.
+func save(ctx context.Context, tx pgx.Tx, before, b p.Board) error {
 	wid := b.Workspace.ID
+	previousProjects := indexByID(before.Projects, func(v p.Project) string { return v.ID })
 	for _, project := range b.Projects {
+		if old, ok := previousProjects[project.ID]; ok && old == project {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO projects(id,workspace_id,name,revision) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET name=excluded.name,revision=excluded.revision`, project.ID, wid, project.Name, project.Revision); err != nil {
 			return err
 		}
 	}
+	previousColumns := indexByID(before.Columns, func(v p.Column) string { return v.ID })
 	for _, c := range b.Columns {
+		if old, ok := previousColumns[c.ID]; ok && old == c {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO board_columns(workspace_id,id,name,category,position,wip) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(workspace_id,id) DO UPDATE SET name=excluded.name,category=excluded.category,position=excluded.position,wip=excluded.wip`, wid, c.ID, c.Name, c.Category, c.Position, c.WIP); err != nil {
 			return err
 		}
 	}
 	// Sprints and project classification share the workspace transaction.
+	previousSprints := indexByID(before.Sprints, func(v p.Sprint) string { return v.ID })
 	for _, sp := range b.Sprints {
+		if old, ok := previousSprints[sp.ID]; ok && old == sp {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO sprints(workspace_id,id,name,goal,start_date,end_date,state,revision) VALUES($1,$2,$3,$4,$5::date,$6::date,$7,$8) ON CONFLICT(workspace_id,id) DO UPDATE SET name=excluded.name,goal=excluded.goal,start_date=excluded.start_date,end_date=excluded.end_date,state=excluded.state,revision=excluded.revision`, wid, sp.ID, sp.Name, sp.Goal, sp.Start, sp.End, sp.State, sp.Revision); err != nil {
 			return err
 		}
 	}
+	previousItems := indexByID(before.Items, func(v p.Item) string { return v.ID })
 	for _, it := range b.Items {
-		projectIDs := it.ProjectIDs
-		if projectIDs == nil && it.ProjectID != "" {
-			projectIDs = []string{it.ProjectID}
+		if old, ok := previousItems[it.ID]; ok && sameItemRow(old, it) {
+			continue
 		}
-		legacyProjectID := ""
-		if len(projectIDs) > 0 {
-			legacyProjectID = projectIDs[0]
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, legacyProjectID, it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, itemLegacyProjectID(it), it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, "DELETE FROM item_labels WHERE workspace_id=$1", wid); err != nil {
-		return err
+	currentItems := indexByID(b.Items, func(v p.Item) string { return v.ID })
+	for _, old := range before.Items {
+		if _, ok := currentItems[old.ID]; ok {
+			continue
+		}
+		for _, association := range itemAssociations {
+			if _, err := tx.Exec(ctx, association.deleteAll, wid, old.ID); err != nil {
+				return err
+			}
+		}
 	}
-	if _, err := tx.Exec(ctx, "DELETE FROM workspace_labels WHERE workspace_id=$1", wid); err != nil {
-		return err
+	// Child rows are withdrawn before the workspace label catalog so a renamed
+	// or deleted label never violates the item_labels foreign key.
+	additions := make([][][]string, len(b.Items))
+	for i, it := range b.Items {
+		old := previousItems[it.ID]
+		additions[i] = make([][]string, len(itemAssociations))
+		for j, association := range itemAssociations {
+			removed, added := stringSetDiff(association.values(old), association.values(it))
+			additions[i][j] = added
+			if len(removed) == 0 {
+				continue
+			}
+			if _, err := tx.Exec(ctx, association.deleteSome, wid, it.ID, removed); err != nil {
+				return err
+			}
+		}
 	}
+	currentLabels := indexByID(b.Labels, func(v p.Label) string { return v.Name })
+	removedLabels := []string{}
+	for _, label := range before.Labels {
+		if _, ok := currentLabels[label.Name]; !ok {
+			removedLabels = append(removedLabels, label.Name)
+		}
+	}
+	if len(removedLabels) > 0 {
+		if _, err := tx.Exec(ctx, "DELETE FROM workspace_labels WHERE workspace_id=$1 AND name=ANY($2::text[])", wid, removedLabels); err != nil {
+			return err
+		}
+	}
+	previousLabels := indexByID(before.Labels, func(v p.Label) string { return v.Name })
 	for _, label := range b.Labels {
-		if _, err := tx.Exec(ctx, "INSERT INTO workspace_labels(workspace_id,name,color) VALUES($1,$2,$3)", wid, label.Name, label.Color); err != nil {
+		if old, ok := previousLabels[label.Name]; ok && old == label {
+			continue
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO workspace_labels(workspace_id,name,color) VALUES($1,$2,$3) ON CONFLICT(workspace_id,name) DO UPDATE SET color=excluded.color", wid, label.Name, label.Color); err != nil {
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, "DELETE FROM dependencies WHERE workspace_id=$1", wid); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "DELETE FROM item_projects WHERE workspace_id=$1", wid); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "DELETE FROM item_sprints WHERE workspace_id=$1", wid); err != nil {
-		return err
-	}
-	for _, it := range b.Items {
-		projectIDs := it.ProjectIDs
-		if projectIDs == nil && it.ProjectID != "" {
-			projectIDs = []string{it.ProjectID}
-		}
-		for _, projectID := range projectIDs {
-			if _, err := tx.Exec(ctx, "INSERT INTO item_projects(workspace_id,item_id,project_id) VALUES($1,$2,$3)", wid, it.ID, projectID); err != nil {
-				return err
-			}
-		}
-		for _, sid := range it.SprintIDs {
-			if _, err := tx.Exec(ctx, "INSERT INTO item_sprints(workspace_id,item_id,sprint_id) VALUES($1,$2,$3)", wid, it.ID, sid); err != nil {
-				return err
-			}
-		}
-		for _, label := range it.Labels {
-			if _, err := tx.Exec(ctx, "INSERT INTO item_labels(workspace_id,item_id,label) VALUES($1,$2,$3)", wid, it.ID, label); err != nil {
-				return err
-			}
-		}
-		for _, dep := range it.Dependencies {
-			if _, err := tx.Exec(ctx, "INSERT INTO dependencies(workspace_id,item_id,depends_on) VALUES($1,$2,$3)", wid, it.ID, dep); err != nil {
-				return err
+	for i, it := range b.Items {
+		for j, association := range itemAssociations {
+			for _, value := range additions[i][j] {
+				if _, err := tx.Exec(ctx, association.insert, wid, it.ID, value); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	ids := []string{}
-	for _, c := range b.Columns {
-		ids = append(ids, c.ID)
+	currentColumns := indexByID(b.Columns, func(v p.Column) string { return v.ID })
+	removedColumns := []string{}
+	for _, c := range before.Columns {
+		if _, ok := currentColumns[c.ID]; !ok {
+			removedColumns = append(removedColumns, c.ID)
+		}
 	}
-	if _, err := tx.Exec(ctx, "DELETE FROM board_columns WHERE workspace_id=$1 AND NOT(id=ANY($2::text[]))", wid, ids); err != nil {
-		return err
+	if len(removedColumns) > 0 {
+		if _, err := tx.Exec(ctx, "DELETE FROM board_columns WHERE workspace_id=$1 AND id=ANY($2::text[])", wid, removedColumns); err != nil {
+			return err
+		}
+	}
+	previousScope := make(map[p.Scope]struct{}, len(before.ClosedScope))
+	for _, scope := range before.ClosedScope {
+		previousScope[scope] = struct{}{}
 	}
 	for _, scope := range b.ClosedScope {
+		if _, ok := previousScope[scope]; ok {
+			continue
+		}
 		if _, err := tx.Exec(ctx, "INSERT INTO closed_sprint_scope(workspace_id,sprint_id,item_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", wid, scope.SprintID, scope.ItemID); err != nil {
 			return err
 		}
