@@ -22,9 +22,62 @@ import (
 	"abagile.com/tokyo3/flux/internal/planningui"
 	"abagile.com/tokyo3/flux/internal/store"
 	"github.com/abagile/tokyo3-base/cli"
+	"github.com/abagile/tokyo3-base/envutil"
+	"github.com/abagile/tokyo3-base/ratelimit"
 	baserun "github.com/abagile/tokyo3-base/run"
 	"github.com/abagile/tokyo3-base/session"
 )
+
+const (
+	// defaultRateLimitRPS and defaultRateLimitBurst are sized for a shared team
+	// workspace behind one NAT address: generous enough for normal board polling
+	// and drag-and-drop bursts, tight enough that a single client cannot exhaust
+	// the database pool.
+	defaultRateLimitRPS   = 30
+	defaultRateLimitBurst = 60
+	// authRateLimitRPS and authRateLimitBurst guard the login and callback paths,
+	// which mint cookies and call the provider. Logins are rare per user, so a
+	// much tighter budget is safe and blunts credential stuffing.
+	authRateLimitRPS   = 1
+	authRateLimitBurst = 10
+)
+
+// rateLimitSettings parses the limiter environment up front, before any
+// database or worker is opened. A negative FLUX_RATE_LIMIT_RPS disables both
+// limiters; unset values take the defaults. Log is filled in by the caller once
+// the runtime logger exists.
+func rateLimitSettings() (api, auth ratelimit.Config, err error) {
+	rps, err := envutil.Float("FLUX_RATE_LIMIT_RPS")
+	if err != nil {
+		return api, auth, err
+	}
+	if rps == 0 {
+		rps = defaultRateLimitRPS
+	}
+	burst, err := envutil.Int("FLUX_RATE_LIMIT_BURST")
+	if err != nil {
+		return api, auth, err
+	}
+	if burst == 0 {
+		burst = defaultRateLimitBurst
+	}
+	trusted, err := envutil.CIDRList("FLUX_TRUSTED_PROXIES")
+	if err != nil {
+		return api, auth, err
+	}
+	throttled := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"too many requests; retry shortly"}` + "\n"))
+	}
+	api = ratelimit.Config{RPS: rps, Burst: burst, TrustedProxies: trusted, OnThrottle: throttled}
+	auth = api
+	if rps > 0 {
+		auth.RPS, auth.Burst = authRateLimitRPS, authRateLimitBurst
+	}
+	return api, auth, nil
+}
 
 func runPlan(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
@@ -136,6 +189,13 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 	}
+	var apiLimits, authLimits ratelimit.Config
+	if cmd == "serve" {
+		var err error
+		if apiLimits, authLimits, err = rateLimitSettings(); err != nil {
+			return err
+		}
+	}
 	var blobConfig blobstore.Config
 	if cmd == "serve" {
 		natsMaterial := app.NATS()
@@ -189,6 +249,8 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	}
 	rt := app.Setup(context.Background())
 	defer rt.Shutdown()
+	apiLimits.Log, authLimits.Log = rt.Log, rt.Log
+	apiLimiter, authLimiter := ratelimit.New(apiLimits), ratelimit.New(authLimits)
 	attachments, err := blobstore.New(blobConfig)
 	if err != nil {
 		return err
@@ -206,7 +268,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		routes.HandleFunc("/webhooks/gitlab", http.NotFound)
 	}
 	routes.HandleFunc("/api/", http.NotFound) // Retired cockpit API; never redirect machine consumers to login.
-	routes.Handle("/auth/", auth)
+	routes.Handle("/auth/", authLimiter.Middleware(auth))
 	routes.Handle("/api/v2/", machine.Gate(api.Handler(true), sessions.Gate(api.Handler(false))))
 	routes.Handle("/", sessions.Gate(planningui.Handler()))
 	routes.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -231,7 +293,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	contentSecurityPolicy := "default-src 'self'; script-src 'self'; style-src 'self'; img-src " + strings.Join(imageSources, " ") + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	limited := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if demo {
 			host := r.Host
 			if h, _, e := net.SplitHostPort(host); e == nil {
@@ -248,6 +310,8 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		routes.ServeHTTP(w, r)
 	})
+	// Probes stay exempt so throttling never makes an instance look unhealthy.
+	handler := apiLimiter.Middleware(limited, "/healthz", "/readyz")
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	rt.Log.Info("native Flux planning started", "addr", addr, "demo", demo)
 	components := []baserun.Component{baserun.HTTPServer(server, 10*time.Second, false)}

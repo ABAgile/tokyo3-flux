@@ -131,6 +131,9 @@ database or starting workers. PostgreSQL is required.
 | `FLUX_ADDR` | Listen address; default `127.0.0.1:8080`, overridden by `--addr`. |
 | `FLUX_PORT`, `FLUX_BIND_ADDR` | Compose HTTP publication; defaults `8080`, `127.0.0.1`. |
 | `FLUX_SESSION_KEY` | Required outside demo: 32-byte key encoded as 64 hex characters. |
+| `FLUX_RATE_LIMIT_RPS` | Per-source request rate; defaults to `30`. A negative value disables rate limiting. |
+| `FLUX_RATE_LIMIT_BURST` | Per-source burst; defaults to `60`. |
+| `FLUX_TRUSTED_PROXIES` | Comma-separated reverse-proxy CIDRs whose `X-Forwarded-For` may be trusted for rate-limit keying; empty means the peer address is used. |
 | `FLUX_GITLAB_URL` | GitLab instance root, shared by OAuth and observations. |
 | `FLUX_GITLAB_OAUTH_CLIENT_ID` | Browser OAuth client ID; required outside demo. |
 | `FLUX_GITLAB_OAUTH_CLIENT_SECRET` | Browser OAuth client secret; required outside demo. |
