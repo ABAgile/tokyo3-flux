@@ -26,16 +26,20 @@ const (
 	MaxItems = 1000
 	// MaxWorkspaceItems bounds the total rows a workspace may hold, archived
 	// items included, so a board load stays predictable.
-	MaxWorkspaceItems       = 10000
-	MaxCommentLength        = 4000
-	MaxItemComments         = 500
-	MaxAttachmentBytes      = 20 << 20
-	MaxItemAttachments      = 100
-	MaxWorkspaceAttachments = 10000
-	MaxItemProjects         = 100
-	MaxAttachmentName       = 255
-	MaxAttachmentMIME       = 255
-	DefaultLabelColor       = "#dcefe4"
+	MaxWorkspaceItems  = 10000
+	MaxCommentLength   = 4000
+	MaxItemComments    = 500
+	MaxAttachmentBytes = 20 << 20
+	// MaxBufferedAttachmentBytes bounds the download path that verifies an
+	// attachment in memory before any response byte is committed. Objects above
+	// it are verified while streaming instead of being held in memory.
+	MaxBufferedAttachmentBytes = 1 << 20
+	MaxItemAttachments         = 100
+	MaxWorkspaceAttachments    = 10000
+	MaxItemProjects            = 100
+	MaxAttachmentName          = 255
+	MaxAttachmentMIME          = 255
+	DefaultLabelColor          = "#dcefe4"
 )
 
 type Workspace struct {

@@ -464,6 +464,12 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
+		// One identifier per request, echoed to the client and reused by every
+		// log line below, so a reported failure can be correlated with its audit
+		// trail instead of a value invented at logging time.
+		id := NewID()
+		ctx = context.WithValue(ctx, requestIDKey{}, id)
+		w.Header().Set("X-Request-Id", id)
 		r = r.WithContext(ctx)
 		if h.subject(r, machine) == "" {
 			h.failure(w, r, ErrForbidden)
@@ -471,6 +477,14 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+type requestIDKey struct{}
+
+// requestID returns the per-request correlation identifier assigned by Handler.
+func requestID(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
 }
 
 func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
@@ -560,7 +574,7 @@ func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine 
 		return
 	}
 	if info.Key != key || info.Size < 0 || info.Size > MaxAttachmentBytes || !validAttachmentDigest(info.Digest) {
-		h.removeBlob(key)
+		h.removeBlob(requestID(r.Context()), key)
 		h.failure(w, r, ErrAttachmentUnavailable)
 		return
 	}
@@ -570,14 +584,14 @@ func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine 
 			Digest: info.Digest,
 		})
 	if err != nil {
-		h.removeBlob(key)
+		h.removeBlob(requestID(r.Context()), key)
 		h.failure(w, r, err)
 		return
 	}
 	status := http.StatusCreated
 	if attachment.StorageKey != "" && attachment.StorageKey != key {
 		status = http.StatusOK
-		h.removeBlob(key)
+		h.removeBlob(requestID(r.Context()), key)
 	}
 	attachment.StorageKey = ""
 	respond(w, status, attachment)
@@ -615,20 +629,18 @@ func (h *HTTP) downloadAttachment(w http.ResponseWriter, r *http.Request, machin
 		h.failure(w, r, err)
 		return
 	}
-	if r.Method != http.MethodHead {
-		if err = verifyAttachmentObject(object, attachment.Digest); err != nil {
-			_ = object.Reader.Close()
-			h.failure(w, r, err)
-			return
-		}
-		_ = object.Reader.Close()
-		object, err = h.openAttachmentObject(r.Context(), attachment.StorageKey, attachment.Size)
-		if err != nil {
+	defer object.Reader.Close()
+	// The object is read exactly once. Small objects are verified in memory so a
+	// corrupt blob still becomes a clean 503; larger ones are verified as they
+	// stream, because buffering them is worse than the abort below.
+	var buffered *bytes.Buffer
+	if r.Method != http.MethodHead && attachment.Size <= MaxBufferedAttachmentBytes {
+		buffered = bytes.NewBuffer(make([]byte, 0, attachment.Size))
+		if err = verifyAttachmentObject(object, attachment.Digest, buffered); err != nil {
 			h.failure(w, r, err)
 			return
 		}
 	}
-	defer object.Reader.Close()
 	contentDisposition := mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name})
 	if contentDisposition == "" {
 		contentDisposition = `attachment; filename="download"`
@@ -640,15 +652,16 @@ func (h *HTTP) downloadAttachment(w http.ResponseWriter, r *http.Request, machin
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	hash := sha256.New()
-	written, copyErr := io.CopyN(w, io.TeeReader(object.Reader, hash), attachment.Size)
-	verifyErr := error(nil)
-	if object.Verify != nil {
-		verifyErr = object.Verify()
+	if buffered != nil {
+		_, _ = w.Write(buffered.Bytes())
+		return
 	}
-	actualDigest := "sha256:" + hex.EncodeToString(hash.Sum(nil))
-	if copyErr != nil || written != attachment.Size || verifyErr != nil || actualDigest != attachment.Digest {
-		h.log.Warn("attachment download failed", "request_id", NewID(), "attachment_id", id)
+	if err = verifyAttachmentObject(object, attachment.Digest, w); err != nil {
+		h.log.Warn("attachment download failed", "request_id", requestID(r.Context()), "attachment_id", id)
+		// The status and Content-Length are already committed, so the only way to
+		// stop a truncated or unverified body from looking complete is to break
+		// the connection.
+		panic(http.ErrAbortHandler)
 	}
 }
 
@@ -666,9 +679,11 @@ func (h *HTTP) openAttachmentObject(ctx context.Context, key string, size int64)
 	return object, nil
 }
 
-func verifyAttachmentObject(object blobstore.Object, expectedDigest string) error {
+// verifyAttachmentObject streams the object into dst while hashing it, and
+// reports whether the stored bytes still match the recorded digest.
+func verifyAttachmentObject(object blobstore.Object, expectedDigest string, dst io.Writer) error {
 	hash := sha256.New()
-	written, copyErr := io.CopyN(io.Discard, io.TeeReader(object.Reader, hash), object.Size)
+	written, copyErr := io.CopyN(dst, io.TeeReader(object.Reader, hash), object.Size)
 	verifyErr := error(nil)
 	if object.Verify != nil {
 		verifyErr = object.Verify()
@@ -737,11 +752,14 @@ func (h *HTTP) attachmentWritePreflight(ctx context.Context, workspaceID, subjec
 	return ErrNotFound
 }
 
-func (h *HTTP) removeBlob(key string) {
+// removeBlob drops an orphaned object on a detached deadline, so cleanup still
+// runs when the request context is already cancelled. id ties the warning back
+// to the request that created the orphan.
+func (h *HTTP) removeBlob(id, key string) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := h.blobs.Delete(cleanupCtx, key); err != nil {
-		h.log.Warn("attachment cleanup failed", "request_id", NewID())
+		h.log.Warn("attachment cleanup failed", "request_id", id)
 	}
 }
 
@@ -844,7 +862,7 @@ func (h *HTTP) failure(w http.ResponseWriter, r *http.Request, err error) {
 		message = ErrGitLabUnavailable.Error()
 	}
 	// Separate security/operational audit path. Never log bodies, tokens or DB errors.
-	h.log.Warn("planning request failed", "request_id", NewID(), "actor", h.subject(r, false), "method", r.Method, "status", status)
+	h.log.Warn("planning request failed", "request_id", requestID(r.Context()), "actor", h.subject(r, false), "method", r.Method, "status", status)
 	respond(w, status, map[string]string{"error": message})
 }
 func defaultQuery(value, fallback string) string {
