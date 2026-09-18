@@ -383,7 +383,7 @@ func Apply(b *Board, c Command) error {
 		item.Archived = false
 		item.Rank = len(b.Items)
 		item.Attachments = []Attachment{}
-		normalizeItemProjects(&item)
+		NormalizeItemProjects(&item)
 		b.Items = append(b.Items, item)
 	case "item.update":
 		if c.Item == nil {
@@ -398,10 +398,7 @@ func Apply(b *Board, c Command) error {
 			return ErrConflict
 		}
 		item := *c.Item
-		// ProjectIDs is authoritative when present; the singular field is only
-		// a fallback for legacy clients that omit the association list.
-		item.ProjectIDs = slices.Clone(itemProjectIDs(item))
-		normalizeItemProjects(&item)
+		NormalizeItemProjects(&item)
 		item.ID = old.ID
 		item.Rank = old.Rank
 		item.Revision = old.Revision + 1
@@ -663,7 +660,13 @@ func reorder(b *Board, id, before string) error {
 	b.Items = slices.Insert(b.Items, at, item)
 	return nil
 }
-func itemProjectIDs(item Item) []string {
+
+// ItemProjectIDs is the single reader for an item's project associations.
+// ProjectIDs is authoritative; the singular ProjectID is only a fallback for
+// records written before migration 011 and for clients that omit the list.
+// Every package that reads project associations must go through this function
+// so the compatibility rule lives in exactly one place.
+func ItemProjectIDs(item Item) []string {
 	if item.ProjectIDs != nil {
 		return item.ProjectIDs
 	}
@@ -673,12 +676,21 @@ func itemProjectIDs(item Item) []string {
 	return []string{}
 }
 
-func normalizeItemProjects(item *Item) {
-	item.ProjectIDs = slices.Clone(itemProjectIDs(*item))
-	item.ProjectID = ""
-	if len(item.ProjectIDs) > 0 {
-		item.ProjectID = item.ProjectIDs[0]
+// ItemLegacyProjectID is the value persisted in the singular work_items column
+// and echoed to older API clients: the first association, or empty.
+func ItemLegacyProjectID(item Item) string {
+	if ids := ItemProjectIDs(item); len(ids) > 0 {
+		return ids[0]
 	}
+	return ""
+}
+
+// NormalizeItemProjects makes both representations agree on one item. It is
+// the single writer counterpart to ItemProjectIDs, used on every read path
+// that loads items and before persisting a command's item payload.
+func NormalizeItemProjects(item *Item) {
+	item.ProjectIDs = slices.Clone(ItemProjectIDs(*item))
+	item.ProjectID = ItemLegacyProjectID(*item)
 }
 
 func itemIndex(b *Board, id string) int {
@@ -757,7 +769,7 @@ func Validate(b *Board) error {
 		if item.Assignee != "" && !slices.ContainsFunc(b.Members, func(m Member) bool { return m.Subject == item.Assignee }) {
 			return invalid("assignee must be a workspace member")
 		}
-		projects := itemProjectIDs(item)
+		projects := ItemProjectIDs(item)
 		if len(projects) > MaxItemProjects {
 			return invalid("too many project associations")
 		}

@@ -670,12 +670,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 			rows.Close()
 			return b, err
 		}
-		if len(v.ProjectIDs) == 0 && v.ProjectID != "" {
-			v.ProjectIDs = []string{v.ProjectID}
-		}
-		if v.ProjectID == "" && len(v.ProjectIDs) > 0 {
-			v.ProjectID = v.ProjectIDs[0]
-		}
+		p.NormalizeItemProjects(&v)
 		v.Attachments = []p.Attachment{}
 		b.Items = append(b.Items, v)
 	}
@@ -992,7 +987,7 @@ var itemAssociations = []itemAssociation{{
 	deleteAll:  "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2",
 	deleteSome: "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2 AND project_id=ANY($3::text[])",
 	insert:     "INSERT INTO item_projects(workspace_id,item_id,project_id) VALUES($1,$2,$3)",
-	values:     itemProjectAssociations,
+	values:     p.ItemProjectIDs,
 }, {
 	deleteAll:  "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2",
 	deleteSome: "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2 AND sprint_id=ANY($3::text[])",
@@ -1005,29 +1000,13 @@ var itemAssociations = []itemAssociation{{
 	values:     func(it p.Item) []string { return it.Dependencies },
 }}
 
-// itemProjectAssociations resolves the authoritative project list, falling back
-// to the legacy singular field for boards written by older clients.
-func itemProjectAssociations(it p.Item) []string {
-	if it.ProjectIDs == nil && it.ProjectID != "" {
-		return []string{it.ProjectID}
-	}
-	return it.ProjectIDs
-}
-
-func itemLegacyProjectID(it p.Item) string {
-	if ids := itemProjectAssociations(it); len(ids) > 0 {
-		return ids[0]
-	}
-	return ""
-}
-
 // sameItemRow reports whether the work_items columns are unchanged. Child
 // associations and attachments are compared separately.
 func sameItemRow(old, next p.Item) bool {
 	return old.Title == next.Title && old.Description == next.Description &&
 		old.ColumnID == next.ColumnID && old.Assignee == next.Assignee &&
 		old.Rank == next.Rank && old.Revision == next.Revision &&
-		old.Archived == next.Archived && itemLegacyProjectID(old) == itemLegacyProjectID(next)
+		old.Archived == next.Archived && p.ItemLegacyProjectID(old) == p.ItemLegacyProjectID(next)
 }
 
 func indexByID[T any](values []T, key func(T) string) map[string]T {
@@ -1126,7 +1105,7 @@ func save(ctx context.Context, tx pgx.Tx, before, b p.Board) error {
 		if old, ok := previousItems[it.ID]; ok && sameItemRow(old, it) {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, itemLegacyProjectID(it), it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, p.ItemLegacyProjectID(it), it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
 			return err
 		}
 	}

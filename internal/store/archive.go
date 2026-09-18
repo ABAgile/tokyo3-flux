@@ -34,12 +34,7 @@ func (s *Store) ArchivedItems(ctx context.Context, wid, subject string, offset, 
 			&v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
 			return nil, err
 		}
-		if len(v.ProjectIDs) == 0 && v.ProjectID != "" {
-			v.ProjectIDs = []string{v.ProjectID}
-		}
-		if v.ProjectID == "" && len(v.ProjectIDs) > 0 {
-			v.ProjectID = v.ProjectIDs[0]
-		}
+		p.NormalizeItemProjects(&v)
 		v.Attachments = []p.Attachment{}
 		out = append(out, v)
 		ids = append(ids, v.ID)

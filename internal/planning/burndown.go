@@ -204,7 +204,7 @@ func burndownCounts(b Board, sprintID, project, assignee string) (scope, remaini
 }
 
 func matchesBurndownFilter(item Item, project, assignee string) bool {
-	projects := itemProjectIDs(item)
+	projects := ItemProjectIDs(item)
 	if project == "none" {
 		if len(projects) > 0 {
 			return false
