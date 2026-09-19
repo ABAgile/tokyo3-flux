@@ -1,6 +1,6 @@
 // Flux planning shell. Loaded as an ES module, so strict mode is implicit.
 import {$, el, button, options, svgNode, syncAttributes, field} from './modules/dom.js';
-import {api, apiRevalidated, requestKey} from './modules/api.js';
+import {api, apiRevalidated, apiUpload, requestKey} from './modules/api.js';
 // Board reads are revalidated against the copy already in memory, so a refresh
 // that finds nothing new transfers no payload. The ETag is scoped to the root
 // it was issued for and discarded whenever the workspace changes.
@@ -11,15 +11,31 @@ import {renderMarkdown, markdownEditor} from './modules/markdown.js';
 let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
 let workspaceGate = 'loading', workspaceCreating = false, workspaceCreateKey = '', workspaceCreateName = '', membershipPoll = false;
 let pendingPlanningURLState;
-let projectSearch = '', projectAssigneeFilter = 'all', projectLabelFilter = 'all';
+let projectSearch = '';
+// The Projects bar uses the same multi-value filter rules as the planning bar.
+const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
+const projectFilters = {assignee: new Set(), label: new Set()};
 let selectedItemID = '', detailPane, detailState;
 let attachmentTooltip, attachmentTooltipTarget, observationTooltipTarget;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
 // Archived work is paged from its own endpoint; the board payload carries only
 // the live working set plus archived items still referenced by scope or dependencies.
 let archiveItems = [], archiveOffset = 0, archiveMore = false;
+let bulkSelection = new Set(), undoOffer, undoTimer;
 let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
+// Planning filters hold a set of accepted values each. An empty set means "all",
+// and the exclusive `none` value means "records with no association at all".
+// The toolbar selects add one value at a time; chips below the toolbar are the
+// authoritative, removable view of what is active.
+const FILTER_NAMES = Object.freeze(['project', 'assignee', 'label']);
+const filters = {project: new Set(), assignee: new Set(), label: new Set()};
+// Search is debounced so a long board is filtered once per pause rather than
+// once per keystroke, and each item's searchable text is memoized per revision.
+const SEARCH_DEBOUNCE_MS = 150;
+const searchIndex = new WeakMap();
+let searchQuery = '', searchDebounce, searchIndexGeneration = 0;
+let noticeText = '', errorText = '', shortcutChord = 0;
 const theme = localStorage.getItem('flux-plan-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = theme;
 const LABEL_PALETTE = Object.freeze([
@@ -44,7 +60,63 @@ function gitLabWritable() { return writable() && !!board.connector_instance && b
 function canComment() { return board && (board.role === 'member' || board.role === 'admin') && !busy && !loading; }
 function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable() || integrationFormOpen; return b; }
 function adminButton(text, fn, className) { const b = button(text, fn, className); b.dataset.adminWrite = 'true'; b.disabled = !adminWritable() || integrationFormOpen; return b; }
-function notice(text, error = false) { $('notice').textContent = text; $('notice').className = error ? 'error' : ''; }
+// Transient progress and errors are separate surfaces. `#notice` is a polite
+// status line that is only written when its text actually changes, so screen
+// readers are not re-announced on every render pass. Errors persist in their
+// own assertive bar until dismissed or until a later success clears them.
+function notice(text, error = false) { if (error) showError(text); else setStatus(text); }
+function setStatus(text) { const value = String(text || ''); if (value === noticeText) return; noticeText = value; $('notice').textContent = value; }
+function showError(text) { const value = String(text || ''); if (value === errorText && !$('error-bar').hidden) return; errorText = value; $('error-text').textContent = value; $('error-bar').hidden = !value; }
+function clearError() { if (!errorText && $('error-bar').hidden) return; errorText = ''; $('error-text').textContent = ''; $('error-bar').hidden = true; }
+// Filter state. An empty set accepts everything; `none` is exclusive and means
+// "no association", so it can never be combined with concrete values. Every
+// filter group — the planning bar and the Projects bar — shares these rules.
+function filterValues(name, group = filters) { return [...group[name]]; }
+function addFilterValue(name, value, group = filters) {
+ const set = group[name];
+ if (!value || value === 'all') { set.clear(); return; }
+ if (value === 'none') { set.clear(); set.add('none'); return; }
+ set.delete('none'); set.add(String(value));
+}
+function removeFilterValue(name, value, group = filters) { group[name].delete(String(value)); }
+function setFilterValues(name, values, group = filters) { group[name] = new Set(); values.forEach(value => addFilterValue(name, value, group)); }
+function clearFilterGroup(group) { Object.keys(group).forEach(name => group[name].clear()); }
+function clearFilters() { clearFilterGroup(filters); }
+function matchesFilter(name, values, group = filters) {
+ const set = group[name];
+ if (!set.size) return true;
+ if (set.has('none')) return values.length === 0;
+ return values.some(value => set.has(value));
+}
+// A single concrete selection still drives the project lens and the server-side
+// burn-down filter, which accept one value. Wider selections fall back to all.
+function singleFilterValue(name) { const values = filterValues(name); return values.length === 1 && values[0] !== 'none' ? values[0] : values.length === 1 ? 'none' : 'all'; }
+function filterOptionText(name, value) {
+ if (value === 'none') return {project: 'No project', assignee: 'Unassigned', label: 'No labels'}[name];
+ if (name === 'project') return projectName(value);
+ if (name === 'assignee') return memberName(value);
+ return value;
+}
+// Chips are the removable, authoritative view of any filter group.
+function filterChipNodes(group, names, onChange, {clearLabel = 'Clear filters'} = {}) {
+ const chips = [];
+ names.forEach(name => {
+  filterValues(name, group).forEach(value => {
+   const text = filterOptionText(name, value); const chip = el('span', undefined, `filter-chip filter-chip-${name}`);
+   chip.append(el('span', `${{project: 'Project', assignee: 'Assignee', label: 'Label'}[name]}: ${text}`, 'filter-chip-text'));
+   if (name === 'label' && value !== 'none') { const color = labelInfo(value).color; chip.style.backgroundColor = color; chip.style.color = labelForeground(color); }
+   const remove = button('×', () => { removeFilterValue(name, value, group); onChange(name); }, 'filter-chip-remove');
+   remove.setAttribute('aria-label', `Remove ${name} filter ${text}`); remove.disabled = busy || loading; chip.append(remove); chips.push(chip);
+  });
+ });
+ if (chips.length > 1) { const clear = button(clearLabel, () => { clearFilterGroup(group); onChange(names[0]); }, 'filter-chip-clear'); clear.disabled = busy || loading; chips.push(clear); }
+ return chips;
+}
+function filterSummaryText(name) {
+ const values = filterValues(name);
+ if (!values.length) return {project: 'All projects', assignee: 'All assignees', label: 'All labels'}[name];
+ return values.map(value => filterOptionText(name, value)).join(', ');
+}
 function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') { const banner = $('planning-change'); if (planningChangeNotice && !banner.hidden && $('planning-change-text').textContent === text) return; planningChangeNotice = true; $('planning-change-text').textContent = text; banner.hidden = false; }
 function clearPlanningChangeNotice() { planningChangeNotice = false; $('planning-change').hidden = true; }
 function workspaceURLState() { return new URL(window.location.href).searchParams.get('workspace') || ''; }
@@ -70,14 +142,24 @@ async function loadWorkspaces(selected = '') {
 }
 function planningURLState() {
  const params = new URLSearchParams(window.location.search); const mode = params.get('mode');
- return {mode: mode === 'list' || mode === 'board' ? mode : undefined, project: params.get('project') || undefined, scope: params.get('scope') || undefined};
+ return {mode: mode === 'list' || mode === 'board' ? mode : undefined, project: params.get('project') || undefined, assignee: params.get('assignee') || undefined, label: params.get('label') || undefined, scope: params.get('scope') || undefined};
 }
+// Filters serialize as comma-separated values so a multi-value planning view
+// stays shareable as a URL.
+function filterURLValue(name) { const values = filterValues(name); return values.length ? values.join(',') : 'all'; }
 function persistPlanningURL() {
- if (!board) return; const url = new URL(window.location.href); url.searchParams.set('mode', presentation); url.searchParams.set('project', $('project').value || 'all'); url.searchParams.set('scope', $('scope').value || 'active'); window.history.replaceState(null, '', url);
+ if (!board) return; const url = new URL(window.location.href); url.searchParams.set('mode', presentation); FILTER_NAMES.forEach(name => url.searchParams.set(name, filterURLValue(name))); url.searchParams.set('scope', $('scope').value || 'active'); window.history.replaceState(null, '', url);
+}
+function knownFilterValue(name, value) {
+ if (value === 'none') return true;
+ if (name === 'project') return board.projects.some(project => project.id === value);
+ if (name === 'assignee') return board.members.some(member => member.subject === value);
+ return board.labels.some(label => label.name === value);
 }
 function applyPlanningURLState(state = planningURLState()) {
  if (!board) return;
- const project = state.project && (state.project === 'all' || state.project === 'none' || board.projects.some(value => value.id === state.project)) ? state.project : 'all'; presentation = state.mode === 'list' || (!state.mode && project !== 'all' && project !== 'none') ? 'list' : 'board'; $('project').value = project;
+ FILTER_NAMES.forEach(name => setFilterValues(name, String(state[name] || '').split(',').map(value => value.trim()).filter(value => value && value !== 'all' && knownFilterValue(name, value))));
+ const project = singleFilterValue('project'); presentation = state.mode === 'list' || (!state.mode && project !== 'all' && project !== 'none') ? 'list' : 'board';
  const requestedScope = state.scope; const validScope = requestedScope && (['active', 'backlog', 'all'].includes(requestedScope) || board.sprints.some(value => value.id === requestedScope)); $('scope').value = validScope ? requestedScope : project !== 'all' && project !== 'none' ? 'all' : 'active';
  render(); persistPlanningURL();
 }
@@ -122,6 +204,7 @@ function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownR
 function enterWorkspaceGate(mode, message) {
  if (detailState) closeDetail({force:true, focus:false});
  if ($('editor').open && !busy) closeEditor();
+ clearUndo(); bulkSelection.clear();
  board = undefined; root = undefined; boardETag = ''; boardETagRoot = ''; workspaceGate = mode; pendingPlanningURLState = undefined; persistWorkspaceURL('');
  if (message) notice(message);
  render();
@@ -158,24 +241,184 @@ async function refresh(preloaded) {
    : await apiRevalidated(root + '/board', cached);
   if (generation !== loadGeneration) return false;
   boardETag = response.etag; boardETagRoot = root;
-  if (!response.modified) { clearPlanningChangeNotice(); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
+  // The revision belongs in the non-live count, not in the polite status line:
+  // repeating it on every poll would re-announce an unchanged board.
+  if (!response.modified) { clearPlanningChangeNotice(); clearError(); notice('Up to date.'); return true; }
   const next = response.data;
-  uiState = captureUIState(); board = mergeBoardData(board, next); workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); observationDigest = ''; observationReadAt = 0;
-  if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true;
+  uiState = captureUIState(); board = mergeBoardData(board, next); searchIndexGeneration++; workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); clearError(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); observationDigest = ''; observationReadAt = 0;
+  if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); notice('Up to date.'); return true;
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
 }
+function postChange(command, key = requestKey()) {
+ return api(root + '/changes', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf, 'Idempotency-Key': key }, body: JSON.stringify(command) });
+}
+function preloadedBoard(receipt) { return receipt?.board && typeof receipt.board_etag === 'string' && receipt.board_etag ? {board: receipt.board, etag: receipt.board_etag} : undefined; }
 async function change(command, key = requestKey()) {
  if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
  busy = true; renderControls(); notice('Saving changes…');
  let receipt;
- try { receipt = await api(root + '/changes', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf, 'Idempotency-Key': key }, body: JSON.stringify(command) }); }
+ try { receipt = await postChange(command, key); }
  finally { busy = false; renderControls(); }
- const preloaded = receipt?.board && typeof receipt.board_etag === 'string' && receipt.board_etag ? {board: receipt.board, etag: receipt.board_etag} : undefined;
- const refreshed = await refresh(preloaded); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
+ const refreshed = await refresh(preloadedBoard(receipt)); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
-async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
-function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? findItem(e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; document.querySelector('.toolbar').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; }
+// Card placement and archive state are reordered locally before the write is
+// acknowledged so a drag feels immediate. The command still carries the board
+// revision, the save is still announced, and a rejected write is rolled back to
+// the exact previous placement rather than left silently applied.
+const OPTIMISTIC_KINDS = new Set(['item.move', 'item.rank', 'item.archive', 'item.restore']);
+function optimisticApply(command) {
+ if (!board || !OPTIMISTIC_KINDS.has(command.kind)) return undefined;
+ if (command.kind === 'item.archive' || command.kind === 'item.restore') {
+  const source = command.kind === 'item.archive' ? board.items : archiveItems;
+  const index = source.findIndex(value => value.id === command.target);
+  if (index < 0) return undefined;
+  const [removed] = source.splice(index, 1);
+  return () => { if (source !== (command.kind === 'item.archive' ? board?.items : archiveItems)) return; source.splice(index, 0, removed); };
+ }
+ const items = board.items; const index = items.findIndex(value => value.id === command.target);
+ if (index < 0) return undefined;
+ const item = items[index]; const column = item.column_id; const ranks = items.map(value => value.rank);
+ if (command.kind === 'item.move' && !board.columns.some(value => value.id === command.destination)) return undefined;
+ items.splice(index, 1);
+ let at = items.length;
+ if (command.before) { at = items.findIndex(value => value.id === command.before); if (at < 0) { items.splice(index, 0, item); return undefined; } }
+ items.splice(at, 0, item);
+ if (command.kind === 'item.move') item.column_id = command.destination;
+ items.forEach((value, rank) => { value.rank = rank; });
+ return () => { if (items !== board?.items) return; items.splice(at, 1); items.splice(index, 0, item); item.column_id = column; items.forEach((value, position) => { value.rank = ranks[position]; }); };
+}
+const UNDO_TTL = 10000;
+function clearUndo() { if (undoTimer) clearTimeout(undoTimer); undoTimer = undefined; undoOffer = undefined; $('undo-bar').hidden = true; $('undo-text').textContent = ''; }
+function offerUndo(text, commands) {
+ const list = (Array.isArray(commands) ? commands : [commands]).filter(Boolean);
+ clearUndo(); if (!list.length) return;
+ undoOffer = list; $('undo-text').textContent = text; $('undo').disabled = !writable(); $('undo-bar').hidden = false;
+ undoTimer = setTimeout(clearUndo, UNDO_TTL);
+}
+function itemTitle(id) { return findItem(id)?.title || 'work item'; }
+// The inverse must be read before the command is applied, because a move undo
+// is expressed as the anchor the card currently sits in front of.
+function undoableInverse(command) {
+ switch (command.kind) {
+  case 'item.archive': return {text: `Archived “${itemTitle(command.target)}”`, commands: [{kind: 'item.restore', target: command.target}]};
+  case 'item.restore': return {text: `Restored “${itemTitle(command.target)}”`, commands: [{kind: 'item.archive', target: command.target}]};
+  case 'item.move': case 'item.rank': {
+   const index = board.items.findIndex(value => value.id === command.target); if (index < 0) return undefined;
+   const item = board.items[index];
+   return {text: `Moved “${item.title}”`, commands: [{kind: 'item.move', target: item.id, destination: item.column_id, before: board.items[index + 1]?.id || ''}]};
+  }
+  default: return undefined;
+ }
+}
+async function quick(command) {
+ const full = { revision: board.workspace.revision, ...command };
+ const allowed = writable(); const undo = allowed ? undoableInverse(full) : undefined;
+ const currentBoard = board; const rollback = allowed ? optimisticApply(full) : undefined;
+ if (rollback) render();
+ try { await change(full); if (undo) offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands); }
+ catch (e) { if (rollback && board === currentBoard) rollback(); notice(e.message, true); render(); }
+}
+// Bulk edits are separate revision-checked commands applied in order. The
+// revision from each receipt seeds the next command, so one board read settles
+// the whole batch and a mid-batch conflict stops rather than skips ahead.
+async function runSequence(label, commands) {
+ if (!writable()) { notice('Planning is read-only or a request is in progress.', true); return false; }
+ if (!commands.length) { notice('Nothing to apply for the current selection.'); return true; }
+ let revision = board.workspace.revision, receipt, applied = 0, failure = '';
+ busy = true; renderControls();
+ try {
+  for (const command of commands) {
+   notice(`${label} · ${applied}/${commands.length}…`);
+   try { receipt = await postChange({...command, revision}); revision = Number.isSafeInteger(receipt?.revision) ? receipt.revision : revision + 1; applied++; }
+   catch (error) { failure = error.message; break; }
+  }
+ } finally { busy = false; renderControls(); }
+ const refreshed = await refresh(preloadedBoard(receipt));
+ if (!refreshed) render();
+ notice(failure ? `${label}: applied ${applied} of ${commands.length}. ${failure}` : `${label}: applied ${applied} of ${commands.length}.`, !!failure);
+ return !failure;
+}
+function bulkTargets() { return [...bulkSelection].map(findItem).filter(item => item && !item.archived); }
+function bulkItemUpdate(item, patch) { return {kind: 'item.update', target: item.id, item: {...item, project_id: undefined, attachments: undefined, ...patch}}; }
+async function runBulk(label, plan, undoFor) {
+ const targets = bulkTargets();
+ if (!targets.length) { notice('Select at least one work item first.', true); return; }
+ const commands = targets.map(plan).filter(Boolean); const undo = undoFor?.(targets);
+ bulkSelection.clear();
+ const ok = await runSequence(label, commands);
+ if (ok && commands.length && undo) offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
+}
+function openBulkDialog(title, saveText, build, plan, label, undoFor) {
+ editorReturn = undefined;
+ $('editor-title').textContent = title; $('editor-form').classList.remove('item-editor-form'); $('editor-form').querySelectorAll('[data-item-footer]').forEach(node => node.remove());
+ $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').hidden = false; $('save').disabled = false; $('save').textContent = saveText;
+ build($('fields'));
+ $('editor-form').onsubmit = async event => {
+  event.preventDefault(); if (busy) return; $('form-error').textContent = '';
+  let apply;
+  try { apply = plan(new FormData($('editor-form'))); } catch (error) { $('form-error').textContent = error.message; return; }
+  $('editor').close();
+  await runBulk(label, apply, undoFor);
+ };
+ $('editor').showModal();
+}
+function bulkAssign() {
+ const count = bulkTargets().length;
+ openBulkDialog('Assign selected work', 'Assign items', fields => {
+  fields.append(el('p', `Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`, 'help'));
+  field(fields, 'assignee', 'Assignee', '', 'text', [['', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])]);
+ }, data => { const assignee = String(data.get('assignee') || ''); return item => item.assignee === assignee ? undefined : bulkItemUpdate(item, {assignee}); }, 'Assign');
+}
+function bulkSprint() {
+ const open = board.sprints.filter(sprint => sprint.state !== 'closed'); const count = bulkTargets().length;
+ openBulkDialog('Add selected work to a sprint', 'Add to sprint', fields => {
+  if (!open.length) { fields.append(el('p', 'No open sprint is available. Plan a sprint first.', 'empty')); $('save').hidden = true; return; }
+  fields.append(el('p', `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`, 'help'));
+  field(fields, 'sprint', 'Open sprint', open[0].id, 'text', open.map(sprint => [sprint.id, `${sprint.name} (${sprint.state})`]));
+ }, data => {
+  const sprint = String(data.get('sprint') || '');
+  if (!open.some(value => value.id === sprint)) throw new Error('Choose an open sprint.');
+  return item => item.sprint_ids.includes(sprint) ? undefined : bulkItemUpdate(item, {sprint_ids: [...item.sprint_ids, sprint]});
+ }, 'Add to sprint');
+}
+function bulkLabel() {
+ const count = bulkTargets().length;
+ openBulkDialog('Add a label to selected work', 'Add label', fields => {
+  if (!board.labels.length) { fields.append(el('p', 'No workspace label exists yet. Create one in the Labels view.', 'empty')); $('save').hidden = true; return; }
+  fields.append(el('p', `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`, 'help'));
+  styleLabelOptions(field(fields, 'label', 'Label', board.labels[0].name, 'text', board.labels.map(label => [label.name, label.name])));
+ }, data => {
+  const label = String(data.get('label') || '');
+  if (!board.labels.some(value => value.name === label)) throw new Error('Choose a workspace label.');
+  return item => item.labels.includes(label) ? undefined : bulkItemUpdate(item, {labels: [...item.labels, label]});
+ }, 'Add label');
+}
+function bulkArchive() {
+ const count = bulkTargets().length;
+ openBulkDialog('Archive selected work', 'Archive items', fields => {
+  fields.append(el('p', `Archive ${count} selected work item${count === 1 ? '' : 's'} and remove them from all open sprints? History is retained and each item can be restored.`));
+  field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
+ }, data => { const reason = String(data.get('reason') || ''); return item => ({kind: 'item.archive', target: item.id, reason}); }, 'Archive',
+ targets => ({text: `Archived ${targets.length} work item${targets.length === 1 ? '' : 's'}`, commands: targets.map(item => ({kind: 'item.restore', target: item.id}))}));
+}
+function bulkSelectableIDs(items) { return items.filter(item => !item.archived).map(item => item.id); }
+function pruneBulkSelection(items) {
+ const selectable = new Set(bulkSelectableIDs(items));
+ bulkSelection.forEach(id => { if (!selectable.has(id)) bulkSelection.delete(id); });
+}
+function renderBulkBar(bar, items) {
+ if (!bar) return;
+ const ids = bulkSelectableIDs(items);
+ if (!bulkSelection.size || board.role === 'viewer') { bar.hidden = true; bar.replaceChildren(); return; }
+ const actions = el('div', undefined, 'actions bulk-actions');
+ actions.append(writeButton('Assign…', bulkAssign), writeButton('Add to sprint…', bulkSprint), writeButton('Add label…', bulkLabel), writeButton('Archive…', bulkArchive, 'danger'));
+ if (bulkSelection.size < ids.length) actions.append(button(`Select all ${ids.length} shown`, () => { ids.forEach(id => bulkSelection.add(id)); renderContent(); }));
+ actions.append(button('Clear selection', () => { bulkSelection.clear(); renderContent(); }));
+ bar.hidden = false; bar.replaceChildren(el('span', `${bulkSelection.size} of ${ids.length} shown selected`, 'bulk-count'), actions);
+}
+function refreshBulkBar() { const bar = document.querySelector('[data-bulk-bar]'); if (bar) renderBulkBar(bar, filteredItems()); }
+function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? findItem(e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; $('planning-filters').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; $('undo').disabled = !writable(); document.querySelectorAll('.list-row-select').forEach(input => { input.disabled = busy || loading; }); }
 let drag;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
@@ -268,6 +511,69 @@ function ensureAttachments(item) {
  })();
  attachmentLoads.set(id, pending); return pending;
 }
+const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024, MAX_ITEM_ATTACHMENTS = 100;
+// One upload at a time per browser, so a card drop and the editor picker
+// cannot race each other onto the same item.
+let uploadBusy = false;
+function attachmentRejection(item, file) {
+ if (attachmentCount(item) >= MAX_ITEM_ATTACHMENTS) return `This card already has the maximum of ${MAX_ITEM_ATTACHMENTS} attachments.`;
+ if (!file || typeof file.name !== 'string' || !file.name || !Number.isFinite(file.size) || file.size < 0) return 'Choose a file first.';
+ if (file.size > MAX_ATTACHMENT_BYTES) return 'Attachments must be 20 MiB or smaller.';
+ return '';
+}
+// Shared upload used by the editor picker, the editor drop zone, and card
+// file drops. Progress is reported as a 0..1 fraction, or undefined when the
+// browser cannot measure the request body.
+async function uploadItemFile(item, file, onProgress) {
+ const currentBoard = board, currentRoot = root;
+ const form = new FormData(); form.append('file', file);
+ const data = await apiUpload(`${currentRoot}/items/${encodeURIComponent(item.id)}/attachments`, {
+  headers: {'X-CSRF-Token': session.csrf, 'Idempotency-Key': requestKey()}, body: form, onProgress,
+ });
+ if (!validAttachments([data]) || data.item_id !== item.id) throw new Error('Attachment response is invalid. Refresh to retry.');
+ if (board !== currentBoard || root !== currentRoot) return undefined;
+ // Without the current list there is nothing to append to, so the count is
+ // advanced and the list reloaded rather than invented from one response.
+ if (attachmentsLoaded(item)) setItemAttachments(item, [...item.attachments.filter(value => value.id !== data.id), data]);
+ else { item.attachment_count = attachmentCount(item) + 1; void ensureAttachments(item); }
+ return data;
+}
+// Dropping files onto a card uploads them without opening the editor. Progress
+// and failures are reported through the shared status and error surfaces.
+async function dropFilesOntoItem(item, files) {
+ const selected = Array.from(files || []).filter(Boolean);
+ if (!selected.length || uploadBusy || !writable()) return;
+ uploadBusy = true; renderControls();
+ let uploaded = 0;
+ try {
+  for (const file of selected) {
+   const rejection = attachmentRejection(item, file);
+   if (rejection) { notice(rejection, true); break; }
+   notice(`Uploading ${file.name} to “${item.title}”…`);
+   try { await uploadItemFile(item, file, fraction => { if (fraction !== undefined) notice(`Uploading ${file.name} to “${item.title}” · ${Math.round(fraction * 100)}%`); }); }
+   catch (error) { notice(error.message, true); break; }
+   uploaded++;
+  }
+ } finally { uploadBusy = false; renderControls(); }
+ if (uploaded) { notice(`${uploaded} attachment${uploaded === 1 ? '' : 's'} uploaded to “${item.title}”.`); renderContent(); }
+}
+// Cards and list rows accept file drops. Planning drags are unaffected because
+// only transfers that carry files are intercepted.
+function itemFileDropZone(node, item) {
+ const clear = () => node.classList.remove('attachment-drop-active');
+ const show = event => {
+  if (!isFileTransfer(event.dataTransfer)) return;
+  event.preventDefault(); event.stopPropagation();
+  if (writable() && !uploadBusy && !item.archived) { event.dataTransfer.dropEffect = 'copy'; node.classList.add('attachment-drop-active'); } else { event.dataTransfer.dropEffect = 'none'; clear(); }
+ };
+ node.addEventListener('dragenter', show); node.addEventListener('dragover', show);
+ node.addEventListener('dragleave', event => { if (!(event.relatedTarget instanceof Node) || !node.contains(event.relatedTarget)) clear(); });
+ node.addEventListener('drop', event => {
+  if (!isFileTransfer(event.dataTransfer)) return;
+  event.preventDefault(); event.stopPropagation(); clear();
+  if (writable() && !uploadBusy && !item.archived) void dropFilesOntoItem(item, event.dataTransfer.files);
+ });
+}
 function attachmentFileMark(attachment) {
  const mark = el('span', attachmentKind(attachment), 'attachment-file-mark'); mark.setAttribute('aria-hidden', 'true'); return mark;
 }
@@ -350,7 +656,7 @@ function projectBadges(item, className = 'card-project') {
 }
 function labelInfo(name) { return board.labels.find(label => label.name === name) || {name, color: '#dcefe4'}; }
 function renderProjectSummary() {
- const summary = $('project-summary'); const projectID = $('project').value; const project = board.projects.find(value => value.id === projectID);
+ const summary = $('project-summary'); const projectID = singleFilterValue('project'); const project = board.projects.find(value => value.id === projectID);
  if (view !== 'board' || !project || ['all', 'none'].includes(projectID)) { summary.hidden = true; summary.replaceChildren(); return; }
  const items = board.items.filter(item => !item.archived && itemProjectIDs(item).includes(projectID)); const openSprints = board.sprints.filter(sprint => sprint.state !== 'closed' && items.some(item => item.sprint_ids.includes(sprint.id))); const active = openSprints.filter(sprint => sprint.state === 'active'); const completed = items.filter(done).length; const blockedCount = items.filter(blocked).length; const unscheduled = items.filter(item => !done(item) && !item.sprint_ids.length).length;
  const head = el('div', undefined, 'project-summary-head'); const intro = el('div', undefined, 'project-summary-title'); intro.append(el('p', 'PROJECT LENS', 'eyebrow'), el('h2', `${project.name} project`), el('p', 'Current work only · archived history is excluded.', 'help')); head.append(intro);
@@ -392,15 +698,18 @@ function renderWorkspaceCreation(content) {
 function render() {
  renderControls();
  if (!board) {
-  $('content').setAttribute('aria-busy', String(workspaceGate === 'loading' || loading)); $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('planning-change').hidden = true;
+  $('content').setAttribute('aria-busy', String(workspaceGate === 'loading' || loading)); $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('planning-change').hidden = true; $('filter-chips').hidden = true; $('filter-chips').replaceChildren();
   if (workspaceGate === 'select') { $('title').textContent = 'Choose a workspace'; $('subtitle').textContent = 'Select a shared planning space to continue.'; renderWorkspaceSelection($('content')); }
   else if (workspaceGate === 'create') { $('title').textContent = workspaces.length ? 'Create a workspace' : 'Create your first workspace'; $('subtitle').textContent = 'Set up a shared planning space for your team.'; renderWorkspaceCreation($('content')); }
   else { $('title').textContent = 'Loading planning data'; $('subtitle').textContent = 'Checking workspace access…'; $('content').replaceChildren(el('p', 'Loading workspace access…', 'empty')); }
   return;
  }
- const projectFilter = $('project').value; options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], projectFilter); if (!$('project').value) $('project').value = 'all';
- const assigneeFilter = $('assignee').value; options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], assigneeFilter); if (!$('assignee').value) $('assignee').value = 'all';
- const labelFilter = $('label').value; options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], labelFilter); if (!$('label').value) $('label').value = 'all'; styleLabelOptions($('label'));
+ // The selects choose one value at a time and reset; the chip row below the
+ // toolbar carries the full multi-value filter state.
+ options($('project'), [['all', 'All projects'], ['none', 'No project'], ...board.projects.map(p => [p.id, p.name])], 'all');
+ options($('assignee'), [['all', 'All assignees'], ['none', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], 'all');
+ options($('label'), [['all', 'All labels'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], 'all'); styleLabelOptions($('label'));
+ FILTER_NAMES.forEach(name => setFilterValues(name, filterValues(name).filter(value => knownFilterValue(name, value))));
  const titles = { board: presentation === 'list' ? 'Planning list' : 'Kanban board', sprints: 'Sprints', projects: 'Projects', labels: 'Labels', members: 'Members', archive: 'Archive', history: 'History' };
  const subtitles = { projects: 'Organize workspace projects and GitLab integration.', labels: 'Maintain labels used to classify work.', members: 'Manage workspace members, roles, and names.' };
  $('title').textContent = titles[view]; $('subtitle').textContent = board.role === 'viewer' ? 'Read-only workspace access.' : subtitles[view] || 'Plan intentionally. Keep work moving.'; $('search').placeholder = view === 'sprints' ? 'Find sprints…' : 'Find work…';
@@ -410,19 +719,67 @@ function render() {
  const selectedSprint = board.sprints.find(s => s.id === $('scope').value); const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
  $('sprint-summary').setAttribute('aria-label', selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints');
  renderProjectSummary(); renderSprintSummary(view === 'board' ? summarySprints : []);
- $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'history'; document.querySelector('.toolbar').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
+ $('scope-label').hidden = view !== 'board'; $('label-filter').hidden = view === 'sprints' || view === 'history'; $('search-filter').hidden = view === 'history'; $('planning-filters').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
+ // Views that own a page layout host the filter bar themselves, below their
+ // heading; everywhere else it stays in its slot above the content.
+ if (view !== 'sprints') placeFilters();
+ renderFilterChips();
  renderContent();
 }
+// Searchable text is derived once per item revision. `searchIndexGeneration` is
+// bumped whenever the board is replaced, so renamed projects or members
+// invalidate the memo without tracking each name individually.
+function itemHaystack(item) {
+ const cached = searchIndex.get(item);
+ if (cached && cached.generation === searchIndexGeneration && cached.revision === item.revision) return cached.text;
+ const text = `${item.title} ${item.description} ${item.labels.join(' ')} ${item.assignee} ${memberName(item.assignee)} ${itemProjectIDs(item).map(projectName).join(' ')}`.toLowerCase();
+ searchIndex.set(item, {generation: searchIndexGeneration, revision: item.revision, text});
+ return text;
+}
+// Typing filters once per pause. `flushSearch` applies the pending query
+// immediately for Enter, blur, and any programmatic reset.
+function resetSearch() { if (searchDebounce) clearTimeout(searchDebounce); searchDebounce = undefined; $('search').value = ''; searchQuery = ''; }
+function flushSearch() {
+ if (searchDebounce) clearTimeout(searchDebounce); searchDebounce = undefined;
+ const next = $('search').value.trim().toLowerCase();
+ if (next === searchQuery) return false;
+ searchQuery = next; return true;
+}
+function queueSearch() {
+ if (searchDebounce) clearTimeout(searchDebounce);
+ searchDebounce = setTimeout(() => { searchDebounce = undefined; if (flushSearch() && board) renderContent(); }, SEARCH_DEBOUNCE_MS);
+}
+function matchesItemFilters(item) {
+ return matchesFilter('project', itemProjectIDs(item)) && matchesFilter('assignee', item.assignee ? [item.assignee] : []) && matchesFilter('label', item.labels);
+}
 function filteredItems() {
- const query = $('search').value.toLowerCase(); const scope = $('scope').value; const sprint = board.sprints.find(s => s.id === scope);
+ const query = searchQuery; const scope = $('scope').value; const sprint = board.sprints.find(s => s.id === scope);
  return (view === 'archive' ? archiveItems : board.items).filter(i => {
   if (view === 'archive') { if (!i.archived) return false; } else if (i.archived && sprint?.state !== 'closed') return false;
   if (view !== 'archive') { if (scope === 'active' && !activeSprints().some(s => i.sprint_ids.includes(s.id))) return false; if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false; if (sprint && !scopeItems(sprint).some(v => v.id === i.id)) return false; }
-  const project = $('project').value; const projectIDs = itemProjectIDs(i); if (project === 'none' && projectIDs.length) return false; if (project !== 'all' && project !== 'none' && !projectIDs.includes(project)) return false;
-  const assignee = $('assignee').value; if (assignee === 'none' && i.assignee) return false; if (assignee !== 'all' && assignee !== 'none' && i.assignee !== assignee) return false;
-  const label = $('label').value; if (label === 'none' && i.labels.length) return false; if (label !== 'all' && label !== 'none' && !i.labels.includes(label)) return false;
-  return `${i.title} ${i.description} ${i.labels.join(' ')} ${i.assignee} ${memberName(i.assignee)} ${itemProjectIDs(i).map(projectName).join(' ')}`.toLowerCase().includes(query);
+  if (!matchesItemFilters(i)) return false;
+  return !query || itemHaystack(i).includes(query);
  });
+}
+// The planning filter bar is one element that is relocated, not duplicated, so
+// its controls keep their state, handlers and identity across views.
+function placeFilters(host = $('planning-filter-slot')) {
+ const bar = $('planning-filters'), chips = $('filter-chips');
+ if (bar.parentElement !== host) host.append(bar);
+ if (chips.parentElement !== host || chips.previousElementSibling !== bar) host.append(chips);
+}
+function renderFilterChips() {
+ const host = $('filter-chips');
+ const names = FILTER_NAMES.filter(name => !(name === 'label' && $('label-filter').hidden));
+ const chips = filterChipNodes(filters, names, applyFilterChange);
+ host.hidden = !chips.length || $('planning-filters').hidden; host.replaceChildren(...chips);
+}
+// Project and assignee filters feed the burn-down request, so changing them
+// invalidates any cached chart; label filtering is client-side only.
+function applyFilterChange(name) {
+ if (name !== 'label') resetBurndown();
+ render(); if (name !== 'label' && !burndownRequests.size) $('content').setAttribute('aria-busy', 'false');
+ persistPlanningURL();
 }
 function cardRenderSignature(item, links) {
  const linkIdentity = links.map(link => ({id:link.id, project:link.project, kind:link.kind, number:link.number, items:link.items}));
@@ -471,7 +828,7 @@ function cardObservationIcon(link, focusKey) {
 function card(item, peers) {
  const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); const title = button(item.title, () => editItem(item), 'card-title'); title.dataset.focusKey = `item:${item.id}:title`; top.append(title);
  c.dataset.item = item.id;
- makeDraggable(c, 'card', item.id, item.title);
+ makeDraggable(c, 'card', item.id, item.title); itemFileDropZone(c, item);
  dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
  const meta = el('div', undefined, 'card-meta'); const projects = el('div', undefined, 'card-projects'); projects.append(...projectBadges(item)); meta.append(projects, assigneeView(item.assignee));
  c.append(top, meta);
@@ -524,8 +881,8 @@ function patchObservationUI(previousLinks, nextLinks) {
  });
  return true;
 }
-function currentBurndownKey(sprintID) { return [board?.workspace.revision || 0, sprintID, $('project').value, $('assignee').value].join('|'); }
-function selectedFilterText(id) { return $(id).selectedOptions[0]?.textContent || 'All'; }
+function currentBurndownKey(sprintID) { return [board?.workspace.revision || 0, sprintID, singleFilterValue('project'), singleFilterValue('assignee')].join('|'); }
+function selectedFilterText(name) { const values = filterValues(name); return values.length > 1 ? `${filterSummaryText(name)} (chart shows all)` : filterSummaryText(name); }
 function burndownSegments(points, key, x, y) {
  const segments = []; let segment = [];
  const flush = () => { if (segment.length > 1) segments.push(segment.join(' ')); segment = []; };
@@ -570,7 +927,7 @@ async function requestBurndown(sprintID, force = false) {
  const key = currentBurndownKey(sprintID); if (burndownRequests.has(key)) return; if (!force && (burndownData.has(key) || burndownErrors.has(key))) return;
  if (force) { burndownData.delete(key); burndownErrors.delete(key); }
  const generation = burndownGeneration; const currentBoard = board, currentRoot = root; const token = {}; burndownRequests.set(key, token); $('content').setAttribute('aria-busy', 'true');
- try { const query = new URLSearchParams({sprint:sprintID, project:$('project').value, assignee:$('assignee').value}); const next = await api(currentRoot + '/burndown?' + query); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!next || !Array.isArray(next.points) || !next.sprint) throw new Error('Burn-down data is invalid. Refresh to retry.'); if (next.revision !== currentBoard.workspace.revision) throw new Error('Planning changed while loading. Refresh to review.'); burndownData.set(key, next); burndownErrors.delete(key); }
+ try { const query = new URLSearchParams({sprint:sprintID, project:singleFilterValue('project'), assignee:singleFilterValue('assignee')}); const next = await api(currentRoot + '/burndown?' + query); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!next || !Array.isArray(next.points) || !next.sprint) throw new Error('Burn-down data is invalid. Refresh to retry.'); if (next.revision !== currentBoard.workspace.revision) throw new Error('Planning changed while loading. Refresh to review.'); burndownData.set(key, next); burndownErrors.delete(key); }
  catch (e) { if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; burndownErrors.set(key, e.message); }
  finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'sprints') render(); }
 }
@@ -677,9 +1034,17 @@ function listRow(item) {
  const row = el('article', undefined, 'list-row'); row.dataset.item = item.id; row.dataset.focusKey = `item:${item.id}:list-row`; row.tabIndex = 0; row.setAttribute('aria-label', `Open work item ${item.title}`);
  row.addEventListener('click', event => { if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary')) return; selectItem(item.id, row); });
  row.addEventListener('keydown', event => { if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return; event.preventDefault(); selectItem(item.id, row); });
- makeDraggable(row, 'card', item.id, item.title); row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
+ makeDraggable(row, 'card', item.id, item.title); itemFileDropZone(row, item); row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
  dropZone(row, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
- const title = listCell('Title', 'list-cell-title'); const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title'); titleButton.dataset.focusKey = `item:${item.id}:list-title`; title.append(titleButton);
+ const title = listCell('Title', 'list-cell-title'); const bulkSelected = bulkSelection.has(item.id);
+ if (board.role !== 'viewer' && !item.archived) {
+  const toggle = el('input'); toggle.type = 'checkbox'; toggle.className = 'list-row-select'; toggle.checked = bulkSelected; toggle.disabled = busy || loading;
+  toggle.dataset.focusKey = `item:${item.id}:bulk-select`; toggle.setAttribute('aria-label', `Select ${item.title} for bulk actions`);
+  toggle.addEventListener('click', event => event.stopPropagation());
+  toggle.addEventListener('change', () => { if (toggle.checked) bulkSelection.add(item.id); else bulkSelection.delete(item.id); row.classList.toggle('is-bulk-selected', toggle.checked); refreshBulkBar(); });
+  title.append(toggle);
+ }
+ const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title'); titleButton.dataset.focusKey = `item:${item.id}:list-title`; title.append(titleButton);
  const project = listCell('Project', 'list-cell-project'); const projectValue = el('span', undefined, 'list-row-project'); projectValue.append(...projectBadges(item)); project.append(projectValue);
  const status = listCell('Links / Status', 'list-cell-status'); const statusContent = el('div', undefined, 'list-row-status-content'); const state = el('div', undefined, 'list-row-status-badges'); if (blocked(item)) state.append(el('span', 'Blocked', 'badge warning')); if (item.archived) state.append(el('span', 'Archived', 'badge')); if (state.childElementCount) statusContent.append(state);
  const links = board.links.filter(link => link.items.includes(item.id)); if (links.length) { const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links'); linkIndicator.setAttribute('aria-label', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`); const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); const observationLink = button('View observations', () => showLinks(item), 'card-link-details list-row-observation-link'); observationLink.dataset.focusKey = `item:${item.id}:list-observations`; observationLink.setAttribute('aria-label', `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`); observationLink.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, observationLink); linkIndicator.append(linkHead); links.forEach(link => { const line = el('span', undefined, 'list-row-link-line'); if (link.kind === 'mr') line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`)); line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`)); linkIndicator.append(line); }); statusContent.append(linkIndicator); }
@@ -689,7 +1054,7 @@ function listRow(item) {
  const labels = listCell('Labels', 'list-cell-labels'); item.labels.forEach(label => labels.append(labelBadge(label))); if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
  const sprints = listCell('Sprints', 'list-cell-sprints'); item.sprint_ids.forEach(id => sprints.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
  row.append(title, project, assignee, labels, sprints, status);
- row.classList.toggle('is-selected', selectedItemID === item.id); row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}`; return row;
+ row.classList.toggle('is-selected', selectedItemID === item.id); row.classList.toggle('is-bulk-selected', bulkSelected); row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}|bulk:${bulkSelected}`; return row;
 }
 function listSection(column, items) {
  const section = el('details', undefined, 'list-section'); section.dataset.column = column.id; section.open = true; section.setAttribute('aria-label', column.name);
@@ -706,26 +1071,141 @@ function patchListSection(target, next) {
 function renderListPresentationContent(content, items) {
  const current = content.firstElementChild; let layout, sections;
  if (!current || current.dataset.contentView !== 'list:board') {
-  layout = el('div', undefined, 'list-detail-layout'); layout.dataset.contentView = 'list:board'; const list = el('div', undefined, 'planning-list'); list.dataset.contentView = 'planning-list'; sections = el('div', undefined, 'list-sections'); list.append(listTableHeader(), sections); const pane = createDetailPane(); layout.append(list, pane); content.replaceChildren(layout);
+  layout = el('div', undefined, 'list-detail-layout'); layout.dataset.contentView = 'list:board'; const list = el('div', undefined, 'planning-list'); list.dataset.contentView = 'planning-list'; sections = el('div', undefined, 'list-sections');
+  const bar = el('div', undefined, 'bulk-bar'); bar.dataset.bulkBar = 'true'; bar.hidden = true; bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Bulk actions');
+  list.append(bar, listTableHeader(), sections); const pane = createDetailPane(); layout.append(list, pane); content.replaceChildren(layout);
  } else { layout = current; sections = layout.querySelector(':scope > .planning-list > .list-sections'); }
- const nextSections = board.columns.map(column => listSection(column, items)); reconcileKeyedChildren(sections, nextSections, node => `column:${node.dataset.column}`, patchListSection); syncListSelection(); updateDetailPaneVisibility();
+ pruneBulkSelection(items);
+ const nextSections = board.columns.map(column => listSection(column, items)); reconcileKeyedChildren(sections, nextSections, node => `column:${node.dataset.column}`, patchListSection); renderBulkBar(layout.querySelector('[data-bulk-bar]'), items); syncListSelection(); updateDetailPaneVisibility();
 }
 function sprintFilterItems(sprint) {
- const project = $('project').value; const assignee = $('assignee').value;
- return scopeItems(sprint).filter(item => { const projectIDs = itemProjectIDs(item); if (project === 'none' && projectIDs.length) return false; if (project !== 'all' && project !== 'none' && !projectIDs.includes(project)) return false; if (assignee === 'none' && item.assignee) return false; if (assignee !== 'all' && assignee !== 'none' && item.assignee !== assignee) return false; return true; });
+ return scopeItems(sprint).filter(item => matchesFilter('project', itemProjectIDs(item)) && matchesFilter('assignee', item.assignee ? [item.assignee] : []));
+}
+// Project and assignee filters select which sprints are listed, not only what
+// their metrics count: a sprint is shown when its scope still holds work that
+// matches every active filter. Sprints are never filtered out while no work
+// filter is active, so an empty sprint stays visible and plannable.
+function sprintMatchesFilters(sprint) {
+ if (!filters.project.size && !filters.assignee.size) return true;
+ return sprintFilterItems(sprint).length > 0;
 }
 function renderSprintRows(list) {
- const search = $('search').value.trim(); const query = search.toLowerCase(); const matches = board.sprints.filter(sprint => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query)); $('count').textContent = `${matches.length} ${matches.length === 1 ? 'sprint' : 'sprints'}`; list.replaceChildren();
- if (!matches.length) { const empty = el('p', board.sprints.length && query ? `No sprints match “${search}”.` : 'No sprints yet. Create a goal and time box, then add work from the backlog.', 'empty'); empty.dataset.empty = 'true'; list.append(empty); return; }
+ const search = $('search').value.trim(); const query = searchQuery;
+ const filtered = board.sprints.filter(sprintMatchesFilters);
+ const matches = filtered.filter(sprint => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query));
+ $('count').textContent = `${matches.length} ${matches.length === 1 ? 'sprint' : 'sprints'}`; list.replaceChildren();
+ if (!matches.length) {
+  const message = !board.sprints.length ? 'No sprints yet. Create a goal and time box, then add work from the backlog.'
+   : query && filtered.length !== board.sprints.length ? `No sprints match “${search}” and the current filters.`
+   : query ? `No sprints match “${search}”.`
+   : 'No sprints hold work matching the current filters.';
+  const empty = el('p', message, 'empty'); empty.dataset.empty = 'true'; list.append(empty); return;
+ }
  matches.forEach(sprint => list.append(sprintPanel(sprint, sprintFilterItems(sprint))));
 }
+// Delivery trend is derived from preserved closed-sprint scope and the current
+// state of those cards. It is a live read of native planning records, not a
+// recorded historical metric, so it is labeled as such.
+const VELOCITY_SPRINTS = 8;
+function velocitySeries() {
+ return board.sprints.filter(sprint => sprint.state === 'closed' && sprintMatchesFilters(sprint)).map(sprint => {
+  const items = sprintFilterItems(sprint);
+  return {sprint, committed: items.length, completed: items.filter(done).length};
+ }).slice(-VELOCITY_SPRINTS);
+}
+function velocityChart(series) {
+ const width = 760, height = 200, left = 44, right = 16, top = 16, bottom = 40;
+ const plotWidth = width - left - right, plotHeight = height - top - bottom;
+ const maximum = Math.max(1, ...series.flatMap(entry => [entry.committed, entry.completed]));
+ const band = plotWidth / series.length, barWidth = Math.max(4, Math.min(28, band / 3));
+ const y = value => top + (maximum - value) / maximum * plotHeight;
+ const svg = svgNode('svg', {viewBox:`0 0 ${width} ${height}`, role:'img', 'aria-label':'Committed and completed work per closed sprint', class:'velocity-svg'});
+ const title = svgNode('title'); title.textContent = 'Committed and completed work per closed sprint'; svg.append(title);
+ [...new Set(Array.from({length:4}, (_, index) => Math.round(maximum * (1 - index / 3))))].forEach(value => {
+  svg.append(svgNode('line', {class:'velocity-grid', x1:left, x2:width-right, y1:y(value), y2:y(value)}));
+  const label = svgNode('text', {class:'velocity-axis-label', x:left-8, y:y(value)+4, 'text-anchor':'end'}); label.textContent = String(value); svg.append(label);
+ });
+ series.forEach((entry, index) => {
+  const center = left + band * (index + .5);
+  [['committed', entry.committed, center - barWidth - 2], ['completed', entry.completed, center + 2]].forEach(([kind, value, x]) => {
+   const bar = svgNode('rect', {class:`velocity-bar velocity-bar-${kind}`, x, y:y(value), width:barWidth, height:Math.max(1, y(0) - y(value))});
+   const label = svgNode('title'); label.textContent = `${entry.sprint.name} · ${value} ${kind}`; bar.append(label); svg.append(bar);
+  });
+  const label = svgNode('text', {class:'velocity-axis-label', x:center, y:height-14, 'text-anchor':'middle'}); label.textContent = entry.sprint.name.length > 14 ? `${entry.sprint.name.slice(0, 13)}…` : entry.sprint.name; svg.append(label);
+ });
+ return svg;
+}
+function velocityTable(series) {
+ const details = el('details', undefined, 'velocity-data'); details.dataset.stateKey = 'velocity-data'; details.append(el('summary', 'View sprint values'));
+ const scroll = el('div', undefined, 'velocity-table-scroll'); const table = el('table'); table.append(el('caption', 'Closed-sprint scope and current completion'));
+ const head = el('thead'); const heading = el('tr'); ['Sprint', 'Committed', 'Completed'].forEach(text => { const cell = el('th', text); cell.scope = 'col'; heading.append(cell); }); head.append(heading); table.append(head);
+ const body = el('tbody'); series.forEach(entry => { const row = el('tr'); const name = el('th', entry.sprint.name); name.scope = 'row'; row.append(name, el('td', String(entry.committed)), el('td', String(entry.completed))); body.append(row); }); table.append(body);
+ scroll.append(table); details.append(scroll); return details;
+}
+function sprintVelocityPanel() {
+ const series = velocitySeries();
+ const panel = el('section', undefined, 'velocity-panel'); panel.setAttribute('aria-labelledby', 'velocity-heading');
+ const heading = el('div', undefined, 'section-head'); const intro = el('div'); const title = el('h3', 'Delivery trend'); title.id = 'velocity-heading';
+ intro.append(title, el('p', `Committed and completed work for the last ${VELOCITY_SPRINTS} closed sprints. Completion reflects each card's current column, not its state at closure.`, 'help'));
+ heading.append(intro); panel.append(heading);
+ if (!series.length) {
+  const narrowed = board.sprints.some(sprint => sprint.state === 'closed');
+  panel.append(el('p', narrowed ? 'No closed sprint holds work matching the current filters.' : 'No closed sprint yet. Close a sprint to start a delivery trend.', 'empty'));
+  panel.dataset.renderSignature = `velocity:empty:${narrowed}`; return panel;
+ }
+ const completed = series.map(entry => entry.completed); const average = completed.reduce((sum, value) => sum + value, 0) / completed.length;
+ const metrics = el('div', undefined, 'metrics velocity-metrics');
+ [[series.at(-1).completed, 'Last sprint'], [Math.round(average * 10) / 10, 'Average completed'], [Math.max(...completed), 'Best sprint']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); metrics.append(metric); });
+ const figure = el('figure', undefined, 'velocity-figure'); figure.append(velocityChart(series));
+ const legend = el('div', undefined, 'velocity-legend'); [['committed', 'Committed'], ['completed', 'Completed']].forEach(([kind, text]) => { const entry = el('span', undefined, 'velocity-legend-item'); entry.append(el('span', undefined, `velocity-swatch velocity-swatch-${kind}`), el('span', text)); legend.append(entry); }); figure.append(legend);
+ panel.append(metrics, figure, velocityTable(series));
+ panel.dataset.renderSignature = JSON.stringify(series.map(entry => [entry.sprint.id, entry.sprint.name, entry.committed, entry.completed]));
+ return panel;
+}
+// Sprints uses the same page layout as Projects: a read-only summary section
+// first, then a titled section whose filter bar sits directly below its heading.
 function renderSprintPage(content) {
+ const velocity = sprintVelocityPanel();
  const head = el('div', undefined, 'section-head'); head.dataset.renderSignature = 'sprint-page-head'; head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary'));
  const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; renderSprintRows(list);
- const currentHead = content.firstElementChild; const currentList = content.children[1];
- if (!currentHead || !currentList || currentList.dataset.contentView !== list.dataset.contentView) { content.replaceChildren(head, list); return; }
- patchNode(currentHead, head); reconcileKeyedChildren(currentList, [...list.children], keyedNodeKey);
+ const current = content.firstElementChild;
+ if (!current || current.dataset.contentView !== 'sprint-page') {
+  const sections = el('div', undefined, 'maintenance-sections'); sections.dataset.contentView = 'sprint-page';
+  const planning = el('section', undefined, 'sprint-planning');
+  const slot = el('div', undefined, 'filter-slot'); slot.id = 'sprint-filter-slot';
+  planning.append(head, slot, list); sections.append(velocity, planning); content.replaceChildren(sections);
+ } else {
+  patchNode(current.firstElementChild, velocity);
+  const planning = current.lastElementChild;
+  patchNode(planning.firstElementChild, head);
+  reconcileKeyedChildren(planning.lastElementChild, [...list.children], keyedNodeKey);
+ }
+ placeFilters($('sprint-filter-slot'));
 }
+// A brand-new board shows a short setup path instead of empty columns, so the
+// workspace-creation momentum carries into the first sprint and card.
+function firstRunChecklist() {
+ const steps = [
+  {done: board.projects.length > 0, title: 'Create a project', help: 'Projects classify work items; they are optional but make filtering and the project lens useful.', action: 'Open Projects', run: () => goToView('projects')},
+  {done: board.sprints.length > 0, title: 'Create and start a sprint', help: 'Give the sprint a goal and a time box, then start it so the board can show active scope.', action: 'Open Sprints', run: () => goToView('sprints')},
+  {done: board.items.length > 0, title: 'Add your first work item', help: 'Every card belongs to a board column; sprints and projects can be added at any time.', action: '＋ New item', run: () => $('new-item').click()},
+ ];
+ const panel = el('section', undefined, 'first-run'); panel.setAttribute('aria-labelledby', 'first-run-heading');
+ const heading = el('h2', 'Set up your planning workspace'); heading.id = 'first-run-heading';
+ panel.append(heading, el('p', 'Three steps get this workspace to a board your team can use. You can do them in any order.', 'help'));
+ const list = el('ol', undefined, 'first-run-steps');
+ steps.forEach((step, index) => {
+  const entry = el('li', undefined, `first-run-step${step.done ? ' is-done' : ''}`);
+  const mark = el('span', step.done ? '✓' : String(index + 1), 'first-run-mark'); mark.setAttribute('aria-hidden', 'true');
+  const copy = el('div', undefined, 'first-run-copy'); copy.append(el('strong', step.title), el('span', step.help, 'help'));
+  const action = writeButton(step.action, step.run, step.done ? undefined : 'primary'); action.setAttribute('aria-label', `${step.action}: ${step.title}`);
+  entry.append(mark, copy, action); entry.setAttribute('aria-label', `${step.title} — ${step.done ? 'done' : 'not started'}`); list.append(entry);
+ });
+ panel.append(list);
+ panel.dataset.renderSignature = JSON.stringify(steps.map(step => step.done));
+ return panel;
+}
+function showFirstRun() { return view === 'board' && board.role !== 'viewer' && !board.items.length && !board.sprints.length && !searchQuery; }
 function renderSprintSummary(sprints) {
  const summary = $('sprint-summary'); if (view !== 'board') { summary.replaceChildren(); return; }
  const next = sprints.map(sprint => sprintPanel(sprint)); if (!next.length) { const empty = el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty'); empty.dataset.empty = 'true'; next.push(empty); }
@@ -739,6 +1219,7 @@ function renderContent() {
  if (view === 'sprints') { renderSprintPage(content); return; }
  if (view === 'history') { content.replaceChildren(); renderHistory(content); return; }
  const items = filteredItems(); $('count').textContent = view === 'archive' ? `${items.length} archived${archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}` : `${items.length} items · workspace revision ${board.workspace.revision}`;
+ if (showFirstRun()) { const next = firstRunChecklist(); next.dataset.contentView = 'first-run'; const current = content.firstElementChild; if (!current || current.dataset.contentView !== 'first-run') content.replaceChildren(next); else patchNode(current, next); return; }
  if (view === 'board' && presentation === 'list') renderListPresentationContent(content, items); else if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
  content.querySelector(':scope > .archive-more')?.remove();
  if (view === 'archive' && archiveMore) { const more = button('Load older archived work', async () => { try { await loadArchive(); renderContent(); } catch (e) { notice(e.message, true); } }, 'archive-more'); more.disabled = busy || loading; content.append(more); }
@@ -1103,30 +1584,26 @@ function renderItemAttachments(fields, item, readOnly) {
  }
  if (!readOnly) {
   const upload = el('div', undefined, 'attachment-upload'); const hint = el('span', 'Drop files here', 'attachment-drop-hint'); hint.hidden = true;
+  const progress = el('progress', undefined, 'attachment-progress'); progress.max = 1; progress.hidden = true; progress.setAttribute('aria-label', 'Upload progress');
+  const showProgress = fraction => { if (fraction === undefined) { progress.removeAttribute('value'); } else { progress.value = fraction; } progress.hidden = false; };
+  const hideProgress = () => { progress.hidden = true; progress.value = 0; };
   const input = el('input'); input.type = 'file'; input.className = 'attachment-file-input'; input.id = `attachment-file-${requestKey()}`; input.tabIndex = -1; input.setAttribute('aria-label', 'Attachment file');
-  const add = button('Add attachment', () => input.click(), 'attachment-add'); add.dataset.write = 'true'; add.setAttribute('aria-controls', input.id); add.title = 'Choose a file to attach'; upload.append(add, hint, input); heading.append(headingTitle, upload);
+  const add = button('Add attachment', () => input.click(), 'attachment-add'); add.dataset.write = 'true'; add.setAttribute('aria-controls', input.id); add.title = 'Choose a file to attach'; upload.append(add, hint, progress, input); heading.append(headingTitle, upload);
   async function uploadFile(file) {
-   add.focus(); if (attachmentBusy || !writable()) return false;
-   if (attachmentCount(item) >= 100) { setStatus('This card already has the maximum of 100 attachments.', true); return false; }
-   if (!file || typeof file.name !== 'string' || !file.name || !Number.isFinite(file.size) || file.size < 0) { setStatus('Choose a file first.', true); return false; }
-   if (file.size > 20 * 1024 * 1024) { setStatus('Attachments must be 20 MiB or smaller.', true); return false; }
-   attachmentBusy = true; add.disabled = true; setStatus(`Uploading ${file.name}…`); let uploaded = false;
-   const form = new FormData(); form.append('file', file);
+   add.focus(); if (attachmentBusy || uploadBusy || !writable()) return false;
+   const rejection = attachmentRejection(item, file);
+   if (rejection) { setStatus(rejection, true); return false; }
+   attachmentBusy = true; uploadBusy = true; add.disabled = true; setStatus(`Uploading ${file.name}…`); showProgress(0); let uploaded = false;
    try {
-    const data = await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/attachments', {method:'POST', headers:{'X-CSRF-Token':session.csrf,'Idempotency-Key':requestKey()}, body:form});
-    if (!validAttachments([data]) || data.item_id !== item.id) throw new Error('Attachment response is invalid. Refresh to retry.');
+    await uploadItemFile(item, file, fraction => { if (!section.isConnected) return; showProgress(fraction); if (fraction !== undefined) setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`); });
     if (board !== currentBoard || root !== currentRoot || !section.isConnected) return false;
-    // Without the current list there is nothing to append to, so the count is
-    // advanced and the list reloaded rather than invented from one response.
-    if (attachmentsLoaded(item)) setItemAttachments(item, [...item.attachments.filter(value => value.id !== data.id), data]);
-    else { item.attachment_count = attachmentCount(item) + 1; void ensureAttachments(item); }
     renderList(); renderContent(); setStatus('Attachment uploaded.'); uploaded = true;
    } catch (error) { if (section.isConnected) setStatus(error.message, true); }
-   finally { attachmentBusy = false; if (section.isConnected) { add.disabled = !writable(); renderControls(); if (!add.disabled) add.focus(); } }
+   finally { attachmentBusy = false; uploadBusy = false; hideProgress(); if (section.isConnected) { add.disabled = !writable(); renderControls(); if (!add.disabled) add.focus(); } }
    return uploaded;
   }
   async function uploadFiles(files) {
-   if (attachmentBusy || !writable()) return; const selected = Array.from(files || []).filter(Boolean); input.value = '';
+   if (attachmentBusy || uploadBusy || !writable()) return; const selected = Array.from(files || []).filter(Boolean); input.value = '';
    if (!selected.length) { setStatus('Choose a file first.', true); add.focus(); return; }
    let uploaded = 0;
    for (const file of selected) { if (!await uploadFile(file)) break; uploaded++; }
@@ -1137,11 +1614,11 @@ function renderItemAttachments(fields, item, readOnly) {
   const clearAttachmentDrop = () => { section.classList.remove('attachment-drop-active'); hint.hidden = true; };
   const showAttachmentDrop = event => {
    if (!isFileTransfer(event.dataTransfer)) return; event.preventDefault(); event.stopPropagation();
-   if (writable() && !attachmentBusy) { event.dataTransfer.dropEffect = 'copy'; section.classList.add('attachment-drop-active'); hint.hidden = false; } else { event.dataTransfer.dropEffect = 'none'; clearAttachmentDrop(); }
+   if (writable() && !attachmentBusy && !uploadBusy) { event.dataTransfer.dropEffect = 'copy'; section.classList.add('attachment-drop-active'); hint.hidden = false; } else { event.dataTransfer.dropEffect = 'none'; clearAttachmentDrop(); }
   };
   section.addEventListener('dragenter', showAttachmentDrop); section.addEventListener('dragover', showAttachmentDrop);
   section.addEventListener('dragleave', event => { if (!event.relatedTarget || !(event.relatedTarget instanceof Node) || !section.contains(event.relatedTarget)) clearAttachmentDrop(); });
-  section.addEventListener('drop', event => { if (!isFileTransfer(event.dataTransfer)) return; event.preventDefault(); event.stopPropagation(); clearAttachmentDrop(); if (writable() && !attachmentBusy) void uploadFiles(event.dataTransfer.files); });
+  section.addEventListener('drop', event => { if (!isFileTransfer(event.dataTransfer)) return; event.preventDefault(); event.stopPropagation(); clearAttachmentDrop(); if (writable() && !attachmentBusy && !uploadBusy) void uploadFiles(event.dataTransfer.files); });
  } else heading.append(headingTitle);
  section.append(heading, status, list); fields.append(section); renderList();
 }
@@ -1207,7 +1684,7 @@ function openItemDetail(item, draft, origin) {
 }
 function reopenItemEditor(item, draft, mode, origin) { if (mode === 'detail') openItemDetail(item, draft, origin); else editItemModal(item, draft); }
 function editItemModal(item, draft) {
- const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs; const project = $('project').value; const projectIDs = ['all', 'none'].includes(project) ? [] : [project]; item ||= {title:'', description:'', column_id:board.columns[0].id, project_id:projectIDs[0] || '', project_ids:projectIDs, sprint_ids:[], assignee:'', labels:[], dependencies:[]}; const context = {mode:'modal', form:$('editor-form')};
+ const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs; const project = singleFilterValue('project'); const projectIDs = ['all', 'none'].includes(project) ? [] : [project]; item ||= {title:'', description:'', column_id:board.columns[0].id, project_id:projectIDs[0] || '', project_ids:projectIDs, sprint_ids:[], assignee:'', labels:[], dependencies:[]}; const context = {mode:'modal', form:$('editor-form')};
  openEditor(existing ? 'Work item' : 'Create work item', fields => { context.form = $('editor-form'); buildItemEditor(fields, item, draft, readOnly, context, $('editor-title')); }, data => { if (existing) desiredLinkIDs = data.getAll('link_ids'); return {kind:existing ? 'item.update' : 'item.create', target:item.id || '', item:{...item, project_id:undefined, title:data.get('title').trim(), description:data.get('description'), column_id:data.get('column_id'), project_ids:data.getAll('project_id').filter(Boolean), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
 }
 function editItem(item, draft) { if (item && view === 'board' && presentation === 'list') return selectItem(item.id); return editItemModal(item, draft); }
@@ -1216,7 +1693,7 @@ function archiveItem(item, context) {
  openEditor('Archive work item', fields => {
   fields.append(el('p', `Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`));
   field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
- }, data => ({kind:'item.archive', target:item.id, reason:data.get('reason')}), false, context?.mode === 'detail' ? () => closeDetail({force:true, focus:true}) : undefined);
+ }, data => ({kind:'item.archive', target:item.id, reason:data.get('reason')}), false, () => { offerUndo(`Archived “${item.title}” · undo is available for ${UNDO_TTL / 1000} seconds`, {kind:'item.restore', target:item.id}); if (context?.mode === 'detail') closeDetail({force:true, focus:true}); });
  $('save').textContent = 'Archive item';
 }
 function editSprint(sprint) {
@@ -1263,11 +1740,33 @@ function integrationProjectChips(projectIDs) {
 function openProject(project) {
  if (!board || !project || busy || loading || integrationFormOpen) return;
  if (detailState && !closeDetail({focus:false})) return;
- view = 'board'; presentation = 'list'; $('project').value = project.id; $('scope').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('search').value = ''; render(); persistPlanningURL();
+ view = 'board'; presentation = 'list'; setFilterValues('project', [project.id]); setFilterValues('assignee', []); setFilterValues('label', []); $('scope').value = 'all'; resetSearch(); render(); persistPlanningURL();
 }
-function renderProjectRows(list, count) {
- const query = projectSearch.trim().toLowerCase(); const matches = board.projects.filter(project => { if (!project.name.toLowerCase().includes(query)) return false; if (projectAssigneeFilter === 'all' && projectLabelFilter === 'all') return true; return board.items.some(item => { if (item.archived || !itemProjectIDs(item).includes(project.id)) return false; if (projectAssigneeFilter !== 'all' && (projectAssigneeFilter === 'none' ? item.assignee : item.assignee !== projectAssigneeFilter)) return false; const labels = item.labels || []; if (projectLabelFilter !== 'all' && (projectLabelFilter === 'none' ? labels.length : !labels.includes(projectLabelFilter))) return false; return true; }); }); if (count) count.textContent = `${matches.length} project${matches.length === 1 ? '' : 's'}`; list.replaceChildren();
- if (!matches.length) { const assignee = projectAssigneeFilter === 'none' ? 'Unassigned' : memberName(projectAssigneeFilter); const label = projectLabelFilter === 'none' ? 'No labels' : projectLabelFilter; const message = !query && projectAssigneeFilter === 'all' && projectLabelFilter === 'all' ? 'No projects yet. Items can remain unclassified.' : query && projectAssigneeFilter === 'all' && projectLabelFilter === 'all' ? `No projects match “${projectSearch.trim()}”.` : !query && projectAssigneeFilter !== 'all' && projectLabelFilter === 'all' ? `No projects match assignee “${assignee}”.` : !query && projectAssigneeFilter === 'all' && projectLabelFilter !== 'all' ? `No projects match label “${label}”.` : 'No projects match the current filters.'; list.append(el('p', message, 'empty')); return; }
+function renderProjectFilterChips(host, list, count) {
+ const chips = filterChipNodes(projectFilters, PROJECT_FILTER_NAMES, () => renderProjectRows(list, count, host), {clearLabel: 'Clear project filters'});
+ host.hidden = !chips.length; host.replaceChildren(...chips);
+}
+function projectMatchesFilters(project) {
+ if (!projectFilters.assignee.size && !projectFilters.label.size) return true;
+ return board.items.some(item => item.archived ? false : itemProjectIDs(item).includes(project.id)
+  && matchesFilter('assignee', item.assignee ? [item.assignee] : [], projectFilters)
+  && matchesFilter('label', item.labels || [], projectFilters));
+}
+function renderProjectRows(list, count, chips) {
+ const search = projectSearch.trim(); const query = search.toLowerCase();
+ const filtered = board.projects.filter(projectMatchesFilters);
+ const matches = filtered.filter(project => project.name.toLowerCase().includes(query));
+ if (count) count.textContent = `${matches.length} project${matches.length === 1 ? '' : 's'}`;
+ if (chips) renderProjectFilterChips(chips, list, count);
+ list.replaceChildren();
+ if (!matches.length) {
+  const narrowed = filtered.length !== board.projects.length;
+  const message = !board.projects.length ? 'No projects yet. Items can remain unclassified.'
+   : query && narrowed ? `No projects match \u201c${search}\u201d and the current filters.`
+   : query ? `No projects match \u201c${search}\u201d.`
+   : 'No projects hold work matching the current filters.';
+  list.append(el('p', message, 'empty')); return;
+ }
  matches.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const actions = el('div', undefined, 'actions'); const open = actionIconButton('View scope', '◎', () => openProject(project)); open.disabled = busy || loading || integrationFormOpen; const edit = writeIconButton('Edit project', '✎', () => editProject(project)); actions.append(open, edit); row.append(info, actions); list.append(row); });
 }
 function renderProjects(content) {
@@ -1288,9 +1787,26 @@ function renderProjects(content) {
   if (!board.connector_instance) integration.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.', 'help'));
  }
  const projects = el('section', undefined, 'workspace-projects'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject);
- const projectFilters = el('div', undefined, 'project-filter-bar'); const projectFilterControls = el('div', undefined, 'actions'); const assigneeFilter = el('select'); assigneeFilter.setAttribute('aria-label', 'Assignee'); options(assigneeFilter, [['all', 'Any assignee'], ['none', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])], projectAssigneeFilter); if (!assigneeFilter.value) { projectAssigneeFilter = 'all'; assigneeFilter.value = 'all'; } const assigneeLabel = el('label', 'Assignee', 'project-assignee-filter'); assigneeLabel.append(assigneeFilter); const labelFilter = el('select'); labelFilter.setAttribute('aria-label', 'Label'); options(labelFilter, [['all', 'Any label'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], projectLabelFilter); if (!labelFilter.value) { projectLabelFilter = 'all'; labelFilter.value = 'all'; } const labelLabel = el('label', 'Label', 'project-label-filter'); labelLabel.append(labelFilter); const filter = el('label', 'Search', 'project-name-filter'); const input = el('input'); input.type = 'search'; input.value = projectSearch; input.placeholder = 'Find projects…'; input.maxLength = 120; input.setAttribute('aria-label', 'Search'); filter.append(input); projectFilterControls.append(assigneeLabel, labelLabel, filter); const projectCount = el('span', undefined, 'project-filter-count muted'); projectCount.setAttribute('aria-live', 'polite'); projectFilters.append(projectFilterControls, projectCount);
- projects.append(projectHead, projectFilters, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide. Assignee and Label filters match projects with current non-archived work matching the selected fields; Unassigned and No labels match empty values.', 'help'));
- const list = el('div', undefined, 'maintenance-list'); renderProjectRows(list, projectCount); input.addEventListener('input', () => { projectSearch = input.value; renderProjectRows(list, projectCount); }); assigneeFilter.addEventListener('change', () => { projectAssigneeFilter = assigneeFilter.value; renderProjectRows(list, projectCount); }); labelFilter.addEventListener('change', () => { projectLabelFilter = labelFilter.value; renderProjectRows(list, projectCount); }); projects.append(list);
+ const filterBar = el('div', undefined, 'filter-bar'); const filterControls = el('div', undefined, 'actions');
+ // Each select adds one value and resets, exactly like the planning bar.
+ const assigneeSelect = el('select'); assigneeSelect.setAttribute('aria-label', 'Assignee'); options(assigneeSelect, [['all', 'Any assignee'], ['none', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])], 'all');
+ const assigneeLabel = el('label', 'Assignee', 'filter-bar-assignee'); assigneeLabel.append(assigneeSelect);
+ const labelSelect = el('select'); labelSelect.setAttribute('aria-label', 'Label'); options(labelSelect, [['all', 'Any label'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], 'all');
+ const labelLabel = el('label', 'Label', 'filter-bar-label'); labelLabel.append(labelSelect);
+ const searchLabel = el('label', 'Search', 'filter-bar-search'); const input = el('input'); input.type = 'search'; input.value = projectSearch; input.placeholder = 'Find projects…'; input.maxLength = 120; input.setAttribute('aria-label', 'Search'); searchLabel.append(input);
+ filterControls.append(assigneeLabel, labelLabel, searchLabel);
+ const projectCount = el('span', undefined, 'filter-bar-count muted'); projectCount.setAttribute('aria-live', 'polite'); filterBar.append(filterControls, projectCount);
+ const projectChips = el('div', undefined, 'filter-chips'); projectChips.setAttribute('role', 'group'); projectChips.setAttribute('aria-label', 'Active project filters'); projectChips.hidden = true;
+ const slot = el('div', undefined, 'filter-slot'); slot.append(filterBar, projectChips);
+ projects.append(projectHead, slot, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide. Assignee and Label filters list projects with current non-archived work matching every active filter; Unassigned and No labels match empty values.', 'help'));
+ const list = el('div', undefined, 'maintenance-list'); renderProjectRows(list, projectCount, projectChips);
+ input.addEventListener('input', () => { projectSearch = input.value; renderProjectRows(list, projectCount, projectChips); });
+ PROJECT_FILTER_NAMES.forEach((name, index) => {
+  const select = index === 0 ? assigneeSelect : labelSelect;
+  select.addEventListener('change', () => { addFilterValue(name, select.value, projectFilters); select.value = 'all'; renderProjectRows(list, projectCount, projectChips); });
+ });
+ projects.append(list);
+
  sections.append(integration, projects); content.append(sections);
 }
 function editLabel(label) {
@@ -1557,17 +2073,61 @@ document.addEventListener('focusin', e => { const target = attachmentLinkTarget(
 document.addEventListener('focusout', e => { const target = attachmentLinkTarget(e.target); if (!target || (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) || target.matches(':hover')) return; hideAttachmentTooltip(target); });
 window.addEventListener('resize', repositionAttachmentTooltip); document.addEventListener('scroll', repositionAttachmentTooltip, true);
 document.addEventListener('pointerdown', e => { document.querySelectorAll('.attachment-actions[open],.card-attachments[open]').forEach(menu => { if (!menu.contains(e.target)) menu.open = false; }); const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
-function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; render(); persistPlanningURL(); }
+function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; bulkSelection.clear(); render(); persistPlanningURL(); }
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
 $('proposals').onclick = () => showProposals();
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('new-workspace').onclick = showWorkspaceCreate; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
 $('presentation-board').onclick = () => setPresentation('board'); $('presentation-list').onclick = () => setPresentation('list');
 $('scope').onchange = () => { render(); persistPlanningURL(); };
-$('label').onchange = $('search').oninput = renderContent;
-$('project').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); persistPlanningURL(); };
-$('assignee').onchange = () => { resetBurndown(); render(); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); };
+// Each select adds one value and resets to its "all" entry, so it reads as an
+// add-a-filter control while the chip row owns the active state.
+FILTER_NAMES.forEach(name => { $(name).onchange = event => { addFilterValue(name, event.target.value); event.target.value = 'all'; applyFilterChange(name); }; });
+$('search').oninput = queueSearch;
+$('search').onchange = () => { if (flushSearch() && board) renderContent(); };
+$('search').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); if (flushSearch() && board) renderContent(); } });
+$('error-dismiss').onclick = clearError;
+$('shortcuts-dismiss').onclick = $('shortcuts-close').onclick = () => $('shortcuts').close();
 document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); });
-document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } if (view === 'archive') { try { await loadArchive(true); } catch (e) { notice(e.message, true); } } render(); }; });
+// Escape leaves a page-level control so shortcuts become available without
+// reaching for the pointer. Focus moves to the main region rather than being
+// dropped, and contexts that already own Escape — dialogs, the detail pane and
+// open selection menus — keep their existing close behavior.
+document.addEventListener('keydown', event => {
+ if (event.key !== 'Escape' || event.altKey || event.ctrlKey || event.metaKey || !(event.target instanceof Element)) return;
+ const control = event.target.closest('input,textarea,select,[contenteditable=""],[contenteditable="true"]');
+ if (!control || control.closest('dialog') || control.closest('.multi-select-menu') || detailState?.pane?.contains(control)) return;
+ event.preventDefault(); control.blur(); $('main').focus({preventScroll:true});
+});
+// Global shortcuts never fire while typing, while a dialog is open, or with
+// Alt/Control/Meta held, so they cannot shadow browser or assistive-technology
+// keys. Letters are matched case-insensitively and Shift is allowed, so Caps
+// Lock or a shifted key still activates them.
+const VIEW_SHORTCUTS = Object.freeze({b: 'board', s: 'sprints', p: 'projects', m: 'members', l: 'labels', a: 'archive', h: 'history'});
+const SHORTCUT_CHORD_MS = 2500;
+function typingTarget(target) { return target instanceof Element && (target.closest('input,textarea,select,[contenteditable=""],[contenteditable="true"]') !== null); }
+function goToView(next) { const control = document.querySelector(`[data-view="${next}"]`); if (control && !control.disabled) control.click(); }
+function shortcutKey(event) { return event.key.length === 1 ? event.key.toLowerCase() : event.key; }
+document.addEventListener('keydown', event => {
+ if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+ if ($('shortcuts').open) { if (event.key === 'Escape') $('shortcuts').close(); return; }
+ if (typingTarget(event.target) || $('editor').open) return;
+ // A modifier or lock key pressed on its own must not consume a pending chord,
+ // so holding Shift between `g` and the view key still navigates.
+ if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(event.key)) return;
+ const key = shortcutKey(event);
+ const chord = shortcutChord && Date.now() - shortcutChord < SHORTCUT_CHORD_MS; shortcutChord = 0;
+ if (chord) {
+  if (VIEW_SHORTCUTS[key]) { event.preventDefault(); goToView(VIEW_SHORTCUTS[key]); return; }
+  if (key !== 'g') { notice('No view for that key. Press g then b, s, p, m, l, a or h.'); return; }
+ }
+ if (event.key === '?' || (event.shiftKey && key === '/')) { event.preventDefault(); $('shortcuts').showModal(); return; }
+ if (key === '/') { event.preventDefault(); if (!$('search-filter').hidden && !$('planning-filters').hidden) { $('search').focus(); $('search').select(); } return; }
+ if (key === 'g') { shortcutChord = Date.now(); notice('Go to… press b, s, p, m, l, a or h.'); return; }
+ if (key === 'n') { if (!$('new-item').disabled && !document.querySelector('.heading .actions').hidden) { event.preventDefault(); $('new-item').click(); } return; }
+ if (key === 'r') { if (!$('refresh').disabled) { event.preventDefault(); void refresh(); } }
+});
+$('undo').onclick = async () => { const commands = undoOffer; clearUndo(); if (!commands?.length || !board || !writable()) return; if (commands.length === 1) { await quick(commands[0]); return; } await runSequence('Undo', commands); };
+document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; bulkSelection.clear(); if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } if (view === 'archive') { try { await loadArchive(true); } catch (e) { notice(e.message, true); } } render(); }; });
 async function chooseWorkspace(workspaceID = '') {
  if (busy || loading) return false;
  if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return false; }
@@ -1575,7 +2135,7 @@ async function chooseWorkspace(workspaceID = '') {
  if (!workspaces.some(workspace => workspace.id === selectedID)) return false;
  const urlState = pendingPlanningURLState; pendingPlanningURLState = undefined;
  integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
- clearPlanningChangeNotice(); board = undefined; workspaceGate = 'loading'; updateWorkspaceOptions(selectedID); resetBurndown(); burndownExpanded.clear(); projectSearch = ''; projectAssigneeFilter = 'all'; projectLabelFilter = 'all'; $('project').value = 'all'; $('assignee').value = 'all'; $('label').value = 'all'; $('scope').value = 'active'; $('search').value = ''; root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`; render();
+ clearPlanningChangeNotice(); clearUndo(); clearError(); bulkSelection.clear(); board = undefined; workspaceGate = 'loading'; updateWorkspaceOptions(selectedID); resetBurndown(); burndownExpanded.clear(); projectSearch = ''; clearFilterGroup(projectFilters); clearFilters(); $('scope').value = 'active'; resetSearch(); root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`; render();
  const refreshed = await refresh();
  if (!refreshed) { if (urlState && workspaceGate === 'loading') pendingPlanningURLState = urlState; return false; }
  workspaceGate = ''; persistWorkspaceURL(selectedID); if (urlState) applyPlanningURLState(urlState); else persistPlanningURL(); return true;

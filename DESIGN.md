@@ -22,7 +22,9 @@ background #111713, panel #1a241d, inset #222f26, border #3a4a3e, text #e7efe8, 
 accent #9be0b8, accent surface #1b3c2d, warning #e0aa55, danger #ffaca0. Label colors use a fixed
 64-swatch palette: eight hue families with eight opaque, high-saturation swatches each. Include
 #dcefe4, #145a42, and #ffcc00 for the default and common accent choices; use dark ink on light
-swatches and white on dark swatches. Use semantic tokens for all other UI colors. No external fonts
+swatches and white on dark swatches. Use semantic tokens for all other UI colors. Motion is
+optional decoration: any transition, animation, or smooth scrolling must be neutralised under
+`prefers-reduced-motion: reduce`. No external fonts
 or assets are required for the base UI; optional GitLab avatar images use the configured instance or
 a validated HTTPS Gravatar avatar URL.
 
@@ -37,11 +39,27 @@ a validated HTTPS Gravatar avatar URL.
   a labeled native form and makes the authenticated subject the initial administrator. The sidebar
   workspace selector remains available for switching after entry. Board columns use a responsive grid
   with a minimum 240px width; wrap columns rather than causing page-level horizontal scroll.
+- Every filtered page uses the same `filter-bar` component: a horizontal line of labeled native
+  selects and an optional search box on the left, and a right-aligned `filter-bar-count` for the
+  visible record count. It is the only filter container; there is no separate toolbar component.
+  Board and Archive host it in its slot above the content, directly under the page heading. Pages
+  that own a section layout — Projects and Sprints — host it inside the content, immediately below
+  the section heading it filters. The planning filter bar is one element that is relocated between
+  those hosts rather than duplicated, so its controls keep their state and identity across views.
+  Maintenance views without work filters hide it.
 - One shared board belongs to each workspace; projects classify items optionally, and a work item
   may belong to multiple projects. Project, assignee and label filters sit beside Scope in the
-  planning toolbar (including unassigned and named assignees), never in the sidebar and never as a
-  planning boundary. The planning toolbar also
-  offers a Board/List presentation toggle; Kanban is the default, while List groups the same
+  planning filter bar (including unassigned and named assignees), never in the sidebar and never as a
+  planning boundary. Each of those three filters accepts several values at once. The native select
+  adds one value and returns to its All entry, so it reads as an add-a-filter control; the active
+  values appear as removable chips in a row directly above the planning content, with a Clear
+  filters action once more than one is active. Values within a filter combine as OR; separate
+  filters combine as AND. The empty choice (No project, Unassigned, No labels) means "no
+  association" and is mutually exclusive with concrete values. The project lens, the new-item
+  project default and the burn-down request apply only when exactly one concrete value is selected;
+  a wider selection states that the chart shows all. Work search is debounced so a long board is
+  filtered once per pause, and Enter applies the pending query immediately. The planning filter bar
+  also offers a Board/List presentation toggle; Kanban is the default, while List groups the same
   filtered work by the ordered board columns without changing navigation or scope semantics. Scope
   lists Active sprints, Backlog, and All open work in that order. WIP counts the whole workspace
   column, regardless of filtering. List sections remain visible when empty and can be expanded,
@@ -78,6 +96,11 @@ a validated HTTPS Gravatar avatar URL.
   file tiles and an Asana-like Add attachment action that opens
   the file picker and uploads the selected file; files can also be dropped onto the section. Editor
   tiles expose removal from an overflow action menu, and cancelling the picker leaves the card open.
+  Uploads show a determinate progress bar beside Add attachment and a percentage in the section
+  status; an indeterminate bar is used when the browser cannot measure the request. Files may also
+  be dropped directly onto a Kanban card or List row, which uploads to that card without opening the
+  editor and reports progress through the shared status line. Only transfers carrying files are
+  intercepted, so planning drags are unaffected, and archived cards reject file drops.
   Members and admins can upload or remove files from active cards; viewers can download them. The attachment section appears before comments. At 1000px
   and above, the item editor puts title and description on the left and selection controls on the
   right; it stacks below that width.
@@ -117,7 +140,11 @@ a validated HTTPS Gravatar avatar URL.
   select remains the keyboard movement mechanism. Cards are draggable from their body
   context, and columns are draggable from their headers, moving cards before/after cards or to a
   column’s end and reordering columns before/after another column. Drops use the same
-  revision-checked commands; no optimistic rearrangement. Accent outlines mark drop targets, with
+  revision-checked commands. Card placement and archive state are rearranged locally as soon as the
+  drop is accepted so the gesture feels immediate; the pending save is still announced, and a
+  rejected or conflicting write restores the exact previous placement and shows the error. Nothing
+  outside card placement, ordering, and archive state is applied before its write is acknowledged.
+  Accent outlines mark drop targets, with
   top/bottom borders marking insertion. Filtering never changes project or sprint membership.
   Archived cards and viewers cannot drag.
 - Projects and GitLab integration share a single-column Projects maintenance view, with GitLab
@@ -126,9 +153,18 @@ a validated HTTPS Gravatar avatar URL.
   list uses the plain page layout rather than a `maintenance-section` panel. Its compact horizontal
   filter bar sits below the title with the Assignee select first, the Label select second, a
   non-expanding accessible case-insensitive name search third, and a right-aligned visible project
-  count. Assignee and Label filters cover current non-archived item fields, with Unassigned and No
-  labels matching empty values; no-match states are explicit. The Sprints page keeps Project and Assignee in the compact planning toolbar, followed by Search;
-  those controls filter sprint metrics, while Search case-insensitively matches sprint names and goals
+  count. Assignee and Label accept several values using the same add-a-filter select, removable
+  chips, OR-within/AND-across and exclusive-empty rules as the planning bar, with a Clear project
+  filters action. They list projects holding current non-archived work that matches every active
+  filter, with Unassigned and No labels matching empty values; no-match states are explicit and say
+  whether the search, the filters, or both excluded everything. The Sprints page uses the same page
+  layout as Projects: the read-only Delivery trend section first, then the sprint section whose
+  heading is followed by the planning filter bar and its chips, then the sprint list. It keeps
+  Project and Assignee in that bar, followed by Search. Those filters select which sprints are
+  listed, not only what their metrics count: a sprint appears when its scope still holds work
+  matching every active filter, and the delivery trend covers the same sprints. With no work filter
+  active no sprint is excluded, so an empty sprint stays visible and plannable. Search
+  case-insensitively matches sprint names and goals
   and shows a visible sprint count. Members have a dedicated Members
   view where admins can search available GitLab users, add or remove members, change roles, and maintain
   display names; adding a user defaults the workspace name to the GitLab profile name and shows the
@@ -184,6 +220,12 @@ a validated HTTPS Gravatar avatar URL.
   the original document for copying/revision; never automatically rebase. Accepted reviews retain
   the exact historical diff, not a recomputed current diff. All controls use the existing
   dialog/form patterns; viewers cannot import/review-write.
+- The Sprints page opens with a read-only Delivery trend section above the sprint section: committed and
+  completed counts for the last eight closed sprints as a grouped bar chart, last/average/best
+  completed metrics, a legend, and an accessible sprint-values table behind a native disclosure. It
+  is derived live from preserved closed-sprint scope and each card's current column, so it states
+  that completion is not the state recorded at closure. Planning toolbar Project and Assignee
+  filters apply to it. With no closed sprint it says so rather than plotting an empty chart.
 - Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close/re-open actions,
   and a read-only burn-down toggle. Re-opening a closed sprint restores its preserved scope as an
   active sprint while retaining any other open sprint assignments. The chart expands inside the same
@@ -195,24 +237,61 @@ a validated HTTPS Gravatar avatar URL.
   retained.
 - Burn-down plots remaining native work-item count by day, a dashed ideal line, and the recorded
   scope so one chart can describe a sprint, project, member, or their intersection. Project and
-  Assignee controls in the planning toolbar apply to an expanded chart. Project and assignee filters
+  Assignee controls in the planning filter bar apply to an expanded chart. Project and assignee filters
   are evaluated against each dated native planning snapshot; scope changes remain visible. Future
   dates and periods without recorded history are blank rather than invented. The chart uses existing
   semantic tokens, places the active filter condition beside a compact figure on wide screens, and
   has an accessible horizontal daily-values table behind a native disclosure. It wraps below 900px
   without page-level horizontal scrolling.
 - Modal dialogs have a 640px maximum width and a 16px viewport margin; the item editor expands to
-  960px on wide screens. Textareas start at 120px high.
-- Use native labeled forms and modal dialogs with focus return. All controls have visible focus;
-  errors and save/conflict status are announced with live regions.
+  960px on wide screens. Dialog content always sits on an opaque panel surface over the dimmed
+  backdrop, whether that content is a form or a plain panel. Textareas start at 120px high.
+- Use native labeled forms and modal dialogs with focus return. All controls have visible focus. The
+  main region is a focus-management target for the skip link and for Escape, not a control, so it
+  never paints a focus ring around the whole page.
+  Errors and save/conflict status are announced with live regions. Transient progress and errors are
+  separate surfaces: a polite status line carries progress and success and is written only when its
+  text changes, so an unchanged board is never re-announced, while errors persist in their own
+  assertive bar with an explicit Dismiss until dismissed or cleared by a later success. Workspace
+  revision belongs to the non-live count, never to the status line.
+- A workspace with no sprints and no work items shows a three-step setup path instead of empty
+  columns: create a project, create and start a sprint, add the first work item. Steps may be done
+  in any order, show a done state from current planning records, and link to the relevant view.
+  Viewers never see it.
+- Global keyboard shortcuts never fire while typing, while a dialog is open, or with Alt, Control or
+  Meta held. Letter shortcuts match case-insensitively and accept Shift, so Caps Lock or a shifted
+  key still activates them, and a modifier pressed on its own never cancels a pending chord. A chord
+  announces the keys it is waiting for and stays open for 2.5 seconds. The shortcuts are:
+  `/` focuses work search, `n` creates a work item, `r` refreshes, `g` followed by a view key
+  navigates, and `?` opens a shortcut reference dialog. `Esc` leaves a focused page-level control and
+  returns focus to the main region, so shortcuts are reachable again without using a pointer; inside
+  a dialog, the detail pane, or an open selection menu it keeps its existing close behavior.
+  Shortcut hints appear in the search placeholder and the reference dialog only.
 - Never optimistic-save silently: disable submit during requests, retain form input on
-  validation/conflict, offer explicit refresh, and show successful saves.
+  validation/conflict, offer explicit refresh, and show successful saves. Locally applied card
+  placement and archive state are never silent either: the save is announced while it is in flight,
+  and a failure rolls the board back rather than leaving an unsaved change on screen.
+- Reversible single-command actions offer an explicit Undo. After archiving, restoring, moving, or
+  reordering work, and after a bulk archive, a status bar below the notice names what happened and
+  offers Undo for ten seconds. Undo issues the inverse revision-checked command, so a conflict is
+  reported like any other write. Undo is offered only where a true inverse exists; irreversible
+  maintenance such as deleting a label, column, or member keeps its existing confirmation dialog
+  instead.
+- List presentation supports bulk selection. Each non-archived row carries a checkbox in its title
+  cell; selecting any row reveals a bulk bar above the table header showing the selected and shown
+  counts, Assign, Add to sprint, Add label and Archive actions, Select all shown, and Clear
+  selection. Each action opens the standard dialog to choose one value, then applies one
+  revision-checked command per item in order, reporting progress and how many of the batch were
+  applied; a conflict stops the batch rather than skipping ahead. Selection covers only currently
+  filtered rows and is cleared when the filter, presentation, view, or workspace changes. Viewers
+  have no bulk controls.
 - Viewer mode disables write actions. Archive view and history preserve completed work. History
   entries identify the current workspace as `workspace name (id)` and render known member actors as
   `name (subject)`. Project maintenance rows offer a View scope action that selects the project
   lens and All open work, while new items inherit that project. Project scope defaults to List;
   changing the Project filter on Kanban preserves the current presentation. Board/List mode,
-  project and scope are persisted as shareable URL query state. Loading, no-work, no-workspace, unavailable, and
+  project, assignee, label and scope are persisted as shareable URL query state; multi-value filters
+  serialize as comma-separated values and unknown values are dropped on load. Loading, no-work, no-workspace, unavailable, and
   stale-revision states must be
   explicit. Render user Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system. Verify both themes at 1440px,
