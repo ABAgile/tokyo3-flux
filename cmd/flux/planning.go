@@ -316,7 +316,10 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	})
 	// Probes stay exempt so throttling never makes an instance look unhealthy.
 	handler := apiLimiter.Middleware(limited, "/healthz", "/readyz")
-	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	// Body read/write bounds must cover a full attachment transfer; slow-start
+	// header attacks stay bounded by ReadHeaderTimeout, and each handler applies
+	// its own, tighter request deadline.
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 60 * time.Second}
 	rt.Log.Info("native Flux planning started", "addr", addr, "demo", demo)
 	components := []baserun.Component{baserun.HTTPServer(server, 10*time.Second, false)}
 	if connectorSettings.Interval > 0 {

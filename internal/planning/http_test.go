@@ -423,3 +423,17 @@ func TestHTTPAttachments(t *testing.T) {
 		t.Fatalf("blob remains after removal: %v", err)
 	}
 }
+
+func TestTimeoutFor(t *testing.T) {
+	attachment := "/api/v2/workspaces/w/items/i/attachments"
+	for _, path := range []string{attachment, attachment + "/7"} {
+		if timeoutFor(path) != attachmentRequestTimeout {
+			t.Fatalf("%s did not get the transfer deadline", path)
+		}
+	}
+	for _, path := range []string{"/api/v2/workspaces/w/board", "/api/v2/workspaces/w/items/attachmentsy/comments"} {
+		if timeoutFor(path) != jsonRequestTimeout {
+			t.Fatalf("%s did not get the JSON deadline", path)
+		}
+	}
+}

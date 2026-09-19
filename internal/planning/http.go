@@ -417,7 +417,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), timeoutFor(r.URL.Path))
 		defer cancel()
 		// One identifier per request, echoed to the client and reused by every
 		// log line below, so a reported failure can be correlated with its audit
@@ -779,6 +779,23 @@ func (h *HTTP) result(w http.ResponseWriter, r *http.Request, v any, err error) 
 		return
 	}
 	respond(w, 200, v)
+}
+
+// Request deadlines. Attachment routes stream up to MaxAttachmentBytes in each
+// direction, which cannot complete inside the deadline that suits small JSON
+// requests, so they are given their own bound instead of failing mid-transfer.
+const (
+	jsonRequestTimeout       = 15 * time.Second
+	attachmentRequestTimeout = 2 * time.Minute
+)
+
+func timeoutFor(path string) time.Duration {
+	for segment := range strings.SplitSeq(path, "/") {
+		if segment == "attachments" {
+			return attachmentRequestTimeout
+		}
+	}
+	return jsonRequestTimeout
 }
 func (h *HTTP) failure(w http.ResponseWriter, r *http.Request, err error) {
 	status, message := 500, "planning service unavailable"
