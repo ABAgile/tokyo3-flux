@@ -424,8 +424,24 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		rev, err := h.repo.Change(r.Context(), r.PathValue("workspace"), h.subject(r, false), r.Header.Get("Idempotency-Key"), c)
-		h.result(w, r, map[string]int64{"revision": rev}, err)
+		workspaceID, subject := r.PathValue("workspace"), h.subject(r, false)
+		rev, err := h.repo.Change(r.Context(), workspaceID, subject, r.Header.Get("Idempotency-Key"), c)
+		if err != nil {
+			h.failure(w, r, err)
+			return
+		}
+		// The committed board is returned with the validator a conditional read
+		// would have produced, so a saved change needs no follow-up board fetch
+		// and the client keeps revalidating afterwards. A failed read here is not
+		// a failed change: the revision still answers, and the client refetches.
+		result := map[string]any{"revision": rev}
+		if board, boardErr := h.repo.Board(r.Context(), workspaceID, subject); boardErr == nil {
+			board = BrowserBoard(board)
+			if _, etag, marshalErr := marshalWithETag(board); marshalErr == nil {
+				result["board"], result["board_etag"] = board, etag
+			}
+		}
+		respond(w, 200, result)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -803,13 +819,11 @@ func (h *HTTP) resultRevalidated(w http.ResponseWriter, r *http.Request, v any, 
 		h.failure(w, r, err)
 		return
 	}
-	body, marshalErr := json.Marshal(v)
+	body, etag, marshalErr := marshalWithETag(v)
 	if marshalErr != nil {
 		h.failure(w, r, marshalErr)
 		return
 	}
-	sum := sha256.Sum256(body)
-	etag := `"` + hex.EncodeToString(sum[:]) + `"`
 	w.Header().Set("ETag", etag)
 	if etagMatches(r.Header.Get("If-None-Match"), etag) {
 		w.WriteHeader(http.StatusNotModified)
@@ -818,6 +832,18 @@ func (h *HTTP) resultRevalidated(w http.ResponseWriter, r *http.Request, v any, 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// marshalWithETag derives a validator from the encoded value, so the same
+// board yields the same ETag whether it is served directly or embedded in a
+// change receipt.
+func marshalWithETag(v any) ([]byte, string, error) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(body)
+	return body, `"` + hex.EncodeToString(sum[:]) + `"`, nil
 }
 
 func etagMatches(header, etag string) bool {

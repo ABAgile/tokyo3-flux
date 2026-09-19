@@ -379,7 +379,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. The workspace collectio
 | Method/path | Purpose |
 | --- | --- |
 | `POST /api/v2/workspaces` | Browser-only workspace creation; requires session CSRF and idempotency headers, and makes the authenticated subject the initial admin. |
-| `GET /projects`, `GET /board` | Project list and planning board. The board carries the live working set; archived items appear only while closed sprint scope or a dependency edge still references them. Each item reports `attachment_count` rather than attachment metadata. |
+| `GET /projects`, `GET /board` | Project list and planning board. The board carries the live working set; archived items appear only while closed sprint scope or a dependency edge still references them. Each item reports `attachment_count` rather than attachment metadata. The board is a conditional read: it answers an `ETag`, and a matching `If-None-Match` returns 304 with no body. |
 | `GET /revision` | Cheap freshness probe returning workspace revision, caller role, and a GitLab observation digest, so clients poll without reading the board. |
 | `GET /archive?offset=N&limit=N` | One page of archived work items, up to 50 per request, ordered with the board. |
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
@@ -416,8 +416,12 @@ Changes require `Content-Type: application/json`, `X-CSRF-Token`, a 16–120-cha
 `Idempotency-Key`, and workspace `revision`. Entity edits also require their
 revision. Item comments use the same content-type, CSRF and idempotency protections
 but intentionally have no planning revision; retry uncertain comment requests with
-the same payload/key. Planning changes return `{"revision":N}` and should be
-followed by a board reload; comment creation returns the immutable comment JSON.
+the same payload/key. Planning changes return `{"revision":N}` together with the
+committed `board` and its `board_etag`, so no follow-up board read is needed;
+the validator is the one `GET /board` would answer with, so a client can keep
+revalidating from it. A change that commits but cannot be read back returns the
+revision alone, and the client reloads the board itself. Comment creation
+returns the immutable comment JSON.
 Validation errors are 400, conflicts 409,
 permission denials 403 and missing authorized records 404. Authorization-bearing
 mutations are denied even with a browser cookie.

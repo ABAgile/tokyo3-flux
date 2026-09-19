@@ -138,7 +138,10 @@ async function refreshWorkspaceGate() {
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); } }
 }
-async function refresh() {
+// preloaded carries a board a write already returned, so a saved change is
+// applied without a second board read. Membership is still reloaded, because a
+// change receipt says nothing about workspace access.
+async function refresh(preloaded) {
  if (busy || integrationFormOpen) return false;
  if (!root) return refreshWorkspaceGate();
  const generation = ++loadGeneration; let uiState; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
@@ -150,7 +153,10 @@ async function refresh() {
    return false;
   }
   const cached = board && boardETagRoot === root ? boardETag : '';
-  const response = await apiRevalidated(root + '/board', cached); if (generation !== loadGeneration) return false;
+  const response = preloaded?.board?.workspace?.id === selectedID
+   ? {modified: true, etag: preloaded.etag, data: preloaded.board}
+   : await apiRevalidated(root + '/board', cached);
+  if (generation !== loadGeneration) return false;
   boardETag = response.etag; boardETagRoot = root;
   if (!response.modified) { clearPlanningChangeNotice(); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
   const next = response.data;
@@ -162,9 +168,11 @@ async function refresh() {
 async function change(command, key = requestKey()) {
  if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
  busy = true; renderControls(); notice('Saving changes…');
- try { await api(root + '/changes', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf, 'Idempotency-Key': key }, body: JSON.stringify(command) }); }
+ let receipt;
+ try { receipt = await api(root + '/changes', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf, 'Idempotency-Key': key }, body: JSON.stringify(command) }); }
  finally { busy = false; renderControls(); }
- const refreshed = await refresh(); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
+ const preloaded = receipt?.board && typeof receipt.board_etag === 'string' && receipt.board_etag ? {board: receipt.board, etag: receipt.board_etag} : undefined;
+ const refreshed = await refresh(preloaded); notice(refreshed ? 'Changes saved.' : 'Changes saved, but refreshing failed. Use Refresh before continuing.', !refreshed);
 }
 async function quick(command) { try { await change({ revision: board.workspace.revision, ...command }); } catch (e) { notice(e.message, true); render(); } }
 function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? findItem(e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; document.querySelector('.toolbar').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; }

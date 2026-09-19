@@ -501,6 +501,66 @@ func TestTimeoutFor(t *testing.T) {
 	}
 }
 
+// A saved change returns the committed board with the validator a conditional
+// read would have produced, so the client needs no follow-up board fetch.
+func TestChangeReturnsCommittedBoard(t *testing.T) {
+	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, _ := fluxauth.NewFixture(manager)
+	loginResponse := httptest.NewRecorder()
+	login.ServeHTTP(loginResponse, httptest.NewRequest("GET", "http://localhost/auth/login", nil))
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("no session")
+	}
+	var csrf string
+	mint := manager.Gate(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { csrf, err = manager.CSRFToken(r, "planning") }))
+	mintRequest := httptest.NewRequest("GET", "http://localhost/", nil)
+	mintRequest.AddCookie(cookies[0])
+	mint.ServeHTTP(httptest.NewRecorder(), mintRequest)
+	if err != nil || csrf == "" {
+		t.Fatal("no csrf", err)
+	}
+	repo := &fakeRepository{}
+	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	browser := manager.Gate(h.Handler(false))
+	root := "http://localhost/api/v2/workspaces/w"
+
+	change := httptest.NewRequest("POST", root+"/changes", strings.NewReader(`{"kind":"item.rank","revision":1,"target":"a"}`))
+	change.AddCookie(cookies[0])
+	change.Header.Set("Content-Type", "application/json")
+	change.Header.Set("X-CSRF-Token", csrf)
+	change.Header.Set("Idempotency-Key", strings.Repeat("k", 20))
+	changeResponse := httptest.NewRecorder()
+	browser.ServeHTTP(changeResponse, change)
+	if changeResponse.Code != 200 {
+		t.Fatalf("change status %d: %s", changeResponse.Code, changeResponse.Body.String())
+	}
+	var receipt struct {
+		Revision  int64  `json:"revision"`
+		BoardETag string `json:"board_etag"`
+		Board     *Board `json:"board"`
+	}
+	if err = json.Unmarshal(changeResponse.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Revision != 2 || receipt.Board == nil || receipt.BoardETag == "" {
+		t.Fatalf("receipt without a usable board: %s", changeResponse.Body.String())
+	}
+	// The embedded validator must be the one a board read would answer with,
+	// otherwise the next refresh cannot revalidate and refetches in full.
+	read := httptest.NewRequest("GET", root+"/board", nil)
+	read.AddCookie(cookies[0])
+	read.Header.Set("If-None-Match", receipt.BoardETag)
+	readResponse := httptest.NewRecorder()
+	browser.ServeHTTP(readResponse, read)
+	if readResponse.Code != http.StatusNotModified {
+		t.Fatalf("receipt validator rejected by board read: %d", readResponse.Code)
+	}
+}
+
 // Board reads report attachment presence as a count; metadata is a per-card read.
 func TestItemAttachmentListing(t *testing.T) {
 	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
