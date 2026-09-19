@@ -245,7 +245,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		if err == nil {
 			v = BrowserBoard(v)
 		}
-		h.result(w, r, v, err)
+		h.resultRevalidated(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/revision", func(w http.ResponseWriter, r *http.Request) {
 		repo, ok := h.repo.(StateRepository)
@@ -779,6 +779,45 @@ func (h *HTTP) result(w http.ResponseWriter, r *http.Request, v any, err error) 
 		return
 	}
 	respond(w, 200, v)
+}
+
+// resultRevalidated serves a conditional read. Planning responses stay
+// no-store, so the browser never revalidates on its own; the client sends the
+// ETag it still holds and an unchanged board then costs a 304 instead of the
+// full payload.
+func (h *HTTP) resultRevalidated(w http.ResponseWriter, r *http.Request, v any, err error) {
+	if err != nil {
+		h.failure(w, r, err)
+		return
+	}
+	body, marshalErr := json.Marshal(v)
+	if marshalErr != nil {
+		h.failure(w, r, marshalErr)
+		return
+	}
+	sum := sha256.Sum256(body)
+	etag := `"` + hex.EncodeToString(sum[:]) + `"`
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+func etagMatches(header, etag string) bool {
+	if strings.TrimSpace(header) == "" {
+		return false
+	}
+	for candidate := range strings.SplitSeq(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // Request deadlines. Attachment routes stream up to MaxAttachmentBytes in each

@@ -1,6 +1,10 @@
 // Flux planning shell. Loaded as an ES module, so strict mode is implicit.
 import {$, el, button, options, svgNode, syncAttributes, field} from './modules/dom.js';
-import {api, requestKey} from './modules/api.js';
+import {api, apiRevalidated, requestKey} from './modules/api.js';
+// Board reads are revalidated against the copy already in memory, so a refresh
+// that finds nothing new transfers no payload. The ETag is scoped to the root
+// it was issued for and discarded whenever the workspace changes.
+let boardETag = '', boardETagRoot = '';
 import {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, workspaceLabel, workspaceHistoryLabel, columnWIPLabel} from './modules/format.js';
 import {renderMarkdown, markdownEditor} from './modules/markdown.js';
 
@@ -118,7 +122,7 @@ function resetBurndown() { burndownGeneration++; burndownData.clear(); burndownR
 function enterWorkspaceGate(mode, message) {
  if (detailState) closeDetail({force:true, focus:false});
  if ($('editor').open && !busy) closeEditor();
- board = undefined; root = undefined; workspaceGate = mode; pendingPlanningURLState = undefined; persistWorkspaceURL('');
+ board = undefined; root = undefined; boardETag = ''; boardETagRoot = ''; workspaceGate = mode; pendingPlanningURLState = undefined; persistWorkspaceURL('');
  if (message) notice(message);
  render();
 }
@@ -145,7 +149,11 @@ async function refresh() {
    enterWorkspaceGate(memberships.length ? 'select' : 'create', memberships.length ? 'Workspace access changed. Choose an available workspace.' : 'Workspace access changed. Create a workspace to get started.');
    return false;
   }
-  const next = await api(root + '/board'); if (generation !== loadGeneration) return false;
+  const cached = board && boardETagRoot === root ? boardETag : '';
+  const response = await apiRevalidated(root + '/board', cached); if (generation !== loadGeneration) return false;
+  boardETag = response.etag; boardETagRoot = root;
+  if (!response.modified) { clearPlanningChangeNotice(); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true; }
+  const next = response.data;
   uiState = captureUIState(); board = mergeBoardData(board, next); workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); observationDigest = ''; observationReadAt = 0;
   if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); notice(`Up to date · workspace revision ${board.workspace.revision}`); return true;
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }

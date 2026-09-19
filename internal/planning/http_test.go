@@ -424,6 +424,62 @@ func TestHTTPAttachments(t *testing.T) {
 	}
 }
 
+func TestBoardConditionalRead(t *testing.T) {
+	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, _ := fluxauth.NewFixture(manager)
+	loginResponse := httptest.NewRecorder()
+	login.ServeHTTP(loginResponse, httptest.NewRequest("GET", "http://localhost/auth/login", nil))
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("no session")
+	}
+	repo := &fakeRepository{}
+	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	browser := manager.Gate(h.Handler(false))
+	read := func(etag string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "http://localhost/api/v2/workspaces/w/board", nil)
+		r.AddCookie(cookies[0])
+		if etag != "" {
+			r.Header.Set("If-None-Match", etag)
+		}
+		w := httptest.NewRecorder()
+		browser.ServeHTTP(w, r)
+		return w
+	}
+	first := read("")
+	etag := first.Header().Get("ETag")
+	if first.Code != http.StatusOK || etag == "" || first.Body.Len() == 0 {
+		t.Fatalf("first read: %d etag %q", first.Code, etag)
+	}
+	repeat := read(etag)
+	if repeat.Code != http.StatusNotModified || repeat.Body.Len() != 0 {
+		t.Fatalf("unchanged board resent: %d body %d", repeat.Code, repeat.Body.Len())
+	}
+	if repeat.Header().Get("ETag") != etag {
+		t.Fatal("revalidation dropped the validator")
+	}
+	if stale := read(`"stale"`); stale.Code != http.StatusOK || stale.Body.Len() == 0 {
+		t.Fatalf("stale validator not refilled: %d", stale.Code)
+	}
+}
+
+func TestETagMatches(t *testing.T) {
+	const etag = `"abc"`
+	for _, header := range []string{`"abc"`, `W/"abc"`, `"other", "abc"`, ` "abc" `, "*"} {
+		if !etagMatches(header, etag) {
+			t.Fatalf("no match for %q", header)
+		}
+	}
+	for _, header := range []string{"", "  ", `"other"`, `"abc-1"`, `W/"other"`} {
+		if etagMatches(header, etag) {
+			t.Fatalf("unexpected match for %q", header)
+		}
+	}
+}
+
 func TestTimeoutFor(t *testing.T) {
 	attachment := "/api/v2/workspaces/w/items/i/attachments"
 	for _, path := range []string{attachment, attachment + "/7"} {
