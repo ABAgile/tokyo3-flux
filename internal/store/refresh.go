@@ -11,6 +11,11 @@ import (
 	"github.com/abagile/tokyo3-base/guard"
 )
 
+// refreshBatchSize bounds one tick's provider work. The job channel is filled
+// before any worker starts, so its buffer must hold a whole batch; both uses
+// share this constant so the producer can never block on itself.
+const refreshBatchSize = 16
+
 // SetRefreshInterval is startup-only. Zero keeps the service manual-only.
 func (s *Store) SetRefreshInterval(interval time.Duration) { s.refreshInterval = interval }
 
@@ -39,13 +44,13 @@ func (s *Store) refreshBatch(ctx context.Context, log *slog.Logger) error {
 	scan, cancel := context.WithTimeout(ctx, 5*time.Second)
 	rows, err := s.pool.Query(scan, `SELECT e.workspace_id,e.id FROM external_links e JOIN workspace_integrations i USING(workspace_id)
  WHERE i.instance=$1 AND (e.next_refresh IS NULL OR e.next_refresh<=clock_timestamp()) AND (e.dirty OR e.poll_after<=clock_timestamp())
- ORDER BY e.last_attempt NULLS FIRST,e.workspace_id,e.id LIMIT 16`, s.connector.Instance())
+ ORDER BY e.last_attempt NULLS FIRST,e.workspace_id,e.id LIMIT $2`, s.connector.Instance(), refreshBatchSize)
 	if err != nil {
 		cancel()
 		return err
 	}
 	type task struct{ workspace, link string }
-	jobs := make(chan task, 16)
+	jobs := make(chan task, refreshBatchSize)
 	for rows.Next() {
 		var v task
 		if err = rows.Scan(&v.workspace, &v.link); err != nil {
