@@ -33,3 +33,33 @@ func TestNativeAssets(t *testing.T) {
 		t.Fatal("write accepted")
 	}
 }
+
+func TestAssetRevalidation(t *testing.T) {
+	h := Handler()
+	for _, path := range []string{"/", "/app.js", "/styles.css", "/modules/api.js"} {
+		first := httptest.NewRecorder()
+		h.ServeHTTP(first, httptest.NewRequest("GET", path, nil))
+		etag := first.Header().Get("ETag")
+		if first.Code != 200 || etag == "" {
+			t.Fatalf("%s: %d etag %q", path, first.Code, etag)
+		}
+		if control := first.Header().Get("Cache-Control"); control != "no-cache" {
+			t.Fatalf("%s: cache control %q", path, control)
+		}
+		request := httptest.NewRequest("GET", path, nil)
+		request.Header.Set("If-None-Match", etag)
+		repeat := httptest.NewRecorder()
+		h.ServeHTTP(repeat, request)
+		if repeat.Code != 304 || repeat.Body.Len() != 0 {
+			t.Fatalf("%s resent: %d body %d", path, repeat.Code, repeat.Body.Len())
+		}
+	}
+	// Distinct assets must not share a validator.
+	shell := httptest.NewRecorder()
+	h.ServeHTTP(shell, httptest.NewRequest("GET", "/", nil))
+	styles := httptest.NewRecorder()
+	h.ServeHTTP(styles, httptest.NewRequest("GET", "/styles.css", nil))
+	if shell.Header().Get("ETag") == styles.Header().Get("ETag") {
+		t.Fatal("assets share an ETag")
+	}
+}
