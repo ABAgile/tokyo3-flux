@@ -306,6 +306,10 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 		w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
+		// Session cookies must never be offered over cleartext. Browsers ignore
+		// this header on plaintext responses, so it is safe behind a TLS
+		// terminator and on the loopback demo listener alike.
+		w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		routes.ServeHTTP(w, r)
