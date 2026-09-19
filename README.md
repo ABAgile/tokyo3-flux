@@ -379,7 +379,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. The workspace collectio
 | Method/path | Purpose |
 | --- | --- |
 | `POST /api/v2/workspaces` | Browser-only workspace creation; requires session CSRF and idempotency headers, and makes the authenticated subject the initial admin. |
-| `GET /projects`, `GET /board` | Project list and planning board. The board carries the live working set; archived items appear only while closed sprint scope or a dependency edge still references them. |
+| `GET /projects`, `GET /board` | Project list and planning board. The board carries the live working set; archived items appear only while closed sprint scope or a dependency edge still references them. Each item reports `attachment_count` rather than attachment metadata. |
 | `GET /revision` | Cheap freshness probe returning workspace revision, caller role, and a GitLab observation digest, so clients poll without reading the board. |
 | `GET /archive?offset=N&limit=N` | One page of archived work items, up to 50 per request, ordered with the board. |
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
@@ -388,6 +388,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. The workspace collectio
 | `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
 | `GET /items/{item}/comments` | Read the item’s flat append-only comments, including author and creation time. |
 | `POST /items/{item}/comments` | Add one comment as the authenticated planning member; does not require or change planning revision. |
+| `GET /items/{item}/attachments` | List one card’s attachment metadata after workspace membership authorization; board reads carry only the count. |
 | `GET /items/{item}/attachments/{attachment}` | Download one attachment after workspace membership authorization. |
 | `POST /items/{item}/attachments` | Upload one multipart `file` as a member/admin; requires CSRF and idempotency headers. |
 | `DELETE /items/{item}/attachments/{attachment}` | Remove attachment metadata and its blob as a member/admin. |

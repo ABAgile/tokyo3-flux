@@ -637,63 +637,24 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
  ARRAY(SELECT p.project_id FROM item_projects p WHERE p.workspace_id=i.workspace_id AND p.item_id=i.id ORDER BY (p.project_id=i.project_id) DESC, p.project_id),
  ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
  ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
- ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id)
+ ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id),
+ (SELECT count(*) FROM item_attachments a WHERE a.workspace_id=i.workspace_id AND a.item_id=i.id)
  FROM work_items i WHERE i.workspace_id=$1 ORDER BY rank,id LIMIT $2`, wid, p.MaxWorkspaceItems+1)
 	if err != nil {
 		return b, err
 	}
 	for rows.Next() {
 		var v p.Item
-		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
+		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs, &v.AttachmentCount); err != nil {
 			rows.Close()
 			return b, err
 		}
 		p.NormalizeItemProjects(&v)
-		v.Attachments = []p.Attachment{}
+		// Attachment metadata is read per item on demand. A board carries only
+		// the count, so a workspace near the ten-thousand attachment ceiling no
+		// longer adds that many rows to every board read.
+		v.Attachments = nil
 		b.Items = append(b.Items, v)
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return b, err
-	}
-	itemIndexes := make(map[string]int, len(b.Items))
-	for index := range b.Items {
-		itemIndexes[b.Items[index].ID] = index
-	}
-	rows, err = tx.Query(ctx, `SELECT id,item_id,storage_key,name,content_type,size,digest,uploader,created_at
- FROM item_attachments WHERE workspace_id=$1 ORDER BY item_id,id LIMIT $2`, wid,
-		p.MaxWorkspaceAttachments+1)
-	if err != nil {
-		return b, err
-	}
-	attachmentCount := 0
-	for rows.Next() {
-		attachmentCount++
-		if attachmentCount > p.MaxWorkspaceAttachments {
-			rows.Close()
-			return b, errors.New("workspace exceeds supported attachment limit")
-		}
-		var attachment p.Attachment
-		if err = rows.Scan(&attachment.ID, &attachment.ItemID, &attachment.StorageKey,
-			&attachment.Name, &attachment.ContentType, &attachment.Size, &attachment.Digest,
-			&attachment.Uploader, &attachment.CreatedAt); err != nil {
-			rows.Close()
-			return b, err
-		}
-		if !validAttachmentStorageKey(attachment.StorageKey) || strings.TrimSpace(attachment.Uploader) == "" || validateAttachmentMetadata(attachment) != nil {
-			rows.Close()
-			return b, errors.New("workspace contains invalid attachment metadata")
-		}
-		index, ok := itemIndexes[attachment.ItemID]
-		if !ok {
-			rows.Close()
-			return b, errors.New("attachment references an unknown workspace item")
-		}
-		if len(b.Items[index].Attachments) >= p.MaxItemAttachments {
-			rows.Close()
-			return b, errors.New("workspace exceeds supported item attachment limit")
-		}
-		b.Items[index].Attachments = append(b.Items[index].Attachments, attachment)
 	}
 	rows.Close()
 	if err = rows.Err(); err != nil {

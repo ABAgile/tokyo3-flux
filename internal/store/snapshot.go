@@ -16,6 +16,7 @@ func planningSnapshot(board p.Board) p.Board {
 	board.Items = append([]p.Item(nil), board.Items...)
 	for index := range board.Items {
 		board.Items[index].Attachments = nil
+		board.Items[index].AttachmentCount = 0
 		board.Items[index].Description = ""
 	}
 	return board

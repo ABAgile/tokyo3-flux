@@ -232,6 +232,34 @@ function cardLinkView(link, focusKey) {
 function attachmentHref(item, attachment, base = root) {
  return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
 }
+// A board read reports how many attachments a card has, not what they are, so
+// metadata is fetched per card the first time it is actually shown. An item
+// whose list has been loaded keeps it on the board item itself; merging a
+// fresh board drops that field and the next viewer reloads it.
+const attachmentLoads = new Map(), attachmentListeners = new Set();
+function attachmentsLoaded(item) { return Array.isArray(item?.attachments); }
+function attachmentCount(item) { return attachmentsLoaded(item) ? item.attachments.length : Number.isSafeInteger(item?.attachment_count) && item.attachment_count > 0 ? item.attachment_count : 0; }
+function setItemAttachments(item, attachments) {
+ const target = board?.items.find(value => value.id === item.id) || item;
+ target.attachments = attachments; target.attachment_count = attachments.length;
+ if (target !== item) { item.attachments = attachments; item.attachment_count = attachments.length; }
+ attachmentListeners.forEach(listener => listener(item.id));
+}
+function ensureAttachments(item) {
+ if (!item || !root || attachmentsLoaded(item)) return attachmentLoads.get(item?.id);
+ if (attachmentLoads.has(item.id)) return attachmentLoads.get(item.id);
+ const currentBoard = board, currentRoot = root, id = item.id;
+ const pending = (async () => {
+  try {
+   const data = await api(`${currentRoot}/items/${encodeURIComponent(id)}/attachments`);
+   if (board !== currentBoard || root !== currentRoot) return;
+   if (!validAttachments(data) || data.some(attachment => attachment.item_id !== id)) throw new Error('Attachment list is invalid. Refresh to retry.');
+   setItemAttachments(item, data); renderContent();
+  } catch (error) { if (board === currentBoard && root === currentRoot) notice(error.message, true); }
+  finally { attachmentLoads.delete(id); }
+ })();
+ attachmentLoads.set(id, pending); return pending;
+}
 function attachmentFileMark(attachment) {
  const mark = el('span', attachmentKind(attachment), 'attachment-file-mark'); mark.setAttribute('aria-hidden', 'true'); return mark;
 }
@@ -390,7 +418,7 @@ function filteredItems() {
 }
 function cardRenderSignature(item, links) {
  const linkIdentity = links.map(link => ({id:link.id, project:link.project, kind:link.kind, number:link.number, items:link.items}));
- const itemView = {id:item.id, title:item.title, column_id:item.column_id, project_id:item.project_id, project_ids:itemProjectIDs(item), assignee:item.assignee, labels:item.labels, sprint_ids:item.sprint_ids, archived:item.archived, attachments:item.attachments || []};
+ const itemView = {id:item.id, title:item.title, column_id:item.column_id, project_id:item.project_id, project_ids:itemProjectIDs(item), assignee:item.assignee, labels:item.labels, sprint_ids:item.sprint_ids, archived:item.archived, attachments:attachmentsLoaded(item) ? item.attachments : null, attachment_count:attachmentCount(item)};
  return JSON.stringify({item:itemView, links:linkIdentity, projects:itemProjectIDs(item).map(projectName), assignee:memberInfo(item.assignee), sprints:item.sprint_ids.map(id => board.sprints.find(s => s.id === id)?.name || id), labels:item.labels.map(labelInfo), blocked:blocked(item)});
 }
 function observationOutcomeText(link) {
@@ -452,11 +480,16 @@ function card(item, peers) {
   const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); linkLabel.dataset.renderSignature = `links:${links.length}`; const details = button('View observations', () => showLinks(item), 'card-link-details'); details.dataset.renderSignature = 'observations-action'; details.dataset.focusKey = `item:${item.id}:observations`; details.setAttribute('aria-label', `View GitLab details · ${links.length}`); details.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, details);
   const linkList = el('div', undefined, 'card-links'); linkList.setAttribute('aria-label', 'GitLab links'); links.forEach(link => { if (link.kind === 'mr') linkList.append(cardObservationIcon(link, `item:${item.id}:observation:${link.id}`)); linkList.append(cardLinkView(link, `item:${item.id}:link:${link.id}`)); }); linkSection.append(linkHead, linkList); c.append(linkSection);
  }
- const attachments = item.attachments || [];
- if (attachments.length) {
-  const attachmentList = el('details', undefined, 'card-attachments'); attachmentList.dataset.stateKey = `item:${item.id}:attachments`; const count = `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`; attachmentList.setAttribute('aria-label', count);
-  const attachmentHead = el('summary', undefined, 'card-attachments-head'); const attachmentToggle = el('span', undefined, 'card-attachments-toggle'); attachmentToggle.setAttribute('aria-hidden', 'true'); attachmentHead.append(attachmentPaperclip(), el('span', 'Attachments', 'card-attachments-label'), el('span', String(attachments.length), 'card-attachments-count'), attachmentToggle);
-  const attachmentOptions = el('div', undefined, 'card-attachment-list'); attachments.forEach(attachment => { const link = attachmentTileLink(item, attachment); link.classList.add('card-attachment-option'); attachmentOptions.append(link); }); attachmentList.append(attachmentHead, attachmentOptions); c.append(attachmentList);
+ const total = attachmentCount(item);
+ if (total) {
+  const attachmentList = el('details', undefined, 'card-attachments'); attachmentList.dataset.stateKey = `item:${item.id}:attachments`; const count = `${total} attachment${total === 1 ? '' : 's'}`; attachmentList.setAttribute('aria-label', count);
+  const attachmentHead = el('summary', undefined, 'card-attachments-head'); const attachmentToggle = el('span', undefined, 'card-attachments-toggle'); attachmentToggle.setAttribute('aria-hidden', 'true'); attachmentHead.append(attachmentPaperclip(), el('span', 'Attachments', 'card-attachments-label'), el('span', String(total), 'card-attachments-count'), attachmentToggle);
+  const attachmentOptions = el('div', undefined, 'card-attachment-list');
+  // Expanding the summary is what pays for the metadata read.
+  if (attachmentsLoaded(item)) item.attachments.forEach(attachment => { const link = attachmentTileLink(item, attachment); link.classList.add('card-attachment-option'); attachmentOptions.append(link); });
+  else attachmentOptions.append(el('p', 'Loading attachments…', 'empty'));
+  attachmentList.addEventListener('toggle', () => { if (attachmentList.open) void ensureAttachments(item); });
+  attachmentList.append(attachmentHead, attachmentOptions); c.append(attachmentList);
  }
  c.dataset.renderSignature = cardRenderSignature(item, links);
  return c;
@@ -642,7 +675,7 @@ function listRow(item) {
  const project = listCell('Project', 'list-cell-project'); const projectValue = el('span', undefined, 'list-row-project'); projectValue.append(...projectBadges(item)); project.append(projectValue);
  const status = listCell('Links / Status', 'list-cell-status'); const statusContent = el('div', undefined, 'list-row-status-content'); const state = el('div', undefined, 'list-row-status-badges'); if (blocked(item)) state.append(el('span', 'Blocked', 'badge warning')); if (item.archived) state.append(el('span', 'Archived', 'badge')); if (state.childElementCount) statusContent.append(state);
  const links = board.links.filter(link => link.items.includes(item.id)); if (links.length) { const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links'); linkIndicator.setAttribute('aria-label', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`); const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); const observationLink = button('View observations', () => showLinks(item), 'card-link-details list-row-observation-link'); observationLink.dataset.focusKey = `item:${item.id}:list-observations`; observationLink.setAttribute('aria-label', `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`); observationLink.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, observationLink); linkIndicator.append(linkHead); links.forEach(link => { const line = el('span', undefined, 'list-row-link-line'); if (link.kind === 'mr') line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`)); line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`)); linkIndicator.append(line); }); statusContent.append(linkIndicator); }
- const attachments = item.attachments || []; if (attachments.length) { const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments'); attachmentIndicator.setAttribute('aria-label', `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`); attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachments.length))); statusContent.append(attachmentIndicator); }
+ const attachmentTotal = attachmentCount(item); if (attachmentTotal) { const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments'); attachmentIndicator.setAttribute('aria-label', `${attachmentTotal} attachment${attachmentTotal === 1 ? '' : 's'}`); attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachmentTotal))); statusContent.append(attachmentIndicator); }
  if (statusContent.childElementCount) status.append(statusContent); else status.append(el('span', '—', 'list-cell-empty'));
  const assignee = listCell('Assignee', 'list-cell-assignee'); assignee.append(assigneeView(item.assignee));
  const labels = listCell('Labels', 'list-cell-labels'); item.labels.forEach(label => labels.append(labelBadge(label))); if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
@@ -1041,8 +1074,12 @@ function renderItemAttachments(fields, item, readOnly) {
  const status = el('p', '', 'help'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
  const list = el('div', undefined, 'attachment-grid'); let attachmentBusy = false;
  const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; status.setAttribute('role', error ? 'alert' : 'status'); };
+ const onAttachmentsLoaded = id => { if (id !== item.id) return; if (!section.isConnected) { attachmentListeners.delete(onAttachmentsLoaded); return; } renderList(); };
+ attachmentListeners.add(onAttachmentsLoaded);
  function renderList() {
-  const attachments = Array.isArray(item.attachments) ? item.attachments : []; count.textContent = String(attachments.length);
+  count.textContent = String(attachmentCount(item));
+  if (!attachmentsLoaded(item)) { list.replaceChildren(el('p', 'Loading attachments…', 'empty')); void ensureAttachments(item); return; }
+  const attachments = item.attachments;
   if (!attachments.length) { list.replaceChildren(el('p', 'No attachments yet.', 'empty')); return; }
   const next = attachments.map(attachment => attachmentTile(item, attachment, currentRoot, `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`, readOnly ? undefined : () => removeAttachment(attachment)));
   reconcileKeyedChildren(list, next, node => `attachment:${node.dataset.attachmentId}`);
@@ -1052,7 +1089,7 @@ function renderItemAttachments(fields, item, readOnly) {
   try {
    await api(attachmentHref(item, attachment, currentRoot), {method:'DELETE', headers:{'X-CSRF-Token':session.csrf}});
    if (board !== currentBoard || root !== currentRoot || !section.isConnected) return;
-   item.attachments = (item.attachments || []).filter(value => value.id !== attachment.id); const current = board.items.find(value => value.id === item.id); if (current) current.attachments = item.attachments; renderList(); renderContent(); setStatus(item.attachments.length ? 'Attachment removed.' : 'No attachments yet.');
+   setItemAttachments(item, (item.attachments || []).filter(value => value.id !== attachment.id)); renderList(); renderContent(); setStatus(item.attachments.length ? 'Attachment removed.' : 'No attachments yet.');
   } catch (error) { if (section.isConnected) setStatus(error.message, true); }
   finally { attachmentBusy = false; if (section.isConnected) renderControls(); }
  }
@@ -1062,7 +1099,7 @@ function renderItemAttachments(fields, item, readOnly) {
   const add = button('Add attachment', () => input.click(), 'attachment-add'); add.dataset.write = 'true'; add.setAttribute('aria-controls', input.id); add.title = 'Choose a file to attach'; upload.append(add, hint, input); heading.append(headingTitle, upload);
   async function uploadFile(file) {
    add.focus(); if (attachmentBusy || !writable()) return false;
-   if ((item.attachments || []).length >= 100) { setStatus('This card already has the maximum of 100 attachments.', true); return false; }
+   if (attachmentCount(item) >= 100) { setStatus('This card already has the maximum of 100 attachments.', true); return false; }
    if (!file || typeof file.name !== 'string' || !file.name || !Number.isFinite(file.size) || file.size < 0) { setStatus('Choose a file first.', true); return false; }
    if (file.size > 20 * 1024 * 1024) { setStatus('Attachments must be 20 MiB or smaller.', true); return false; }
    attachmentBusy = true; add.disabled = true; setStatus(`Uploading ${file.name}…`); let uploaded = false;
@@ -1071,7 +1108,11 @@ function renderItemAttachments(fields, item, readOnly) {
     const data = await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/attachments', {method:'POST', headers:{'X-CSRF-Token':session.csrf,'Idempotency-Key':requestKey()}, body:form});
     if (!validAttachments([data]) || data.item_id !== item.id) throw new Error('Attachment response is invalid. Refresh to retry.');
     if (board !== currentBoard || root !== currentRoot || !section.isConnected) return false;
-    item.attachments = [...(item.attachments || []).filter(value => value.id !== data.id), data]; const current = board.items.find(value => value.id === item.id); if (current) current.attachments = item.attachments; renderList(); renderContent(); setStatus('Attachment uploaded.'); uploaded = true;
+    // Without the current list there is nothing to append to, so the count is
+    // advanced and the list reloaded rather than invented from one response.
+    if (attachmentsLoaded(item)) setItemAttachments(item, [...item.attachments.filter(value => value.id !== data.id), data]);
+    else { item.attachment_count = attachmentCount(item) + 1; void ensureAttachments(item); }
+    renderList(); renderContent(); setStatus('Attachment uploaded.'); uploaded = true;
    } catch (error) { if (section.isConnected) setStatus(error.message, true); }
    finally { attachmentBusy = false; if (section.isConnected) { add.disabled = !writable(); renderControls(); if (!add.disabled) add.focus(); } }
    return uploaded;

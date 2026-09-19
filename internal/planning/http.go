@@ -67,6 +67,7 @@ type CommentRepository interface {
 }
 
 type AttachmentRepository interface {
+	Attachments(context.Context, string, string, string) ([]Attachment, error)
 	Attachment(context.Context, string, string, string, int64) (Attachment, error)
 	AddAttachment(context.Context, string, string, string, string, string, Attachment) (Attachment, error)
 	RemoveAttachment(context.Context, string, string, string, int64) (Attachment, error)
@@ -184,6 +185,18 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 	root := "/api/v2/workspaces/{workspace}"
 	commentsRoot := root + "/items/{item}/comments"
 	attachmentsRoot := root + "/items/{item}/attachments"
+	mux.HandleFunc("GET "+attachmentsRoot, func(w http.ResponseWriter, r *http.Request) {
+		itemID := r.PathValue("item")
+		if !validItemPathID(itemID) {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := h.repo.Attachments(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID)
+		for i := range v {
+			v[i].StorageKey = ""
+		}
+		h.result(w, r, v, err)
+	})
 	mux.HandleFunc("GET "+attachmentsRoot+"/{attachment}", func(w http.ResponseWriter, r *http.Request) {
 		h.downloadAttachment(w, r, machine)
 	})

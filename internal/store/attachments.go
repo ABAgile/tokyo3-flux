@@ -110,6 +110,57 @@ func (s *Store) Attachment(ctx context.Context, wid, subject, itemID string, id 
 	return attachment, nil
 }
 
+// Attachments lists one card's attachment metadata after checking workspace
+// membership. Board reads carry only a count, so this is the read that fills
+// a card's attachment list, and it rejects rows whose stored metadata would
+// not survive a download check rather than serving them.
+func (s *Store) Attachments(ctx context.Context, wid, subject, itemID string) ([]p.Attachment, error) {
+	if !validAttachmentItemID(itemID) {
+		return nil, p.ErrInvalid
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = role(ctx, tx, wid, subject); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, "SELECT "+attachmentColumns+
+		" FROM item_attachments WHERE workspace_id=$1 AND item_id=$2 ORDER BY id LIMIT $3",
+		wid, itemID, p.MaxItemAttachments+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []p.Attachment{}
+	for rows.Next() {
+		var attachment p.Attachment
+		if err = scanAttachment(rows, &attachment); err != nil {
+			return nil, err
+		}
+		if !validAttachmentStorageKey(attachment.StorageKey) || strings.TrimSpace(attachment.Uploader) == "" ||
+			validateAttachmentMetadata(attachment) != nil {
+			return nil, errors.New("card contains invalid attachment metadata")
+		}
+		if len(out) >= p.MaxItemAttachments {
+			return nil, errors.New("card exceeds supported attachment limit")
+		}
+		out = append(out, attachment)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AddAttachment records metadata after the blob has been uploaded. It does
 // not change the planning revision; attachment lifecycle is audited separately
 // from revisioned card state. The idempotency key makes retried multipart

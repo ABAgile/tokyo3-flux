@@ -78,6 +78,7 @@ func attachArchivedAttachments(ctx context.Context, s *Store, wid string, ids []
 			continue
 		}
 		items[index].Attachments = append(items[index].Attachments, attachment)
+		items[index].AttachmentCount = len(items[index].Attachments)
 	}
 	return rows.Err()
 }

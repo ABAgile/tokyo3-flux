@@ -109,6 +109,10 @@ type Item struct {
 	Labels       []string     `json:"labels"`
 	Dependencies []string     `json:"dependencies"`
 	Attachments  []Attachment `json:"attachments,omitempty"`
+	// AttachmentCount lets a board read describe attachment presence without
+	// carrying every attachment's metadata. It is derived storage state, never
+	// accepted from a client and never part of a planning snapshot.
+	AttachmentCount int `json:"attachment_count"`
 }
 type Attachment struct {
 	ID          int64     `json:"id"`
@@ -383,6 +387,7 @@ func Apply(b *Board, c Command) error {
 		item.Archived = false
 		item.Rank = len(b.Items)
 		item.Attachments = []Attachment{}
+		item.AttachmentCount = 0
 		NormalizeItemProjects(&item)
 		b.Items = append(b.Items, item)
 	case "item.update":
@@ -404,6 +409,7 @@ func Apply(b *Board, c Command) error {
 		item.Revision = old.Revision + 1
 		item.Archived = old.Archived
 		item.Attachments = old.Attachments
+		item.AttachmentCount = old.AttachmentCount
 		if old.Archived {
 			return invalid("restore an archived item before editing")
 		}

@@ -88,6 +88,13 @@ func (f *fakeRepository) AddComment(_ context.Context, _, subject, item, _, body
 	f.subject = subject
 	return Comment{ID: 2, ItemID: item, Author: subject, Body: body}, f.err
 }
+func (f *fakeRepository) Attachments(_ context.Context, _, subject, item string) ([]Attachment, error) {
+	f.subject = subject
+	if f.attachment.ID == 0 || f.attachment.ItemID != item {
+		return []Attachment{}, f.err
+	}
+	return []Attachment{f.attachment}, f.err
+}
 func (f *fakeRepository) Attachment(_ context.Context, _, subject, item string, id int64) (Attachment, error) {
 	f.subject = subject
 	if f.attachment.ID != id || f.attachment.ItemID != item {
@@ -491,5 +498,52 @@ func TestTimeoutFor(t *testing.T) {
 		if timeoutFor(path) != jsonRequestTimeout {
 			t.Fatalf("%s did not get the JSON deadline", path)
 		}
+	}
+}
+
+// Board reads report attachment presence as a count; metadata is a per-card read.
+func TestItemAttachmentListing(t *testing.T) {
+	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, _ := fluxauth.NewFixture(manager)
+	loginResponse := httptest.NewRecorder()
+	login.ServeHTTP(loginResponse, httptest.NewRequest("GET", "http://localhost/auth/login", nil))
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("no session")
+	}
+	repo := &fakeRepository{attachment: Attachment{
+		ID: 1, ItemID: "a", Name: "notes.txt", ContentType: "text/plain", Size: 3,
+		Digest: "sha256:" + strings.Repeat("0", 64), Uploader: "u", StorageKey: "secret-key",
+	}}
+	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	browser := manager.Gate(h.Handler(false))
+	root := "http://localhost/api/v2/workspaces/w"
+
+	list := httptest.NewRequest("GET", root+"/items/a/attachments", nil)
+	list.AddCookie(cookies[0])
+	listResponse := httptest.NewRecorder()
+	browser.ServeHTTP(listResponse, list)
+	if listResponse.Code != 200 {
+		t.Fatalf("list status %d: %s", listResponse.Code, listResponse.Body.String())
+	}
+	var listed []Attachment
+	if err = json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != 1 {
+		t.Fatalf("unexpected listing: %s", listResponse.Body.String())
+	}
+	if strings.Contains(listResponse.Body.String(), "secret-key") {
+		t.Fatal("storage key exposed to the browser")
+	}
+	blank := httptest.NewRequest("GET", root+"/items/%20/attachments", nil)
+	blank.AddCookie(cookies[0])
+	blankResponse := httptest.NewRecorder()
+	browser.ServeHTTP(blankResponse, blank)
+	if blankResponse.Code != 200 && blankResponse.Code != 400 {
+		t.Fatalf("unexpected status for a padded item id: %d", blankResponse.Code)
 	}
 }
