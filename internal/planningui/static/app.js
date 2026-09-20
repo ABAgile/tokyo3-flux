@@ -1,5 +1,5 @@
 // Flux planning shell. Loaded as an ES module, so strict mode is implicit.
-import {$, el, button, options, svgNode, syncAttributes, field} from './modules/dom.js';
+import {$, el, button, options, svgNode, syncAttributes, field, uid, noAutofill} from './modules/dom.js';
 import {api, apiRevalidated, apiUpload, requestKey} from './modules/api.js';
 // Board reads are revalidated against the copy already in memory, so a refresh
 // that finds nothing new transfers no payload. The ETag is scoped to the root
@@ -7,6 +7,8 @@ import {api, apiRevalidated, apiUpload, requestKey} from './modules/api.js';
 let boardETag = '', boardETagRoot = '';
 import {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, workspaceLabel, workspaceHistoryLabel, columnWIPLabel} from './modules/format.js';
 import {renderMarkdown, markdownEditor} from './modules/markdown.js';
+import {contentRoot, pageStack, panel, sectionHead, panelHead, helpText, statusLine, setStatusText, errorLine, setErrorText, emptyState, metricList,
+ filterBar, filterSelect, filterSearch, filterChipRow, filterSlot, maintenanceList, maintenanceRow} from './modules/layout.js';
 
 let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
 let workspaceGate = 'loading', workspaceCreating = false, workspaceCreateKey = '', workspaceCreateName = '', membershipPoll = false;
@@ -60,6 +62,36 @@ function gitLabWritable() { return writable() && !!board.connector_instance && b
 function canComment() { return board && (board.role === 'member' || board.role === 'admin') && !busy && !loading; }
 function writeButton(text, fn, className) { const b = button(text, fn, className); b.disabled = !writable() || integrationFormOpen; return b; }
 function adminButton(text, fn, className) { const b = button(text, fn, className); b.dataset.adminWrite = 'true'; b.disabled = !adminWritable() || integrationFormOpen; return b; }
+// `#content` has exactly two mounts: the persistent planning frame — project
+// lens, sprint summaries, the planning filter slot and the board/list body — and
+// `#page-root`, where every other view renders one page root. Keeping the frame
+// attached lets the summaries and filters hold their state across renders.
+function planningHost() { mountPage(false, ''); return $('planning-body'); }
+// `keepView` names the page root that may survive this render, so a view that
+// patches its own DOM (Sprints) is not rebuilt from scratch on every pass.
+function pageHost(keepView = '') { mountPage(true, keepView); return $('page-root'); }
+function pageRoot(contentView) { return $('page-root').querySelector(`:scope > [data-content-view="${contentView}"]`); }
+function mountPage(showPageRoot, keepView) {
+ const host = $('page-root');
+ const keep = keepView ? pageRoot(keepView) : null;
+ const discarded = [...host.children].filter(node => node !== keep);
+ // The planning filter bar is relocated, never duplicated, so it must be moved
+ // home before the page root hosting it is discarded.
+ if (discarded.some(node => node.contains($('planning-filters')))) placeFilters();
+ $('planning-frame').hidden = showPageRoot;
+ host.hidden = !showPageRoot;
+ discarded.forEach(node => node.remove());
+ setContentBusy(contentBusy);
+}
+// The busy flag belongs to the region that is actually rebuilt, so the filter
+// bar and the summaries above it stay available while work loads.
+let contentBusy = true;
+function setContentBusy(state) {
+ contentBusy = !!state;
+ const region = $('planning-frame').hidden ? $('page-root') : $('planning-body');
+ ($('page-root') === region ? $('planning-body') : $('page-root')).removeAttribute('aria-busy');
+ region.setAttribute('aria-busy', String(contentBusy));
+}
 // Transient progress and errors are separate surfaces. `#notice` is a polite
 // status line that is only written when its text actually changes, so screen
 // readers are not re-announced on every render pass. Errors persist in their
@@ -211,7 +243,7 @@ function enterWorkspaceGate(mode, message) {
 }
 async function refreshWorkspaceGate() {
  if (busy || loading || integrationFormOpen) return false;
- const generation = ++loadGeneration; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
+ const generation = ++loadGeneration; loading = true; renderControls(); setContentBusy(true);
  try {
   const next = await loadWorkspaces(''); if (generation !== loadGeneration) return false;
   if (next.length === 1) { loading = false; return await chooseWorkspace(next[0].id); }
@@ -227,7 +259,7 @@ async function refreshWorkspaceGate() {
 async function refresh(preloaded) {
  if (busy || integrationFormOpen) return false;
  if (!root) return refreshWorkspaceGate();
- const generation = ++loadGeneration; let uiState; loading = true; renderControls(); $('content').setAttribute('aria-busy', 'true');
+ const generation = ++loadGeneration; let uiState; loading = true; renderControls(); setContentBusy(true);
  try {
   const selectedID = board?.workspace?.id || $('workspace').value;
   const memberships = await loadWorkspaces(selectedID); if (generation !== loadGeneration) return false;
@@ -248,7 +280,7 @@ async function refresh(preloaded) {
   uiState = captureUIState(); board = mergeBoardData(board, next); searchIndexGeneration++; workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); clearError(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); observationDigest = ''; observationReadAt = 0;
   if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); notice('Up to date.'); return true;
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
- finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
+ finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) setContentBusy(false); } }
 }
 // minimal skips the committed board in the receipt. A batch only needs the
 // board once, so every command but the last asks for a minimal receipt and the
@@ -382,15 +414,15 @@ function openBulkDialog(title, saveText, build, plan, label, undoFor) {
 function bulkAssign() {
  const count = bulkTargets().length;
  openBulkDialog('Assign selected work', 'Assign items', fields => {
-  fields.append(el('p', `Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`, 'help'));
+  fields.append(helpText(`Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`));
   field(fields, 'assignee', 'Assignee', '', 'text', [['', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])]);
  }, data => { const assignee = String(data.get('assignee') || ''); return item => item.assignee === assignee ? undefined : bulkItemUpdate(item, {assignee}); }, 'Assign');
 }
 function bulkSprint() {
  const open = board.sprints.filter(sprint => sprint.state !== 'closed'); const count = bulkTargets().length;
  openBulkDialog('Add selected work to a sprint', 'Add to sprint', fields => {
-  if (!open.length) { fields.append(el('p', 'No open sprint is available. Plan a sprint first.', 'empty')); $('save').hidden = true; return; }
-  fields.append(el('p', `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`, 'help'));
+  if (!open.length) { fields.append(emptyState('No open sprint is available. Plan a sprint first.')); $('save').hidden = true; return; }
+  fields.append(helpText(`Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`));
   field(fields, 'sprint', 'Open sprint', open[0].id, 'text', open.map(sprint => [sprint.id, `${sprint.name} (${sprint.state})`]));
  }, data => {
   const sprint = String(data.get('sprint') || '');
@@ -401,8 +433,8 @@ function bulkSprint() {
 function bulkLabel() {
  const count = bulkTargets().length;
  openBulkDialog('Add a label to selected work', 'Add label', fields => {
-  if (!board.labels.length) { fields.append(el('p', 'No workspace label exists yet. Create one in the Labels view.', 'empty')); $('save').hidden = true; return; }
-  fields.append(el('p', `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`, 'help'));
+  if (!board.labels.length) { fields.append(emptyState('No workspace label exists yet. Create one in the Labels view.')); $('save').hidden = true; return; }
+  fields.append(helpText(`Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`));
   styleLabelOptions(field(fields, 'label', 'Label', board.labels[0].name, 'text', board.labels.map(label => [label.name, label.name])));
  }, data => {
   const label = String(data.get('label') || '');
@@ -675,8 +707,8 @@ function renderProjectSummary() {
  const summary = $('project-summary'); const projectID = singleFilterValue('project'); const project = board.projects.find(value => value.id === projectID);
  if (view !== 'board' || !project || ['all', 'none'].includes(projectID)) { summary.hidden = true; summary.replaceChildren(); return; }
  const items = board.items.filter(item => !item.archived && itemProjectIDs(item).includes(projectID)); const openSprints = board.sprints.filter(sprint => sprint.state !== 'closed' && items.some(item => item.sprint_ids.includes(sprint.id))); const active = openSprints.filter(sprint => sprint.state === 'active'); const completed = items.filter(done).length; const blockedCount = items.filter(blocked).length; const unscheduled = items.filter(item => !done(item) && !item.sprint_ids.length).length;
- const head = el('div', undefined, 'project-summary-head'); const intro = el('div', undefined, 'project-summary-title'); intro.append(el('p', 'PROJECT LENS', 'eyebrow'), el('h2', `${project.name} project`), el('p', 'Current work only · archived history is excluded.', 'help')); head.append(intro);
- const metrics = el('div', undefined, 'metrics project-summary-metrics'); [[items.length, 'In scope'], [completed, 'Done'], [blockedCount, 'Blocked'], [unscheduled, 'Unscheduled']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); metrics.append(metric); });
+ const head = el('div', undefined, 'project-summary-head'); const intro = el('div', undefined, 'project-summary-title'); intro.append(el('p', 'PROJECT LENS', 'eyebrow'), el('h2', `${project.name} project`), helpText('Current work only · archived history is excluded.')); head.append(intro);
+ const metrics = metricList([[items.length, 'In scope'], [completed, 'Done'], [blockedCount, 'Blocked'], [unscheduled, 'Unscheduled']], 'project-summary-metrics');
  const coverage = el('div', undefined, 'project-sprint-coverage'); coverage.append(el('span', 'Active sprint coverage', 'project-sprint-coverage-label')); active.forEach(sprint => { const count = items.filter(item => item.sprint_ids.includes(sprint.id)).length; coverage.append(el('span', `${sprint.name} · ${count}`, 'badge')); }); if (unscheduled) coverage.append(el('span', `Backlog · ${unscheduled}`, 'badge')); if (!active.length && !unscheduled) coverage.append(el('span', 'None', 'muted'));
  summary.hidden = false; summary.setAttribute('aria-label', `${project.name} project summary`); summary.replaceChildren(head, metrics, coverage);
 }
@@ -689,9 +721,8 @@ function findItem(id) { return board?.items.find(value => value.id === id) || ar
 function blocked(item) { return item.dependencies.some(id => { const dep = findItem(id); return dep && !done(dep); }); }
 function scopeItems(sprint) { return sprint.state === 'closed' ? board.items.filter(i => board.closed_scope.some(s => s.sprint_id === sprint.id && s.item_id === i.id)) : board.items.filter(i => !i.archived && i.sprint_ids.includes(sprint.id)); }
 function sprintPanel(s, items = scopeItems(s)) {
- const panel = el('article', undefined, 'sprint-panel'); panel.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); const titleRow = el('div', undefined, 'sprint-title-row'); const titleCopy = el('div', undefined, 'sprint-title-copy'); titleCopy.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name)); titleRow.append(titleCopy); info.append(titleRow, el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
- const metrics = el('div', undefined, 'metrics');
- for (const [n, label] of [[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked']]) { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(n)), el('span', label)); metrics.append(metric); }
+ const card = panel('sprint-panel', 'article'); card.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); const titleRow = el('div', undefined, 'sprint-title-row'); const titleCopy = el('div', undefined, 'sprint-title-copy'); titleCopy.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name)); titleRow.append(titleCopy); info.append(titleRow, el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
+ const metrics = metricList([[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked']]);
  const actions = el('div', undefined, 'actions sprint-actions');
  const expanded = burndownExpanded.has(s.id); const toggle = actionIconButton(expanded ? 'Hide burn down' : 'Show burn down', '▥', () => { if (expanded) burndownExpanded.delete(s.id); else burndownExpanded.add(s.id); render(); [...document.querySelectorAll('[data-burndown-toggle]')].find(element => element.dataset.burndownToggle === s.id)?.focus(); }, 'quiet'); toggle.dataset.burndownToggle = s.id; toggle.setAttribute('aria-expanded', String(expanded)); if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`); toggle.disabled = busy || loading; actions.append(toggle);
  actions.append(actionIconButton('View scope', '◎', () => { view = 'board'; $('scope').value = s.id; render(); persistPlanningURL(); }));
@@ -700,24 +731,24 @@ function sprintPanel(s, items = scopeItems(s)) {
  if (s.state === 'active') actions.append(writeIconButton('Close sprint', '■', () => closeSprint(s)));
  if (s.state === 'closed') actions.append(writeIconButton('Re-open sprint', '↶', () => quick({ kind: 'sprint.reopen', target: s.id })));
  if (s.state === 'closed') info.append(el('small', 'Scope preserved at closure. Card details reflect current work; historical state is retained in audit.', 'muted'));
- panel.append(info, actions, metrics); if (expanded) panel.append(renderBurndown(s)); panel.dataset.renderSignature = JSON.stringify({s, expanded, data:expanded ? burndownData.get(currentBurndownKey(s.id)) || null : null, error:expanded ? burndownErrors.get(currentBurndownKey(s.id)) || null : null}); return panel;
+ card.append(info, actions, metrics); if (expanded) card.append(renderBurndown(s)); card.dataset.renderSignature = JSON.stringify({s, expanded, data:expanded ? burndownData.get(currentBurndownKey(s.id)) || null : null, error:expanded ? burndownErrors.get(currentBurndownKey(s.id)) || null : null}); return card;
 }
 function renderWorkspaceSelection(content) {
- const gate = el('section', undefined, 'workspace-gate'); gate.setAttribute('aria-label', 'Choose a workspace'); gate.append(el('p', 'Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.', 'help'));
+ const gate = panel('workspace-gate'); gate.setAttribute('aria-label', 'Choose a workspace'); gate.append(helpText('Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.'));
  const list = el('div', undefined, 'workspace-choice-list'); list.setAttribute('role', 'list'); workspaces.forEach(workspace => { const choice = button('', () => { void chooseWorkspace(workspace.id); }, 'workspace-choice'); choice.dataset.workspaceChoice = workspace.id; choice.setAttribute('aria-label', `Open ${workspace.name}`); const copy = el('span', undefined, 'workspace-choice-copy'); copy.append(el('strong', workspace.name), el('small', `${workspace.role} access`, 'muted')); choice.append(copy, el('span', 'Open →', 'workspace-choice-action')); list.append(choice); }); gate.append(list);
- const actions = el('div', undefined, 'actions workspace-gate-actions'); actions.append(button('Create a workspace', showWorkspaceCreate, 'primary')); gate.append(actions); content.replaceChildren(gate);
+ const actions = el('div', undefined, 'actions workspace-gate-actions'); actions.append(button('Create a workspace', showWorkspaceCreate, 'primary')); gate.append(actions); content.append(gate);
 }
 function renderWorkspaceCreation(content) {
- const gate = el('section', undefined, 'workspace-gate'); gate.setAttribute('aria-label', 'Create a workspace'); gate.append(el('p', session?.name ? `You are signed in as ${session.name}. Create a workspace to start planning; you will be its initial administrator.` : 'Create a workspace to start planning; your signed-in account will be its initial administrator.', 'help'));
- const form = el('form', undefined, 'workspace-create-form'); const input = field(form, 'name', 'Workspace name'); input.id = 'workspace-name'; input.required = true; input.maxLength = 120; input.autocomplete = 'organization'; input.placeholder = 'e.g. Team Alpha'; const status = el('p', '', 'workspace-create-status'); status.dataset.workspaceCreateStatus = 'true'; status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); form.append(status); const actions = el('div', undefined, 'actions'); const submit = button('Create workspace', undefined, 'primary'); submit.type = 'submit'; actions.append(submit); if (workspaces.length) actions.append(button('Back to workspace selection', showWorkspaceSelection)); form.append(actions); form.addEventListener('submit', createWorkspace); gate.append(form); content.replaceChildren(gate); input.focus();
+ const gate = panel('workspace-gate'); gate.setAttribute('aria-label', 'Create a workspace'); gate.append(helpText(session?.name ? `You are signed in as ${session.name}. Create a workspace to start planning; you will be its initial administrator.` : 'Create a workspace to start planning; your signed-in account will be its initial administrator.'));
+ const form = el('form', undefined, 'workspace-create-form'); const input = field(form, 'name', 'Workspace name'); input.id = 'workspace-name'; input.required = true; input.maxLength = 120; input.autocomplete = 'organization'; input.placeholder = 'e.g. Team Alpha'; const status = statusLine('workspace-create-status'); status.dataset.workspaceCreateStatus = 'true'; form.append(status); const actions = el('div', undefined, 'actions'); const submit = button('Create workspace', undefined, 'primary'); submit.type = 'submit'; actions.append(submit); if (workspaces.length) actions.append(button('Back to workspace selection', showWorkspaceSelection)); form.append(actions); form.addEventListener('submit', createWorkspace); gate.append(form); content.append(gate); input.focus();
 }
 function render() {
  renderControls();
  if (!board) {
-  $('content').setAttribute('aria-busy', String(workspaceGate === 'loading' || loading)); $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('planning-change').hidden = true; $('filter-chips').hidden = true; $('filter-chips').replaceChildren();
-  if (workspaceGate === 'select') { $('title').textContent = 'Choose a workspace'; $('subtitle').textContent = 'Select a shared planning space to continue.'; renderWorkspaceSelection($('content')); }
-  else if (workspaceGate === 'create') { $('title').textContent = workspaces.length ? 'Create a workspace' : 'Create your first workspace'; $('subtitle').textContent = 'Set up a shared planning space for your team.'; renderWorkspaceCreation($('content')); }
-  else { $('title').textContent = 'Loading planning data'; $('subtitle').textContent = 'Checking workspace access…'; $('content').replaceChildren(el('p', 'Loading workspace access…', 'empty')); }
+  setContentBusy(workspaceGate === 'loading' || loading); $('project-summary').hidden = true; $('project-summary').replaceChildren(); $('sprint-summary').replaceChildren(); $('count').textContent = ''; $('planning-change').hidden = true; $('filter-chips').hidden = true; $('filter-chips').replaceChildren();
+  if (workspaceGate === 'select') { $('title').textContent = 'Choose a workspace'; $('subtitle').textContent = 'Select a shared planning space to continue.'; renderWorkspaceSelection(pageHost()); }
+  else if (workspaceGate === 'create') { $('title').textContent = workspaces.length ? 'Create a workspace' : 'Create your first workspace'; $('subtitle').textContent = 'Set up a shared planning space for your team.'; renderWorkspaceCreation(pageHost()); }
+  else { $('title').textContent = 'Loading planning data'; $('subtitle').textContent = 'Checking workspace access…'; pageHost().append(emptyState('Loading workspace access…')); }
   return;
  }
  // The selects choose one value at a time and reset; the chip row below the
@@ -794,7 +825,7 @@ function renderFilterChips() {
 // invalidates any cached chart; label filtering is client-side only.
 function applyFilterChange(name) {
  if (name !== 'label') resetBurndown();
- render(); if (name !== 'label' && !burndownRequests.size) $('content').setAttribute('aria-busy', 'false');
+ render(); if (name !== 'label' && !burndownRequests.size) setContentBusy(false);
  persistPlanningURL();
 }
 function cardRenderSignature(item, links) {
@@ -868,7 +899,7 @@ function card(item, peers) {
   const attachmentOptions = el('div', undefined, 'card-attachment-list');
   // Expanding the summary is what pays for the metadata read.
   if (attachmentsLoaded(item)) item.attachments.forEach(attachment => { const link = attachmentTileLink(item, attachment); link.classList.add('card-attachment-option'); attachmentOptions.append(link); });
-  else attachmentOptions.append(el('p', 'Loading attachments…', 'empty'));
+  else attachmentOptions.append(emptyState('Loading attachments…'));
   attachmentList.addEventListener('toggle', () => { if (attachmentList.open) void ensureAttachments(item); });
   attachmentList.append(attachmentHead, attachmentOptions); c.append(attachmentList);
  }
@@ -927,25 +958,28 @@ function burndownTable(data) {
 function latestBurndownPoint(points, key) { return [...points].reverse().find(point => Number.isFinite(point[key])); }
 function firstBurndownPoint(points, key) { return points.find(point => Number.isFinite(point[key])); }
 function renderBurndown(sprint) {
- const panel = el('section', undefined, 'burndown-panel'); panel.id = `burndown-${sprint.id}`; const headingID = `burndown-heading-${sprint.id}`; panel.setAttribute('aria-labelledby', headingID); const heading = el('div', undefined, 'section-head burndown-head'); const intro = el('div'); const title = el('h3', 'Remaining work'); title.id = headingID; const filterCondition = el('div', undefined, 'burndown-filter-condition'); filterCondition.append(el('p', `Project: ${selectedFilterText('project')}`, 'muted'), el('p', `Assignee: ${selectedFilterText('assignee')}`, 'muted')); intro.append(title, filterCondition); heading.append(intro); const context = el('div', undefined, 'burndown-context'); context.append(heading);
+ const chart = panel('burndown-panel'); chart.id = `burndown-${sprint.id}`; const headingID = `burndown-heading-${sprint.id}`; chart.setAttribute('aria-labelledby', headingID);
+ const filterCondition = el('div', undefined, 'burndown-filter-condition'); filterCondition.append(el('p', `Project: ${selectedFilterText('project')}`, 'muted'), el('p', `Assignee: ${selectedFilterText('assignee')}`, 'muted'));
+ const context = el('div', undefined, 'burndown-context'); context.append(panelHead('Remaining work', {id: headingID, description: filterCondition, className: 'burndown-head'}));
  const key = currentBurndownKey(sprint.id); const data = burndownData.get(key); const error = burndownErrors.get(key);
- if (error) { const retry = button('Retry burn down', () => requestBurndown(sprint.id, true)); retry.disabled = busy || loading; const message = el('p', error, 'error'); message.setAttribute('role', 'alert'); panel.append(context, message, retry); return panel; }
- if (!data) { panel.append(context, el('p', 'Loading native planning history…', 'empty')); requestBurndown(sprint.id); return panel; }
- if (!data.history_available) { panel.append(context, el('p', data.warning, 'empty')); return panel; }
+ if (error) { const retry = button('Retry burn down', () => requestBurndown(sprint.id, true)); retry.disabled = busy || loading; const message = errorLine(error); chart.append(context, message, retry); return chart; }
+ if (!data) { chart.append(context, emptyState('Loading native planning history…')); requestBurndown(sprint.id); return chart; }
+ if (!data.history_available) { chart.append(context, emptyState(data.warning)); return chart; }
  const available = data.points.some(point => Number.isFinite(point.remaining));
- if (!available) { panel.append(context, el('p', data.warning || 'No matching work is available for this sprint and filter.', 'empty')); return panel; }
- const first = firstBurndownPoint(data.points, 'remaining'); const latest = latestBurndownPoint(data.points, 'remaining'); const stats = el('div', undefined, 'metrics burndown-metrics'); [[firstBurndownPoint(data.points, 'scope')?.scope ?? first.remaining, 'Starting scope'], [latest.remaining, 'Remaining'], [latest.scope, 'Ending scope']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); stats.append(metric); }); context.append(stats);
- const note = el('p', data.warning, 'help burndown-note'); context.append(note);
- const figure = el('figure', undefined, 'burndown-figure'); figure.append(burndownSVG(data)); const legend = el('div', undefined, 'burndown-legend'); legend.append(burndownLegendItem('actual', 'Remaining'), burndownLegendItem('ideal', 'Ideal'), burndownLegendItem('scope', 'Scope')); figure.append(legend); const row = el('div', undefined, 'burndown-chart-row'); row.append(context, figure); panel.append(row, burndownTable(data)); return panel;
+ if (!available) { chart.append(context, emptyState(data.warning || 'No matching work is available for this sprint and filter.')); return chart; }
+ const first = firstBurndownPoint(data.points, 'remaining'); const latest = latestBurndownPoint(data.points, 'remaining');
+ context.append(metricList([[firstBurndownPoint(data.points, 'scope')?.scope ?? first.remaining, 'Starting scope'], [latest.remaining, 'Remaining'], [latest.scope, 'Ending scope']], 'burndown-metrics'));
+ const note = helpText(data.warning, 'burndown-note'); context.append(note);
+ const figure = el('figure', undefined, 'burndown-figure'); figure.append(burndownSVG(data)); const legend = el('div', undefined, 'burndown-legend'); legend.append(burndownLegendItem('actual', 'Remaining'), burndownLegendItem('ideal', 'Ideal'), burndownLegendItem('scope', 'Scope')); figure.append(legend); const row = el('div', undefined, 'burndown-chart-row'); row.append(context, figure); chart.append(row, burndownTable(data)); return chart;
 }
 async function requestBurndown(sprintID, force = false) {
  if (!board || !burndownExpanded.has(sprintID) || loading) return;
  const key = currentBurndownKey(sprintID); if (burndownRequests.has(key)) return; if (!force && (burndownData.has(key) || burndownErrors.has(key))) return;
  if (force) { burndownData.delete(key); burndownErrors.delete(key); }
- const generation = burndownGeneration; const currentBoard = board, currentRoot = root; const token = {}; burndownRequests.set(key, token); $('content').setAttribute('aria-busy', 'true');
+ const generation = burndownGeneration; const currentBoard = board, currentRoot = root; const token = {}; burndownRequests.set(key, token); setContentBusy(true);
  try { const query = new URLSearchParams({sprint:sprintID, project:singleFilterValue('project'), assignee:singleFilterValue('assignee')}); const next = await api(currentRoot + '/burndown?' + query); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!next || !Array.isArray(next.points) || !next.sprint) throw new Error('Burn-down data is invalid. Refresh to retry.'); if (next.revision !== currentBoard.workspace.revision) throw new Error('Planning changed while loading. Refresh to review.'); burndownData.set(key, next); burndownErrors.delete(key); }
  catch (e) { if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; burndownErrors.set(key, e.message); }
- finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); if (view === 'board' || view === 'sprints') render(); }
+ finally { if (burndownRequests.get(key) === token) burndownRequests.delete(key); if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return; if (!burndownRequests.size) setContentBusy(false); if (view === 'board' || view === 'sprints') render(); }
 }
 function patchNode(target, next) {
  if (target === next) return target;
@@ -972,7 +1006,7 @@ function renderColumn(col, items) {
  const section = el('section', undefined, 'column'); section.dataset.column = col.id; section.setAttribute('aria-label', col.name);
  const peers = items.filter(item => item.column_id === col.id); const total = board.items.filter(item => !item.archived && item.column_id === col.id).length;
  const head = el('div', undefined, 'column-head'); head.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip, shown:peers.length, total}); head.append(el('h3', col.name), el('small', `${peers.length} shown · ${columnWIPLabel(col, total)}`)); makeDraggable(head, 'list', col.id, col.name);
- dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; section.append(empty); }
+ dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: col.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === col.id) + 1]?.id || '' : col.id}), 'x'); section.append(head); appendCards(section, peers); if (!peers.length) { section.append(emptyState('No work here')); }
  section.dataset.renderSignature = JSON.stringify({id:col.id, name:col.name, category:col.category, wip:col.wip}); return section;
 }
 function cardChildKey(node) {
@@ -1032,14 +1066,14 @@ function patchColumn(target, next, cardPool) {
  reconcileKeyedChildren(target, [...next.children], keyedNodeKey, (current, fresh) => fresh.dataset.item ? patchCard(current, fresh) : patchNode(current, fresh), (key) => key.startsWith('item:') ? cardPool.get(key.slice('item:'.length)) : undefined);
 }
 function renderBoardContent(content, items) {
- const next = el('div', undefined, 'board'); next.dataset.contentView = 'board'; board.columns.forEach(column => next.append(renderColumn(column, items)));
+ const next = contentRoot('div', 'board', 'board'); board.columns.forEach(column => next.append(renderColumn(column, items)));
  const current = content.firstElementChild;
  if (!current || current.dataset.contentView !== 'board') { content.replaceChildren(next); return; }
  const cardPool = new Map([...current.querySelectorAll('.card')].map(node => [node.dataset.item, node]));
  reconcileKeyedChildren(current, [...next.children], node => `column:${node.dataset.column}`, (target, fresh) => patchColumn(target, fresh, cardPool));
 }
 function renderCardListContent(content, items) {
- const next = el('div', undefined, 'list'); next.dataset.contentView = `list:${view}`; appendCards(next, items); if (!items.length) { const empty = el('p', view === 'board' && $('scope').value === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.', 'empty'); empty.dataset.empty = 'true'; next.append(empty); }
+ const next = contentRoot('div', 'list', `list:${view}`); appendCards(next, items); if (!items.length) next.append(emptyState(view === 'board' && $('scope').value === 'backlog' ? 'Backlog is clear. Create work without a sprint to plan what comes next.' : 'No matching work.'));
  const current = content.firstElementChild;
  if (!current || current.dataset.contentView !== next.dataset.contentView) { content.replaceChildren(next); return; }
  reconcileKeyedChildren(current, [...next.children], keyedNodeKey, (target, fresh) => fresh.dataset.item ? patchCard(target, fresh) : patchNode(target, fresh));
@@ -1054,7 +1088,7 @@ function listRow(item) {
  dropZone(row, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
  const title = listCell('Title', 'list-cell-title'); const bulkSelected = bulkSelection.has(item.id);
  if (board.role !== 'viewer' && !item.archived) {
-  const toggle = el('input'); toggle.type = 'checkbox'; toggle.className = 'list-row-select'; toggle.checked = bulkSelected; toggle.disabled = busy || loading;
+  const toggle = el('input'); toggle.id = `bulk-select-${item.id}`; toggle.type = 'checkbox'; toggle.className = 'list-row-select'; toggle.checked = bulkSelected; toggle.disabled = busy || loading;
   toggle.dataset.focusKey = `item:${item.id}:bulk-select`; toggle.setAttribute('aria-label', `Select ${item.title} for bulk actions`);
   toggle.addEventListener('click', event => event.stopPropagation());
   toggle.addEventListener('change', () => { if (toggle.checked) bulkSelection.add(item.id); else bulkSelection.delete(item.id); row.classList.toggle('is-bulk-selected', toggle.checked); refreshBulkBar(); });
@@ -1077,7 +1111,7 @@ function listSection(column, items) {
  const peers = items.filter(item => item.column_id === column.id); const total = board.items.filter(item => !item.archived && item.column_id === column.id).length;
  const head = el('summary', undefined, 'list-section-head'); head.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip, shown:peers.length, total}); const title = el('span', undefined, 'list-section-title'); title.append(el('h3', column.name)); const summary = el('span', `${peers.length} shown · ${columnWIPLabel(column, total)}`, 'list-section-summary'); head.append(title, summary); makeDraggable(head, 'list', column.id, column.name);
  dropZone(section, 'card', id => ({kind: 'item.move', target: id, destination: column.id}), 'end'); dropZone(section, 'list', (id, after) => ({kind: 'column.rank', target: id, before: after ? board.columns[board.columns.findIndex(value => value.id === column.id) + 1]?.id || '' : column.id}), 'x');
- const body = el('div', undefined, 'list-section-body'); body.append(...peers.map(item => listRow(item))); if (!peers.length) { const empty = el('p', 'No work here', 'empty'); empty.dataset.empty = 'true'; body.append(empty); } section.append(head, body); section.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip}); return section;
+ const body = el('div', undefined, 'list-section-body'); body.append(...peers.map(item => listRow(item))); if (!peers.length) body.append(emptyState('No work here')); section.append(head, body); section.dataset.renderSignature = JSON.stringify({id:column.id, name:column.name, category:column.category, wip:column.wip}); return section;
 }
 function patchListSection(target, next) {
  const expanded = target.open; syncAttributes(target, next); const currentHead = target.querySelector(':scope > .list-section-head'); const nextHead = next.querySelector(':scope > .list-section-head'); if (currentHead && nextHead) patchNode(currentHead, nextHead);
@@ -1087,7 +1121,7 @@ function patchListSection(target, next) {
 function renderListPresentationContent(content, items) {
  const current = content.firstElementChild; let layout, sections;
  if (!current || current.dataset.contentView !== 'list:board') {
-  layout = el('div', undefined, 'list-detail-layout'); layout.dataset.contentView = 'list:board'; const list = el('div', undefined, 'planning-list'); list.dataset.contentView = 'planning-list'; sections = el('div', undefined, 'list-sections');
+  layout = contentRoot('div', 'list-detail-layout', 'list:board'); const list = el('div', undefined, 'planning-list'); list.dataset.contentView = 'planning-list'; sections = el('div', undefined, 'list-sections');
   const bar = el('div', undefined, 'bulk-bar'); bar.dataset.bulkBar = 'true'; bar.hidden = true; bar.setAttribute('role', 'group'); bar.setAttribute('aria-label', 'Bulk actions');
   list.append(bar, listTableHeader(), sections); const pane = createDetailPane(); layout.append(list, pane); content.replaceChildren(layout);
  } else { layout = current; sections = layout.querySelector(':scope > .planning-list > .list-sections'); }
@@ -1115,7 +1149,7 @@ function renderSprintRows(list) {
    : query && filtered.length !== board.sprints.length ? `No sprints match “${search}” and the current filters.`
    : query ? `No sprints match “${search}”.`
    : 'No sprints hold work matching the current filters.';
-  const empty = el('p', message, 'empty'); empty.dataset.empty = 'true'; list.append(empty); return;
+  list.append(emptyState(message)); return;
  }
  matches.forEach(sprint => list.append(sprintPanel(sprint, sprintFilterItems(sprint))));
 }
@@ -1160,36 +1194,32 @@ function velocityTable(series) {
 }
 function sprintVelocityPanel() {
  const series = velocitySeries();
- const panel = el('section', undefined, 'velocity-panel'); panel.setAttribute('aria-labelledby', 'velocity-heading');
- const heading = el('div', undefined, 'section-head'); const intro = el('div'); const title = el('h3', 'Delivery trend'); title.id = 'velocity-heading';
- intro.append(title, el('p', `Committed and completed work for the last ${VELOCITY_SPRINTS} closed sprints. Completion reflects each card's current column, not its state at closure.`, 'help'));
- heading.append(intro); panel.append(heading);
+ const trend = panel('velocity-panel'); trend.setAttribute('aria-labelledby', 'velocity-heading');
+ trend.append(panelHead('Delivery trend', {id: 'velocity-heading', description: `Committed and completed work for the last ${VELOCITY_SPRINTS} closed sprints. Completion reflects each card's current column, not its state at closure.`}));
  if (!series.length) {
   const narrowed = board.sprints.some(sprint => sprint.state === 'closed');
-  panel.append(el('p', narrowed ? 'No closed sprint holds work matching the current filters.' : 'No closed sprint yet. Close a sprint to start a delivery trend.', 'empty'));
-  panel.dataset.renderSignature = `velocity:empty:${narrowed}`; return panel;
+  trend.append(emptyState(narrowed ? 'No closed sprint holds work matching the current filters.' : 'No closed sprint yet. Close a sprint to start a delivery trend.'));
+  trend.dataset.renderSignature = `velocity:empty:${narrowed}`; return trend;
  }
  const completed = series.map(entry => entry.completed); const average = completed.reduce((sum, value) => sum + value, 0) / completed.length;
- const metrics = el('div', undefined, 'metrics velocity-metrics');
- [[series.at(-1).completed, 'Last sprint'], [Math.round(average * 10) / 10, 'Average completed'], [Math.max(...completed), 'Best sprint']].forEach(([value, label]) => { const metric = el('span', undefined, 'metric'); metric.append(el('strong', String(value)), el('span', label)); metrics.append(metric); });
+ const metrics = metricList([[series.at(-1).completed, 'Last sprint'], [Math.round(average * 10) / 10, 'Average completed'], [Math.max(...completed), 'Best sprint']], 'velocity-metrics');
  const figure = el('figure', undefined, 'velocity-figure'); figure.append(velocityChart(series));
  const legend = el('div', undefined, 'velocity-legend'); [['committed', 'Committed'], ['completed', 'Completed']].forEach(([kind, text]) => { const entry = el('span', undefined, 'velocity-legend-item'); entry.append(el('span', undefined, `velocity-swatch velocity-swatch-${kind}`), el('span', text)); legend.append(entry); }); figure.append(legend);
- panel.append(metrics, figure, velocityTable(series));
- panel.dataset.renderSignature = JSON.stringify(series.map(entry => [entry.sprint.id, entry.sprint.name, entry.committed, entry.completed]));
- return panel;
+ trend.append(metrics, figure, velocityTable(series));
+ trend.dataset.renderSignature = JSON.stringify(series.map(entry => [entry.sprint.id, entry.sprint.name, entry.committed, entry.completed]));
+ return trend;
 }
 // Sprints uses the same page layout as Projects: a read-only summary section
 // first, then a titled section whose filter bar sits directly below its heading.
 function renderSprintPage(content) {
  const velocity = sprintVelocityPanel();
- const head = el('div', undefined, 'section-head'); head.dataset.renderSignature = 'sprint-page-head'; head.append(el('h2', 'Goals, scope, and deliberate carry-over'), writeButton('＋ New sprint', () => editSprint(), 'primary'));
+ const head = sectionHead('Goals, scope, and deliberate carry-over', writeButton('＋ New sprint', () => editSprint(), 'primary')); head.dataset.renderSignature = 'sprint-page-head';
  const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; renderSprintRows(list);
- const current = content.firstElementChild;
- if (!current || current.dataset.contentView !== 'sprint-page') {
-  const sections = el('div', undefined, 'maintenance-sections'); sections.dataset.contentView = 'sprint-page';
+ const current = pageRoot('sprint-page');
+ if (!current) {
+  const sections = pageStack('sprint-page');
   const planning = el('section', undefined, 'sprint-planning');
-  const slot = el('div', undefined, 'filter-slot'); slot.id = 'sprint-filter-slot';
-  planning.append(head, slot, list); sections.append(velocity, planning); content.replaceChildren(sections);
+  planning.append(head, filterSlot('sprint-filter-slot'), list); sections.append(velocity, planning); content.append(sections);
  } else {
   patchNode(current.firstElementChild, velocity);
   const planning = current.lastElementChild;
@@ -1206,9 +1236,9 @@ function firstRunChecklist() {
   {done: board.sprints.length > 0, title: 'Create and start a sprint', help: 'Give the sprint a goal and a time box, then start it so the board can show active scope.', action: 'Open Sprints', run: () => goToView('sprints')},
   {done: board.items.length > 0, title: 'Add your first work item', help: 'Every card belongs to a board column; sprints and projects can be added at any time.', action: '＋ New item', run: () => $('new-item').click()},
  ];
- const panel = el('section', undefined, 'first-run'); panel.setAttribute('aria-labelledby', 'first-run-heading');
+ const setup = contentRoot('section', 'panel first-run', 'first-run'); setup.setAttribute('aria-labelledby', 'first-run-heading');
  const heading = el('h2', 'Set up your planning workspace'); heading.id = 'first-run-heading';
- panel.append(heading, el('p', 'Three steps get this workspace to a board your team can use. You can do them in any order.', 'help'));
+ setup.append(heading, helpText('Three steps get this workspace to a board your team can use. You can do them in any order.'));
  const list = el('ol', undefined, 'first-run-steps');
  steps.forEach((step, index) => {
   const entry = el('li', undefined, `first-run-step${step.done ? ' is-done' : ''}`);
@@ -1217,28 +1247,40 @@ function firstRunChecklist() {
   const action = writeButton(step.action, step.run, step.done ? undefined : 'primary'); action.setAttribute('aria-label', `${step.action}: ${step.title}`);
   entry.append(mark, copy, action); entry.setAttribute('aria-label', `${step.title} — ${step.done ? 'done' : 'not started'}`); list.append(entry);
  });
- panel.append(list);
- panel.dataset.renderSignature = JSON.stringify(steps.map(step => step.done));
- return panel;
+ setup.append(list);
+ setup.dataset.renderSignature = JSON.stringify(steps.map(step => step.done));
+ return setup;
 }
 function showFirstRun() { return view === 'board' && board.role !== 'viewer' && !board.items.length && !board.sprints.length && !searchQuery; }
 function renderSprintSummary(sprints) {
  const summary = $('sprint-summary'); if (view !== 'board') { summary.replaceChildren(); return; }
- const next = sprints.map(sprint => sprintPanel(sprint)); if (!next.length) { const empty = el('p', 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.', 'empty'); empty.dataset.empty = 'true'; next.push(empty); }
+ const next = sprints.map(sprint => sprintPanel(sprint)); if (!next.length) next.push(emptyState('No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.'));
  reconcileKeyedChildren(summary, next, keyedNodeKey);
 }
+// Views that own their layout share one lifecycle: mount `#page-root`, keep the
+// root the view patches in place (if it has one), then build into the host.
+const PAGE_VIEWS = Object.freeze({
+ projects: {build: renderProjects},
+ sprints: {build: renderSprintPage, patches: 'sprint-page'},
+ members: {build: renderMembers},
+ labels: {build: renderLabels},
+ history: {build: renderHistory},
+});
+function renderPageRoot(name) {
+ if (!Object.hasOwn(PAGE_VIEWS, name)) return false;
+ const page = PAGE_VIEWS[name];
+ page.build(pageHost(page.patches || ''));
+ return true;
+}
 function renderContent() {
- if (!board) return; const content = $('content');
- if (view === 'projects') { content.replaceChildren(); renderProjects(content); return; }
- if (view === 'labels') { content.replaceChildren(); renderLabels(content); return; }
- if (view === 'members') { content.replaceChildren(); renderMembers(content); return; }
- if (view === 'sprints') { renderSprintPage(content); return; }
- if (view === 'history') { content.replaceChildren(); renderHistory(content); return; }
+ if (!board) return;
+ if (renderPageRoot(view)) return;
+ const body = planningHost();
  const items = filteredItems(); $('count').textContent = view === 'archive' ? `${items.length} archived${archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}` : `${items.length} items · workspace revision ${board.workspace.revision}`;
- if (showFirstRun()) { const next = firstRunChecklist(); next.dataset.contentView = 'first-run'; const current = content.firstElementChild; if (!current || current.dataset.contentView !== 'first-run') content.replaceChildren(next); else patchNode(current, next); return; }
- if (view === 'board' && presentation === 'list') renderListPresentationContent(content, items); else if (view === 'board') renderBoardContent(content, items); else renderCardListContent(content, items);
- content.querySelector(':scope > .archive-more')?.remove();
- if (view === 'archive' && archiveMore) { const more = button('Load older archived work', async () => { try { await loadArchive(); renderContent(); } catch (e) { notice(e.message, true); } }, 'archive-more'); more.disabled = busy || loading; content.append(more); }
+ if (showFirstRun()) { const next = firstRunChecklist(); const current = body.firstElementChild; if (!current || current.dataset.contentView !== 'first-run') body.replaceChildren(next); else patchNode(current, next); return; }
+ if (view === 'board' && presentation === 'list') renderListPresentationContent(body, items); else if (view === 'board') renderBoardContent(body, items); else renderCardListContent(body, items);
+ body.querySelector(':scope > .archive-more')?.remove();
+ if (view === 'archive' && archiveMore) { const more = button('Load older archived work', async () => { try { await loadArchive(); renderContent(); } catch (e) { notice(e.message, true); } }, 'archive-more'); more.disabled = busy || loading; body.append(more); }
 }
 function appendCards(parent, items) { items.forEach(i => parent.append(card(i, items))); }
 async function loadHistory(reset = false) { const events = await api(root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : '')); history = reset ? events : [...history, ...events]; historyBefore = events.at(-1)?.id || 0; historyMore = events.length === 50; }
@@ -1255,7 +1297,7 @@ function showWorkspaceCreate() { if (busy || loading || integrationFormOpen) ret
 async function createWorkspace(event) {
  event.preventDefault(); if (workspaceCreating || busy || loading) return;
  const form = event.currentTarget; const input = form.elements.name; const status = form.querySelector('[data-workspace-create-status]'); const submit = form.querySelector('button[type="submit"]'); const name = String(input.value || '').trim();
- const setStatus = (text, error = false) => { status.textContent = text || ''; status.hidden = !text; status.className = error ? 'workspace-create-status error' : 'workspace-create-status'; status.setAttribute('role', error ? 'alert' : 'status'); };
+ const setStatus = (text, error = false) => setStatusText(status, text, error);
  if (!name || name.length > 120 || /[\u0000\r\n]/.test(name)) { setStatus('Workspace name must be between 1 and 120 characters.', true); input.focus(); return; }
  if (workspaceCreateName !== name || !workspaceCreateKey) { workspaceCreateName = name; workspaceCreateKey = requestKey(); }
  workspaceCreating = true; submit.disabled = true; input.disabled = true; setStatus('Creating workspace…');
@@ -1266,7 +1308,7 @@ async function createWorkspace(event) {
   pendingPlanningURLState = undefined; if (!await chooseWorkspace(created.id)) throw new Error('Workspace created, but its board could not be opened. Refresh to retry.'); workspaceCreateKey = ''; workspaceCreateName = '';
  } catch (error) {
   if (!document.querySelector('[data-workspace-create-status]')) { workspaceGate = 'create'; root = undefined; render(); }
-  const currentForm = document.querySelector('.workspace-create-form'); const currentStatus = currentForm?.querySelector('[data-workspace-create-status]'); const currentInput = currentForm?.elements.name; if (currentInput && !currentInput.value) currentInput.value = workspaceCreateName || name; if (currentStatus) { currentStatus.textContent = error.message; currentStatus.hidden = false; currentStatus.className = 'workspace-create-status error'; currentStatus.setAttribute('role', 'alert'); } if (currentInput) currentInput.focus();
+  const currentForm = document.querySelector('.workspace-create-form'); const currentStatus = currentForm?.querySelector('[data-workspace-create-status]'); const currentInput = currentForm?.elements.name; if (currentInput && !currentInput.value) currentInput.value = workspaceCreateName || name; if (currentStatus) setStatusText(currentStatus, error.message, true); if (currentInput) currentInput.focus();
  } finally { workspaceCreating = false; const currentForm = document.querySelector('.workspace-create-form'); if (currentForm) { currentForm.elements.name.disabled = false; currentForm.querySelector('button[type="submit"]').disabled = false; } renderControls(); }
 }
 function historyActorLabel(subject) {
@@ -1275,10 +1317,14 @@ function historyActorLabel(subject) {
  return name ? `${name} (${subject})` : subject;
 }
 function renderHistory(content) {
- const label = workspaceHistoryLabel(board.workspace); content.append(el('p', label, 'muted'));
- if (!history.length) content.append(el('p', 'No planning changes yet.', 'empty'));
- history.forEach(e => { const row = el('article', undefined, 'history-row'); row.append(el('strong', e.action.replaceAll('.', ' · ')), el('p', `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`, 'muted')); if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id')); if (e.reason) row.append(el('p', e.reason)); content.append(row); });
- if (historyMore) content.append(button('Load older changes', async () => { try { await loadHistory(); renderContent(); } catch (e) { notice(e.message, true); } }));
+ const page = pageStack('history');
+ const label = workspaceHistoryLabel(board.workspace); page.append(el('p', label, 'muted'));
+ if (!history.length) page.append(emptyState('No planning changes yet.'));
+ const list = el('div', undefined, 'history-list');
+ history.forEach(e => { const row = el('article', undefined, 'history-row'); row.append(el('strong', e.action.replaceAll('.', ' · ')), el('p', `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`, 'muted')); if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id')); if (e.reason) row.append(el('p', e.reason)); list.append(row); });
+ if (list.childElementCount) page.append(list);
+ if (historyMore) page.append(button('Load older changes', async () => { try { await loadHistory(); renderContent(); } catch (e) { notice(e.message, true); } }));
+ content.append(page);
 }
 function helpPopover(text, name = 'Help') {
  const wrapper = el('span', undefined, 'help-popover'); const trigger = button('?', () => toggle(), 'help-trigger'); const content = el('span', text, 'help-popover-content');
@@ -1295,8 +1341,8 @@ function multiSelect(parent, name, title, entries, selected = [], decorate, help
  const heading = el('span', undefined, 'multi-select-heading'); heading.append(label); if (helpText) heading.append(helpPopover(helpText, title));
  const root = el('div', undefined, 'multi-select'); root.setAttribute('role', 'group'); root.setAttribute('aria-label', title);
  const values = el('div', undefined, 'multi-select-values'); const menu = el('div', undefined, 'multi-select-menu');
- const filter = el('input'); filter.type = 'search'; filter.className = 'multi-select-filter'; filter.placeholder = `Filter ${title.toLowerCase()}…`; filter.setAttribute('aria-label', `Filter ${title}`);
- const list = el('div', undefined, 'multi-select-options'); const status = el('p', '', 'multi-select-empty'); status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const empty = el('p', 'No matches.', 'multi-select-empty'); menu.append(filter, status, list, empty); menu.hidden = true;
+ const filter = noAutofill(el('input')); filter.id = uid('multi-select-filter'); filter.type = 'search'; filter.className = 'multi-select-filter'; filter.placeholder = `Filter ${title.toLowerCase()}…`; filter.setAttribute('aria-label', `Filter ${title}`);
+ const list = el('div', undefined, 'multi-select-options'); const status = statusLine('multi-select-empty'); const empty = el('p', 'No matches.', 'multi-select-empty'); menu.append(filter, status, list, empty); menu.hidden = true;
  menu.id = `multi-select-${requestKey()}`; menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', `${title} options`);
  const edit = button('Edit', toggle, 'multi-select-edit'); edit.dataset.multiEdit = 'true'; edit.setAttribute('aria-label', `Edit ${title}`); edit.setAttribute('aria-haspopup', 'true'); edit.setAttribute('aria-expanded', 'false'); edit.setAttribute('aria-controls', menu.id);
  const header = el('div', undefined, 'multi-select-header'); header.append(heading, edit); header.addEventListener('click', event => { if (!menu.hidden && !edit.contains(event.target)) close(); });
@@ -1319,7 +1365,7 @@ function multiSelect(parent, name, title, entries, selected = [], decorate, help
   const choice = choices.find(candidate => candidate.value === String(value)); if (!choice) return false;
   choices.forEach(candidate => { candidate.input.checked = candidate === choice; }); render(); if (onChange) onChange(currentValues()); return true;
  }
- function setStatus(text) { status.textContent = text || ''; status.hidden = !text; render(); }
+ function setStatus(text) { setStatusText(status, text); render(); }
  function invoke(handler, query) {
   if (!handler) return;
   try { Promise.resolve(handler(query, controls)).catch(error => setStatus(error.message || String(error))); } catch (error) { setStatus(error.message || String(error)); }
@@ -1377,9 +1423,9 @@ async function showProposals(before = 0) {
   if (root !== currentRoot || busy) return;
   $('editor').close();
   openEditor('Planning proposals', fields => {
-   fields.append(el('p', 'Agent output is an unverified suggestion. Importing creates a draft only; a human must review the exact diff before any planning changes.', 'help'));
+   fields.append(helpText('Agent output is an unverified suggestion. Importing creates a draft only; a human must review the exact diff before any planning changes.'));
    fields.append(writeButton('Import proposal or migration JSON', () => importProposal()));
-   if (!rows.length) fields.append(el('p', 'No proposals on this page.', 'empty'));
+   if (!rows.length) fields.append(emptyState('No proposals on this page.'));
    for (const row of rows) { const card = el('article', undefined, 'setup-row'); card.append(el('strong', row.title), el('p', `${row.state} · Imported by ${row.imported_by} · workspace revision ${row.revision}`, 'muted'), button('Review ' + row.title, () => reviewProposal(row.id))); fields.append(card); }
    if (rows.length === 20) fields.append(button('Older proposals', () => showProposals(rows.at(-1).sequence)));
    if (before) fields.append(button('Newest proposals', () => showProposals()));
@@ -1389,7 +1435,7 @@ async function showProposals(before = 0) {
 function importProposal(document) {
  $('editor').close(); const id = requestKey();
  openEditor('Import proposal draft', fields => {
-  fields.append(el('p', 'Paste a version-1 proposal or the document/report from flux import. This saves a draft, not planning changes. Source identity and agent provenance are not verified.', 'help'));
+  fields.append(helpText('Paste a version-1 proposal or the document/report from flux import. This saves a draft, not planning changes. Source identity and agent provenance are not verified.'));
   const input = field(fields, 'document', 'Proposal JSON', document ? JSON.stringify(document, null, 2) : '', 'textarea'); input.required = true; input.maxLength = 60000;
   field(fields, 'reason', 'Import rationale', '', 'textarea').required = true;
  }, data => {
@@ -1407,10 +1453,10 @@ async function reviewProposal(id) {
   const v = preview.proposal; const canAccept = v.state === 'draft' && !!preview.digest && !preview.problem && writable();
   $('editor').close();
   openEditor('Review planning proposal', fields => {
-   fields.append(el('h3', v.document.title, 'proposal-text'), el('p', v.document.rationale, 'proposal-text'), el('p', `Claimed provenance (unverified): ${v.document.provenance}`, 'help proposal-text'), el('p', `Imported by ${v.imported_by} · ${v.state}${v.reviewed_by ? ' · Reviewed by ' + v.reviewed_by : ''}`, 'help'));
+   fields.append(el('h3', v.document.title, 'proposal-text'), el('p', v.document.rationale, 'proposal-text'), helpText(`Claimed provenance (unverified): ${v.document.provenance}`, 'proposal-text'), el('p', `Imported by ${v.imported_by} · ${v.state}${v.reviewed_by ? ' · Reviewed by ' + v.reviewed_by : ''}`));
    if (v.review_reason) fields.append(el('p', v.review_reason, 'proposal-text'));
-   if (preview.problem) fields.append(el('p', preview.problem, 'error'));
-   fields.append(el('p', `New imports: ${preview.created || 0} · Already imported, retained unchanged: ${Object.keys(preview.skipped || {}).length}`, 'help'));
+   if (preview.problem) fields.append(errorLine(preview.problem));
+   fields.append(helpText(`New imports: ${preview.created || 0} · Already imported, retained unchanged: ${Object.keys(preview.skipped || {}).length}`));
    if (Object.keys(preview.workspace_changes || {}).length) fields.append(el('h3', 'Workspace changes'), el('pre', JSON.stringify(preview.workspace_changes, null, 2), 'proposal-data'));
    for (const change of preview.changes || []) { const row = el('section', undefined, 'setup-row'); row.append(el('strong', 'Native item ' + change.id)); for (const [name, values] of Object.entries(change.fields)) { row.append(el('h4', name), el('pre', 'Before: ' + JSON.stringify(values.before, null, 2) + '\nAfter: ' + JSON.stringify(values.after, null, 2), 'proposal-data')); } fields.append(row); }
    const details = el('details'); details.append(el('summary', 'Original document, evidence and skipped sources'), el('pre', JSON.stringify({document:v.document,skipped:preview.skipped}, null, 2), 'proposal-data')); fields.append(details);
@@ -1460,8 +1506,8 @@ async function attachItemGitLabLink(item, link, context) {
  const added = board.links.filter(value => value.items.includes(item.id) && !previous.has(value.id)).map(value => value.id); reopenItemEditor(latest, draft ? {...draft, link_ids:[...new Set([...draft.link_ids, ...added])]} : undefined, mode, origin);
 }
 function inlineGitLabPaste(parent, item, readOnly, context) {
- const currentBoard = board, currentRoot = root; const row = el('div', undefined, 'gitlab-paste-row'); const input = el('input'); input.type = 'text'; input.inputMode = 'url'; input.placeholder = 'Paste GitLab MR URL, then press Enter or click Get'; input.maxLength = 2048; input.setAttribute('aria-label', 'GitLab MR URL'); const get = button('Get', resolve, 'primary'); get.dataset.gitlabWrite = 'true'; get.disabled = readOnly || !gitLabWritable(); row.append(input, get);
- const status = el('p', '', 'help'); status.hidden = true; status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; };
+ const currentBoard = board, currentRoot = root; const row = el('div', undefined, 'gitlab-paste-row'); const input = noAutofill(el('input')); input.id = uid('gitlab-mr-url'); input.type = 'text'; input.inputMode = 'url'; input.placeholder = 'Paste GitLab MR URL, then press Enter or click Get'; input.maxLength = 2048; input.setAttribute('aria-label', 'GitLab MR URL'); const get = button('Get', resolve, 'primary'); get.dataset.gitlabWrite = 'true'; get.disabled = readOnly || !gitLabWritable(); row.append(input, get);
+ const status = statusLine(); const setStatus = (text, error = false) => setStatusText(status, text, error);
  let pending = false;
  async function resolve() {
   if (pending || get.disabled) return; const raw = input.value.trim(); if (!raw) { setStatus('Paste a GitLab merge-request URL first.', true); input.focus(); return; }
@@ -1482,7 +1528,7 @@ async function addGitLabLink(item, context) {
   $('editor-title').append(' ', helpPopover('Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.', 'GitLab links'));
   let mrPicker, manualMR; let searchTimer; let searchGeneration = 0;
   if (catalogError) {
-   const error = el('p', `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`, 'error'); error.setAttribute('role', 'alert'); fields.append(error);
+   fields.append(errorLine(`Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`));
   }
   const projectPicker = multiSelect(fields, 'project', 'Approved GitLab project', approvedGitLabProjectEntries(projects), [], undefined, 'Choose one approved project. The project list is provided by the configured GitLab connector and is searchable.', {single:true, onChange: values => {
    searchGeneration++; if (searchTimer) clearTimeout(searchTimer); if (!mrPicker) return;
@@ -1504,7 +1550,7 @@ async function addGitLabLink(item, context) {
   mrPicker = multiSelect(fields, 'merge_request', 'Merge request', [], [], undefined, 'After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.', {single:true, onFilter:queueMergeRequestSearch, onOpen:queueMergeRequestSearch, onChange: values => { if (!values.length) return; if (manualMR) manualMR.value = ''; }}); mrPicker.filter.maxLength = 120;
   manualMR = field(fields, 'manual_mr_iid', 'MR IID (optional fallback)', '', 'number'); manualMR.min = 1; manualMR.max = Number.MAX_SAFE_INTEGER; manualMR.step = 1;
   scope.addEventListener('change', () => { const wasOpen = mrPicker.isOpen(); searchGeneration++; if (searchTimer) clearTimeout(searchTimer); mrPicker.filter.value = ''; mrPicker.setEntries([], []); mrPicker.setStatus(projectPicker.selected().length ? 'Open the merge-request picker to load results.' : 'Select an approved project first.'); if (wasOpen) queueMergeRequestSearch('', mrPicker); });
-  if (!projects.length && !catalogError && !board.integration.projects.length) fields.append(el('p', 'No approved GitLab projects are available for linking.', 'help'));
+  if (!projects.length && !catalogError && !board.integration.projects.length) fields.append(helpText('No approved GitLab projects are available for linking.'));
  }, data => {
   const rawProject = String(data.get('project') || ''); const selectedMR = String(data.get('merge_request') || ''); const manualIID = String(data.get('manual_mr_iid') || ''); const rawNumber = selectedMR || manualIID;
   if (!/^[1-9][0-9]*$/.test(rawProject) || !Number.isSafeInteger(Number(rawProject))) throw new Error('Choose an approved GitLab project.');
@@ -1540,10 +1586,10 @@ function renderCommentList(list, comments) {
  reconcileKeyedChildren(list, next, node => `comment:${node.dataset.commentId}`);
 }
 function renderItemComments(fields, item) {
- const currentBoard = board, currentRoot = root; const section = el('section', undefined, 'item-comments'); const heading = el('div', undefined, 'section-head'); heading.append(el('h3', 'Comments')); const status = el('p', 'Loading comments…', 'help'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); const list = el('div', undefined, 'comment-list'); let commentBusy = false; let commentLoad = 0; let addButton, textarea, refreshCommentPreview;
- const setStatus = (text, error = false) => { status.textContent = text; status.className = error ? 'error' : 'help'; status.setAttribute('role', error ? 'alert' : 'status'); };
+ const currentBoard = board, currentRoot = root; const section = el('section', undefined, 'item-comments'); const heading = panelHead('Comments'); const status = statusLine(); const list = el('div', undefined, 'comment-list'); let commentBusy = false; let commentLoad = 0; let addButton, textarea, refreshCommentPreview;
+ const setStatus = (text, error = false) => setStatusText(status, text, error); setStatus('Loading comments…');
  section.append(heading, status, list);
- if (board.role !== 'member' && board.role !== 'admin') section.append(el('p', 'Viewers can read comments; members and admins can add them.', 'help'));
+ if (board.role !== 'member' && board.role !== 'admin') section.append(helpText('Viewers can read comments; members and admins can add them.'));
  else {
   const composer = el('div', undefined, 'comment-composer'); const editor = markdownEditor(composer, 'comment_body', 'Add a comment', '', 4000); textarea = editor.input; textarea.dataset.commentControl = 'true'; refreshCommentPreview = editor.refresh; addButton = button('Add comment', addComment, 'primary'); addButton.dataset.commentWrite = 'true'; addButton.disabled = !canComment(); composer.append(addButton); section.append(composer);
  }
@@ -1576,16 +1622,16 @@ function renderItemAttachments(fields, item, readOnly) {
  const headingTitle = el('div', undefined, 'attachment-heading');
  const count = el('span', '0', 'attachment-count'); count.setAttribute('aria-hidden', 'true');
  headingTitle.append(attachmentPaperclip(), el('h3', 'Attachments'), count);
- const status = el('p', '', 'help'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+ const status = statusLine();
  const list = el('div', undefined, 'attachment-grid'); let attachmentBusy = false;
- const setStatus = (text, error = false) => { status.textContent = text || ''; status.className = error ? 'error' : 'help'; status.hidden = !text; status.setAttribute('role', error ? 'alert' : 'status'); };
+ const setStatus = (text, error = false) => setStatusText(status, text, error);
  const onAttachmentsLoaded = id => { if (id !== item.id) return; if (!section.isConnected) { attachmentListeners.delete(onAttachmentsLoaded); return; } renderList(); };
  attachmentListeners.add(onAttachmentsLoaded);
  function renderList() {
   count.textContent = String(attachmentCount(item));
-  if (!attachmentsLoaded(item)) { list.replaceChildren(el('p', 'Loading attachments…', 'empty')); void ensureAttachments(item); return; }
+  if (!attachmentsLoaded(item)) { list.replaceChildren(emptyState('Loading attachments…')); void ensureAttachments(item); return; }
   const attachments = item.attachments;
-  if (!attachments.length) { list.replaceChildren(el('p', 'No attachments yet.', 'empty')); return; }
+  if (!attachments.length) { list.replaceChildren(emptyState('No attachments yet.')); return; }
   const next = attachments.map(attachment => attachmentTile(item, attachment, currentRoot, `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`, readOnly ? undefined : () => removeAttachment(attachment)));
   reconcileKeyedChildren(list, next, node => `attachment:${node.dataset.attachmentId}`);
  }
@@ -1648,7 +1694,7 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
  const selectedProjects = draft?.project_ids ?? itemProjectIDs(item); multiSelect(controls, 'project_id', 'Project', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])], selectedProjects.length ? selectedProjects : [''], undefined, 'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.', {emptyValue:''});
  multiSelect(controls, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), draft?.sprint_ids ?? item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
  const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
- if (closed.length) controls.append(el('p', 'Closed sprint history (read-only): ' + closed.join(', '), 'help'));
+ if (closed.length) controls.append(helpText('Closed sprint history (read-only): ' + closed.join(', ')));
  multiSelect(controls, 'dependencies', 'Depends on', board.items.filter(i => i.id !== item.id).map(i => [i.id, i.title]), draft?.dependencies ?? item.dependencies);
  if (item.id) {
   const itemLinks = board.links.filter(link => link.items.includes(item.id));
@@ -1687,13 +1733,13 @@ function selectItem(itemID, origin) {
 function updateDetailHeader(item) { if (!detailState?.form || !item) return; detailState.item = item; const title = detailState.form.querySelector('.item-detail-title'); if (title?.firstChild) title.firstChild.nodeValue = item.title; const help = title?.querySelector('.help-popover-content'); if (help) help.textContent = `Card ID: ${item.id}\nRevision: ${item.revision}`; }
 function openItemDetail(item, draft, origin) {
  if (!detailPane) return; const readOnly = board.role === 'viewer' || item.archived; const form = el('form', undefined, 'item-detail-form'); const heading = el('div', undefined, 'item-detail-head'); const title = el('h2', item.title, 'item-detail-title'); const actions = el('div', undefined, 'item-detail-head-actions'); const close = button('×', () => closeDetail(), 'item-detail-close'); close.setAttribute('aria-label', 'Close item details'); actions.append(close); heading.append(title, actions);
- const fields = el('div', undefined, 'item-detail-fields'); const error = el('p', '', 'item-detail-error'); error.hidden = true; error.setAttribute('role', 'alert'); const footer = el('div', undefined, 'item-detail-footer'); const cancel = button('Cancel', () => closeDetail(), 'detail-cancel'); const save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.dataset.write = 'true'; footer.append(cancel, save); form.append(heading, fields, error, footer); detailPane.replaceChildren(form); detailPane.hidden = false;
+ const fields = el('div', undefined, 'item-detail-fields'); const error = errorLine('', 'item-detail-error'); const footer = el('div', undefined, 'item-detail-footer'); const cancel = button('Cancel', () => closeDetail(), 'detail-cancel'); const save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.dataset.write = 'true'; footer.append(cancel, save); form.append(heading, fields, error, footer); detailPane.replaceChildren(form); detailPane.hidden = false;
  const context = {mode:'detail', form, footer, origin}; buildItemEditor(fields, item, draft, readOnly, context, title); if (readOnly) { fields.querySelectorAll('input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])').forEach(input => { input.disabled = true; }); fields.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach(input => { input.disabled = true; }); } save.hidden = readOnly;
  const revision = board.workspace.revision; let pending, key; const state = detailState = {itemID:item.id, item, form, pane:detailPane, origin, dirty:false, initialDraft:null}; const updateDirty = () => { if (detailState === state) state.dirty = detailDraftIsDirty(state); }; form.addEventListener('input', updateDirty); form.addEventListener('change', updateDirty); state.initialDraft = itemEditorDraft(form); updateDetailPaneVisibility();
  form.addEventListener('submit', async event => {
-  event.preventDefault(); if (readOnly || busy || detailState !== state) return; error.textContent = ''; error.hidden = true; save.disabled = true; cancel.disabled = true; close.disabled = true; const data = new FormData(form); const command = {revision, ...(() => { const desired = data.getAll('link_ids'); state.desiredLinkIDs = desired; return {kind:'item.update', target:item.id, item:{...item, project_id:undefined, title:String(data.get('title') || '').trim(), description:data.get('description'), column_id:data.get('column_id'), project_ids:data.getAll('project_id').filter(Boolean), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; })()}; const serialized = JSON.stringify(command); if (pending !== serialized) { key = requestKey(); pending = serialized; }
+  event.preventDefault(); if (readOnly || busy || detailState !== state) return; setErrorText(error, ''); save.disabled = true; cancel.disabled = true; close.disabled = true; const data = new FormData(form); const command = {revision, ...(() => { const desired = data.getAll('link_ids'); state.desiredLinkIDs = desired; return {kind:'item.update', target:item.id, item:{...item, project_id:undefined, title:String(data.get('title') || '').trim(), description:data.get('description'), column_id:data.get('column_id'), project_ids:data.getAll('project_id').filter(Boolean), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; })()}; const serialized = JSON.stringify(command); if (pending !== serialized) { key = requestKey(); pending = serialized; }
   try { await change(command, key); await reconcileItemLinks(item.id, state.desiredLinkIDs || []); if (detailState !== state || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) { closeDetail({force:true}); return; } state.item = latest; state.initialDraft = itemEditorDraft(form); state.dirty = false; updateDetailHeader(latest); notice('Changes saved.'); }
-  catch (err) { if (detailState === state) { state.dirty = true; error.textContent = `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`; error.hidden = false; } }
+  catch (err) { if (detailState === state) { state.dirty = true; setErrorText(error, `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`); } }
   finally { if (detailState === state && form.isConnected) { save.disabled = false; cancel.disabled = false; close.disabled = false; renderControls(); } }
  });
  const titleInput = form.querySelector('[name="title"]'); if (titleInput) titleInput.focus({preventScroll:true});
@@ -1718,7 +1764,7 @@ function editSprint(sprint) {
   const name = field(fields, 'name', 'Sprint name', sprint.name); name.required = true; name.maxLength = 120;
   const goal = field(fields, 'goal', 'Sprint goal · what outcome matters?', sprint.goal, 'textarea'); goal.required = true; goal.maxLength = 4000;
   const grid = el('div', undefined, 'form-grid'); fields.append(grid); field(grid, 'start', 'Start date', sprint.start, 'date').required = true; field(grid, 'end', 'End date', sprint.end, 'date').required = true;
-  fields.append(el('p', 'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.', 'help'));
+  fields.append(helpText('Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.'));
  }, data => ({ kind: 'sprint.save', target: sprint.id || '', sprint: { ...sprint, name: data.get('name').trim(), goal: data.get('goal').trim(), start: data.get('start'), end: data.get('end') } }));
 }
 function closeSprint(sprint) {
@@ -1726,7 +1772,7 @@ function closeSprint(sprint) {
  openEditor('Close sprint & decide carry-over', fields => {
   fields.append(el('p', `${sprint.name}: ${items.length} items in scope; ${unfinished.length} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`));
   field(fields, 'destination', 'Also assign unfinished work to', '', 'text', [['', 'No additional sprint'], ...board.sprints.filter(s => s.state !== 'closed' && s.id !== sprint.id).map(s => [s.id, s.name])]);
-  fields.append(el('p', 'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.', 'help'));
+  fields.append(helpText('No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.'));
   const reason = field(fields, 'reason', 'Closing decision / rationale', '', 'textarea'); reason.required = true; reason.maxLength = 4000;
  }, data => ({ kind: 'sprint.close', target: sprint.id, destination: data.get('destination'), reason: data.get('reason').trim() }));
  $('save').textContent = 'Close sprint';
@@ -1737,14 +1783,14 @@ function editColumn(column) {
   const name = field(fields, 'name', 'Column name', column.name); name.required = true; name.maxLength = 80;
   field(fields, 'category', 'Lifecycle category', column.category, 'text', [['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']]);
   const wip = field(fields, 'wip', 'WIP limit · 0 means unlimited', String(column.wip), 'number'); wip.min = 0; wip.max = 1000; wip.required = true;
-  fields.append(el('p', 'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.', 'help'));
+  fields.append(helpText('WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.'));
  }, data => ({ kind: 'column.save', target: column.id || '', column: { ...column, name: data.get('name').trim(), category: data.get('category'), wip: Number(data.get('wip')) } }));
 }
 function editProject(project) {
  $('editor').close();
  openEditor(project ? 'Edit project' : 'Create project', fields => {
   const name = field(fields, 'name', 'Project name', project?.name || ''); name.required = true; name.maxLength = 120;
-  fields.append(el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.', 'help'));
+  fields.append(helpText('Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.'));
  }, data => ({kind: 'project.save', target: project?.id || '', project: {...(project || {}), name: data.get('name').trim()}}));
 }
 function integrationProjectChips(projectIDs) {
@@ -1781,44 +1827,45 @@ function renderProjectRows(list, count, chips) {
    : query && narrowed ? `No projects match \u201c${search}\u201d and the current filters.`
    : query ? `No projects match \u201c${search}\u201d.`
    : 'No projects hold work matching the current filters.';
-  list.append(el('p', message, 'empty')); return;
+  list.append(emptyState(message)); return;
  }
- matches.forEach(project => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(el('strong', project.name)); const actions = el('div', undefined, 'actions'); const open = actionIconButton('View scope', '◎', () => openProject(project)); open.disabled = busy || loading || integrationFormOpen; const edit = writeIconButton('Edit project', '✎', () => editProject(project)); actions.append(open, edit); row.append(info, actions); list.append(row); });
+ matches.forEach(project => {
+  const open = actionIconButton('View scope', '◎', () => openProject(project)); open.disabled = busy || loading || integrationFormOpen;
+  list.append(maintenanceRow({content: [el('strong', project.name)], actions: [open, writeIconButton('Edit project', '✎', () => editProject(project))]}));
+ });
 }
 function renderProjects(content) {
  const approvedIDs = board.integration?.projects || [];
  if (!integrationFormOpen && board.connector_instance && approvedIDs.length && !integrationCatalogLoaded && !integrationCatalogLoading) void loadIntegrationCatalog();
- const sections = el('div', undefined, 'maintenance-sections');
- const integration = el('section', undefined, 'maintenance-section');
- const integrationHead = el('div', undefined, 'section-head'); integrationHead.append(el('h2', 'GitLab integration'));
+ const sections = pageStack('projects');
+ const integration = panel('maintenance-section');
+ const integrationHead = sectionHead('GitLab integration');
  if (integrationFormOpen) {
   integration.append(integrationHead, renderIntegrationForm());
  } else {
   const edit = writeButton('Edit integration', editIntegration); edit.dataset.write = 'true'; integrationHead.append(edit);
   const configured = board.connector_instance || 'Not configured'; const approved = approvedIDs.length;
-  integration.append(integrationHead, el('p', `Operator-configured GitLab instance: ${configured}`, 'help'), el('p', `${approved} approved GitLab project${approved === 1 ? '' : 's'}.`, 'help'));
+  integration.append(integrationHead, helpText(`Operator-configured GitLab instance: ${configured}`), helpText(`${approved} approved GitLab project${approved === 1 ? '' : 's'}.`));
   if (approved) integration.append(integrationProjectChips(approvedIDs));
-  if (integrationCatalogLoading) integration.append(el('p', 'Loading approved GitLab project names…', 'help'));
-  if (integrationCatalogError) integration.append(el('p', `Project names are unavailable; approved IDs remain visible. ${integrationCatalogError}`, 'help'));
-  if (!board.connector_instance) integration.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.', 'help'));
+  if (integrationCatalogLoading) integration.append(helpText('Loading approved GitLab project names…'));
+  if (integrationCatalogError) integration.append(helpText(`Project names are unavailable; approved IDs remain visible. ${integrationCatalogError}`));
+  if (!board.connector_instance) integration.append(helpText('Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.'));
  }
- const projects = el('section', undefined, 'workspace-projects'); const projectHead = el('div', undefined, 'section-head'); const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true'; projectHead.append(el('h2', 'Workspace projects'), newProject);
- const filterBar = el('div', undefined, 'filter-bar'); const filterControls = el('div', undefined, 'actions');
+ const projects = el('section', undefined, 'workspace-projects');
+ const newProject = writeButton('＋ New project', () => editProject(), 'primary'); newProject.dataset.write = 'true';
  // Each select adds one value and resets, exactly like the planning bar.
- const assigneeSelect = el('select'); assigneeSelect.setAttribute('aria-label', 'Assignee'); options(assigneeSelect, [['all', 'Any assignee'], ['none', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])], 'all');
- const assigneeLabel = el('label', 'Assignee', 'filter-bar-assignee'); assigneeLabel.append(assigneeSelect);
- const labelSelect = el('select'); labelSelect.setAttribute('aria-label', 'Label'); options(labelSelect, [['all', 'Any label'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])], 'all');
- const labelLabel = el('label', 'Label', 'filter-bar-label'); labelLabel.append(labelSelect);
- const searchLabel = el('label', 'Search', 'filter-bar-search'); const input = el('input'); input.type = 'search'; input.value = projectSearch; input.placeholder = 'Find projects…'; input.maxLength = 120; input.setAttribute('aria-label', 'Search'); searchLabel.append(input);
- filterControls.append(assigneeLabel, labelLabel, searchLabel);
- const projectCount = el('span', undefined, 'filter-bar-count muted'); projectCount.setAttribute('aria-live', 'polite'); filterBar.append(filterControls, projectCount);
- const projectChips = el('div', undefined, 'filter-chips'); projectChips.setAttribute('role', 'group'); projectChips.setAttribute('aria-label', 'Active project filters'); projectChips.hidden = true;
- const slot = el('div', undefined, 'filter-slot'); slot.append(filterBar, projectChips);
- projects.append(projectHead, slot, el('p', 'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide. Assignee and Label filters list projects with current non-archived work matching every active filter; Unassigned and No labels match empty values.', 'help'));
- const list = el('div', undefined, 'maintenance-list'); renderProjectRows(list, projectCount, projectChips);
- input.addEventListener('input', () => { projectSearch = input.value; renderProjectRows(list, projectCount, projectChips); });
+ const {bar, controls, count: projectCount} = filterBar();
+ const assigneeFilter = filterSelect('Assignee', [['all', 'Any assignee'], ['none', 'Unassigned'], ...board.members.map(member => [member.subject, memberName(member.subject)])]);
+ const labelFilter = filterSelect('Label', [['all', 'Any label'], ['none', 'No labels'], ...board.labels.map(label => [label.name, label.name])]);
+ const search = filterSearch('Search', {value: projectSearch, placeholder: 'Find projects…', maxLength: 120});
+ controls.append(assigneeFilter.label, labelFilter.label, search.label);
+ const projectChips = filterChipRow('Active project filters');
+ projects.append(sectionHead('Workspace projects', newProject), filterSlot('', bar, projectChips),
+  helpText('Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide. Assignee and Label filters list projects with current non-archived work matching every active filter; Unassigned and No labels match empty values.'));
+ const list = maintenanceList(); renderProjectRows(list, projectCount, projectChips);
+ search.input.addEventListener('input', () => { projectSearch = search.input.value; renderProjectRows(list, projectCount, projectChips); });
  PROJECT_FILTER_NAMES.forEach((name, index) => {
-  const select = index === 0 ? assigneeSelect : labelSelect;
+  const select = index === 0 ? assigneeFilter.select : labelFilter.select;
   select.addEventListener('change', () => { addFilterValue(name, select.value, projectFilters); select.value = 'all'; renderProjectRows(list, projectCount, projectChips); });
  });
  projects.append(list);
@@ -1830,7 +1877,7 @@ function editLabel(label) {
  openEditor(originalName ? 'Rename label' : 'Create label', fields => {
   const input = field(fields, 'name', 'Label name', originalName); input.required = true; input.maxLength = 60;
   labelColorPicker(fields, originalColor);
-  fields.append(el('p', 'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.', 'help'));
+  fields.append(helpText('Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.'));
  }, data => ({kind: 'label.save', target: originalName, name: data.get('name').trim(), color: data.get('color') || originalColor}));
 }
 function deleteLabel(label) {
@@ -1838,9 +1885,19 @@ function deleteLabel(label) {
 }
 function renderLabels(content) {
  $('count').textContent = board.labels.length ? `${board.labels.length} label${board.labels.length === 1 ? '' : 's'}` : '';
- const heading = el('div', undefined, 'section-head'); const newLabel = writeButton('＋ New label', () => editLabel(), 'primary'); newLabel.dataset.write = 'true'; heading.append(el('h2', 'Workspace labels'), newLabel); content.append(heading, el('p', 'Create, rename and remove the reusable labels used to classify work in this workspace.', 'help'));
- if (!board.labels.length) { content.append(el('p', 'No labels yet. Create reusable labels for this workspace.', 'empty')); return; }
- const list = el('div', undefined, 'label-maintenance-list'); board.labels.forEach(label => { const row = el('article', undefined, 'setup-row label-maintenance-row'); const summary = el('div', undefined, 'label-maintenance-summary'); const usage = board.items.filter(item => item.labels.includes(label.name)).length; summary.append(labelBadge(label.name), el('small', `${usage} card${usage === 1 ? '' : 's'}`, 'muted')); const actions = el('div', undefined, 'actions'); const rename = writeIconButton('Rename', '✎', () => editLabel(label)); const remove = writeIconButton('Delete…', '×', () => deleteLabel(label), 'danger'); actions.append(rename, remove); row.append(summary, actions); list.append(row); }); content.append(list);
+ const page = pageStack('labels');
+ const newLabel = writeButton('＋ New label', () => editLabel(), 'primary'); newLabel.dataset.write = 'true';
+ page.append(sectionHead('Workspace labels', newLabel), helpText('Create, rename and remove the reusable labels used to classify work in this workspace.'));
+ content.append(page);
+ if (!board.labels.length) { page.append(emptyState('No labels yet. Create reusable labels for this workspace.')); return; }
+ const list = maintenanceList('label-maintenance-list');
+ board.labels.forEach(label => {
+  const usage = board.items.filter(item => item.labels.includes(label.name)).length;
+  list.append(maintenanceRow({tag: 'article', className: 'label-maintenance-row',
+   content: [labelBadge(label.name), el('small', `${usage} card${usage === 1 ? '' : 's'}`, 'muted')],
+   actions: [writeIconButton('Rename', '✎', () => editLabel(label)), writeIconButton('Delete…', '×', () => deleteLabel(label), 'danger')]}));
+ });
+ page.append(list);
 }
 const MEMBER_ROLE_ENTRIES = [['viewer', 'Viewer'], ['member', 'Member'], ['admin', 'Admin']];
 function memberRoleLabel(role) { return MEMBER_ROLE_ENTRIES.find(([value]) => value === role)?.[1] || role; }
@@ -1857,7 +1914,7 @@ function editMember(member) {
   const subject = field(fields, 'subject', 'GitLab subject', member.subject); subject.readOnly = true; subject.setAttribute('aria-readonly', 'true');
   const name = field(fields, 'name', 'Workspace name', member.name || ''); name.maxLength = 120; name.placeholder = 'Optional admin-maintained name';
   field(fields, 'role', 'Workspace role', member.role, 'text', MEMBER_ROLE_ENTRIES);
-  fields.append(el('p', 'Leave the workspace name blank to use the available GitLab profile name.', 'help'));
+  fields.append(helpText('Leave the workspace name blank to use the available GitLab profile name.'));
  }, data => ({kind: 'member.save', target: member.subject, member: {subject: member.subject, name: data.get('name').trim(), role: data.get('role')}}));
  $('save').textContent = 'Save member';
 }
@@ -1866,7 +1923,7 @@ function removeMember(member) {
  const assigned = board.items.filter(item => item.assignee === member.subject).length;
  $('editor').close(); openEditor('Remove workspace member', fields => {
   fields.append(memberIdentityView(member), el('p', `Remove ${memberListingInfo(member).name} from this workspace? Workspace history is retained.`));
-  if (assigned) fields.append(el('p', `This member is assigned to ${assigned} card${assigned === 1 ? '' : 's'}. Reassign those cards before removing the member.`, 'help'));
+  if (assigned) fields.append(helpText(`This member is assigned to ${assigned} card${assigned === 1 ? '' : 's'}. Reassign those cards before removing the member.`));
  }, () => ({kind: 'member.delete', target: member.subject}));
  $('save').textContent = 'Remove member';
 }
@@ -1874,7 +1931,7 @@ function addMember() {
  if (!adminWritable()) return;
  const currentBoard = board, currentRoot = root;
  $('editor').close(); openEditor('Add workspace member', fields => {
-  fields.append(el('p', 'Search active users from the configured GitLab instance. Adding a user grants access to this workspace only; it does not change GitLab permissions.', 'help'));
+  fields.append(helpText('Search active users from the configured GitLab instance. Adding a user grants access to this workspace only; it does not change GitLab permissions.'));
   let searchTimer, searchGeneration = 0, nameEdited = false;
   const usersBySubject = new Map();
   let subjectInput, nameInput;
@@ -1900,7 +1957,7 @@ function addMember() {
   subjectInput = field(fields, 'subject', 'GitLab subject', ''); subjectInput.readOnly = true; subjectInput.required = true; subjectInput.placeholder = 'Select a GitLab user'; subjectInput.setAttribute('aria-readonly', 'true');
   nameInput = field(fields, 'name', 'Workspace name', ''); nameInput.maxLength = 120; nameInput.placeholder = 'Defaults to the GitLab profile name'; nameInput.addEventListener('input', () => { nameEdited = true; });
   field(fields, 'role', 'Workspace role', 'member', 'text', MEMBER_ROLE_ENTRIES);
-  if (!currentBoard.connector_instance) fields.append(el('p', 'A GitLab read connector is not configured. Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN.', 'help'));
+  if (!currentBoard.connector_instance) fields.append(helpText('A GitLab read connector is not configured. Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN.'));
  }, data => {
   const subject = String(data.get('gitlab_user') || '').trim(); if (!/^[1-9][0-9]*$/.test(subject) || !Number.isSafeInteger(Number(subject))) throw new Error('Select an available GitLab user.');
   return {kind: 'member.save', member: {subject, role: data.get('role'), name: String(data.get('name') || '').trim()}};
@@ -1909,10 +1966,16 @@ function addMember() {
 }
 function renderMembers(content) {
  $('count').textContent = `${board.members.length} member${board.members.length === 1 ? '' : 's'}`;
- const heading = el('div', undefined, 'section-head'); heading.append(el('h2', 'Workspace members')); if (board.role === 'admin') heading.append(adminButton('＋ Add member', addMember, 'primary'));
- content.append(heading, el('p', board.role === 'admin' ? 'Manage workspace access and roles. OAuth supplies the signed-in user’s GitLab profile; other numeric members need the server-side read connector for names, usernames, and avatars. Bootstrap, non-GitLab, or unavailable profiles may not have a username or avatar.' : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.', 'help'));
- if (!board.members.length) { content.append(el('p', 'No workspace members yet.', 'empty')); return; }
- const list = el('div', undefined, 'maintenance-list'); board.members.forEach(member => { const row = el('div', undefined, 'setup-row maintenance-row'); const info = el('div', undefined, 'maintenance-row-info'); info.append(memberIdentityView(member)); if (board.role === 'admin') { const actions = el('div', undefined, 'actions'); actions.append(adminIconButton('Edit member', '✎', () => editMember(member)), adminIconButton('Remove member', '−', () => removeMember(member), 'danger')); row.append(info, actions); } else row.append(info); list.append(row); }); content.append(list);
+ const page = pageStack('members');
+ const admin = board.role === 'admin';
+ page.append(sectionHead('Workspace members', admin ? adminButton('＋ Add member', addMember, 'primary') : undefined),
+  helpText(admin ? 'Manage workspace access and roles. OAuth supplies the signed-in user’s GitLab profile; other numeric members need the server-side read connector for names, usernames, and avatars. Bootstrap, non-GitLab, or unavailable profiles may not have a username or avatar.' : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.'));
+ content.append(page);
+ if (!board.members.length) { page.append(emptyState('No workspace members yet.')); return; }
+ const list = maintenanceList();
+ board.members.forEach(member => list.append(maintenanceRow({content: [memberIdentityView(member)],
+  actions: admin ? [adminIconButton('Edit member', '✎', () => editMember(member)), adminIconButton('Remove member', '−', () => removeMember(member), 'danger')] : []})));
+ page.append(list);
 }
 function observationTiming(link) {
  const timestamp = value => { if (!value) return 'none yet'; const date = new Date(value); return Number.isNaN(date.getTime()) ? 'unavailable' : date.toLocaleString(); };
@@ -1998,20 +2061,20 @@ function renderIntegrationForm() {
  const currentBoard = board; const readOnly = currentBoard.role !== 'admin';
  const selected = currentBoard.integration.projects.map(String);
  const form = el('form', undefined, 'inline-maintenance-form');
- form.append(el('p', `Operator-configured instance: ${currentBoard.connector_instance || 'Not configured'}`, 'help'));
- form.append(el('p', `Existing approval: ${currentBoard.integration.instance || 'None'}`, 'help'));
+ form.append(helpText(`Operator-configured instance: ${currentBoard.connector_instance || 'Not configured'}`));
+ form.append(helpText(`Existing approval: ${currentBoard.integration.instance || 'None'}`));
  multiSelect(form, 'projects', 'Approved GitLab projects', integrationProjectEntries(integrationCatalog, selected), selected, undefined, 'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.');
- if (integrationCatalogLoading) form.append(el('p', 'Loading available GitLab projects…', 'help'));
+ if (integrationCatalogLoading) form.append(helpText('Loading available GitLab projects…'));
  if (integrationCatalogError) {
-  const error = el('p', `Could not load the GitLab project list. ${integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`, 'error'); error.setAttribute('role', 'alert'); form.append(error);
+  form.append(errorLine(`Could not load the GitLab project list. ${integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`));
   const retry = button('Retry loading projects', loadIntegrationCatalog); retry.disabled = readOnly || integrationCatalogLoading; form.append(retry);
  } else if (currentBoard.connector_instance && !integrationCatalogLoading && !integrationCatalog.length) {
-  form.append(el('p', 'No GitLab projects are visible to the configured read connector.', 'help'));
+  form.append(helpText('No GitLab projects are visible to the configured read connector.'));
  }
- form.append(el('p', 'Every workspace member, including viewers and authorized machine readers, can see engineering metadata from these projects. Revoking a project or changing the instance removes its links and cached observations; cards and audit remain. No selected projects disables the integration.', 'help'));
+ form.append(helpText('Every workspace member, including viewers and authorized machine readers, can see engineering metadata from these projects. Revoking a project or changing the instance removes its links and cached observations; cards and audit remain. No selected projects disables the integration.'));
  const consent = field(form, 'consent', 'I approve this metadata visibility and any removals', 'yes', 'checkbox'); consent.required = true; consent.parentElement.classList.add('consent');
- if (!currentBoard.connector_instance) form.append(el('p', 'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.', 'help'));
- const error = el('p', '', 'error'); error.hidden = true; error.setAttribute('role', 'alert'); form.append(error);
+ if (!currentBoard.connector_instance) form.append(helpText('Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.'));
+ const error = errorLine(); form.append(error);
  const actions = el('div', undefined, 'dialog-foot inline-maintenance-actions'); const cancel = button('Cancel', () => { integrationFormOpen = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++; render(); }); actions.append(cancel);
  let save;
  if (!readOnly) { save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.disabled = integrationCatalogLoading; actions.append(save); }
@@ -2031,7 +2094,7 @@ function renderIntegrationForm() {
    await change({revision:board.workspace.revision, kind:'integration.save', integration:{instance:board.connector_instance, projects:parts.map(Number)}});
    integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++; render();
   } catch (submitError) {
-   integrationFormOpen = true; error.textContent = `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`; error.hidden = false; save.disabled = false; cancel.disabled = false; renderControls();
+   integrationFormOpen = true; setErrorText(error, `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`); save.disabled = false; cancel.disabled = false; renderControls();
   }
  });
  return form;
@@ -2039,18 +2102,18 @@ function renderIntegrationForm() {
 function showLinks(item) {
  const ready = board.connector_instance && board.connector_instance === board.integration.instance;
  openEditor('Linked GitLab observations', fields => {
-  fields.append(el('p', `${item.title} · ${board.integration.instance || 'No approved integration'}`, 'help'));
-  fields.append(el('p', `Engineering observations only. Refresh does not move cards or change sprint scope. ${board.refresh_seconds ? `Background refresh: about every ${board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`, 'help'));
+  fields.append(helpText(`${item.title} · ${board.integration.instance || 'No approved integration'}`));
+  fields.append(helpText(`Engineering observations only. Refresh does not move cards or change sprint scope. ${board.refresh_seconds ? `Background refresh: about every ${board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`));
   const links = board.links.filter(l => l.items.includes(item.id));
-  if (!links.length) fields.append(el('p', 'Unlinked. Add an approved MR; never infer links from card titles.', 'empty'));
+  if (!links.length) fields.append(emptyState('Unlinked. Add an approved MR; never infer links from card titles.'));
   links.forEach(link => {
    const row = el('article', undefined, 'setup-row'); row.dataset.linkId = link.id; const obs = link.observation; const linkRow = el('div', undefined, 'card-links'); linkRow.append(cardLinkView(link)); const pipelineLink = pipelineLinkView(link); if (pipelineLink) linkRow.append(pipelineLink); row.append(linkRow);
    if (obs?.title) row.append(el('p', obs.title));
-   if (obs?.mr_state) row.append(el('p', `${obs.draft ? 'Draft · ' : ''}Review/mergeability: ${obs.review || 'unknown'} · Head SHA ${obs.head_sha || 'unknown'}`, 'help'));
-   if (obs?.pipeline) row.append(el('p', `${link.kind === 'mr' ? 'Latest MR pipeline status' : 'Pipeline status'}: ${obs.pipeline.state || 'unknown'} · SHA ${obs.pipeline.sha || 'unknown'} · Provider state ${obs.pipeline.provider_state || 'unknown'}`, 'help'));
+   if (obs?.mr_state) row.append(helpText(`${obs.draft ? 'Draft · ' : ''}Review/mergeability: ${obs.review || 'unknown'} · Head SHA ${obs.head_sha || 'unknown'}`));
+   if (obs?.pipeline) row.append(helpText(`${link.kind === 'mr' ? 'Latest MR pipeline status' : 'Pipeline status'}: ${obs.pipeline.state || 'unknown'} · SHA ${obs.pipeline.sha || 'unknown'} · Provider state ${obs.pipeline.provider_state || 'unknown'}`));
    const outcomes = {unobserved:'Not refreshed',ok:'Last attempt succeeded',inaccessible:'GitLab denied access',not_found:'Not found or hidden by GitLab',unavailable:'GitLab unavailable',invalid_response:'Invalid GitLab response',rate_limited:'GitLab rate limited',busy:'Connector busy',disabled:'Connector disabled',outdated:'Older provider version ignored; cached data retained',refreshing:'Refresh requested; retry after cooldown if interrupted'};
-   row.append(el('p', outcomes[link.outcome] || 'Unknown outcome', 'help'));
-   row.append(el('p', observationTiming(link), 'help'));
+   row.append(helpText(outcomes[link.outcome] || 'Unknown outcome'));
+   row.append(helpText(observationTiming(link)));
    const actions = el('div', undefined, 'actions'); const key = requestKey();
    const refreshButton = writeButton('Refresh observation', async () => {
     if (!writable()) return;
@@ -2060,15 +2123,15 @@ function showLinks(item) {
    refreshButton.dataset.refreshLink = link.id;
    refreshButton.disabled = refreshLinkDisabled(link) || !ready;
    actions.append(refreshButton);
-   if (link.next_refresh) { const nextRefresh = el('p', '', 'help'); nextRefresh.dataset.observation = 'next-refresh'; nextRefresh.hidden = Date.parse(link.next_refresh) <= Date.now(); if (!nextRefresh.hidden) nextRefresh.textContent = `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`; row.append(nextRefresh); }
+   if (link.next_refresh) { const nextRefresh = helpText(''); nextRefresh.dataset.observation = 'next-refresh'; nextRefresh.hidden = Date.parse(link.next_refresh) <= Date.now(); if (!nextRefresh.hidden) nextRefresh.textContent = `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`; row.append(nextRefresh); }
    row.append(actions); fields.append(row);
   });
-  if (!ready) fields.append(el('p', 'Connector unavailable or instance approval needs updating. An admin can review Projects settings.', 'help'));
+  if (!ready) fields.append(helpText('Connector unavailable or instance approval needs updating. An admin can review Projects settings.'));
  }, () => ({}), true);
 }
 function setupBoard() {
  openEditor('Board setup', fields => {
-  fields.append(el('p', 'Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.', 'help'));
+  fields.append(helpText('Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.'));
   board.columns.forEach((c, index) => { const row = el('div', undefined, 'setup-row'); row.append(el('strong', c.name), el('small', `${c.category} · WIP ${c.wip || 'unlimited'}`, 'muted')); const actions = el('div', undefined, 'actions'); actions.append(writeButton('Edit', () => editColumn(c)));
    if (index > 0) actions.append(writeButton('Move left', async () => { await quick({ kind: 'column.rank', target: c.id, before: board.columns[index - 1].id }); $('editor').close(); }));
    if (board.columns.length > 1) actions.append(writeButton('Remove…', () => { $('editor').close(); openEditor('Remove column & move cards', f => { f.append(el('p', `All cards in ${c.name}, including archived ones, must move to another column.`)); field(f, 'destination', 'Destination column', '', 'text', board.columns.filter(v => v.id !== c.id).map(v => [v.id, v.name])); }, data => ({ kind: 'column.delete', target: c.id, destination: data.get('destination') })); }));

@@ -1,7 +1,7 @@
 // Markdown rendering and the Markdown editor control. Rendering builds DOM
 // nodes directly and never assigns innerHTML, so item and comment bodies
 // cannot inject markup. Link targets are filtered through markdownURL.
-import {el, button} from './dom.js';
+import {el, button, uid, noAutofill} from './dom.js';
 import {requestKey} from './api.js';
 
 function markdownURL(value) {
@@ -76,7 +76,7 @@ function renderMarkdown(parent, source) {
   const unordered = /^\s{0,3}[-+*]\s+(.+)$/.exec(lines[index]); const ordered = /^\s{0,3}\d+[.)]\s+(.+)$/.exec(lines[index]);
   if (unordered || ordered) {
    const list = el(ordered ? 'ol' : 'ul'); const pattern = ordered ? /^\s{0,3}\d+[.)]\s+(.+)$/ : /^\s{0,3}[-+*]\s+(.+)$/;
-   while (index < lines.length) { const item = pattern.exec(lines[index]); if (!item) break; const listItem = el('li'); const task = /^\[([ xX])\]\s+(.+)$/.exec(item[1]); if (task) { const checkbox = el('input'); checkbox.type = 'checkbox'; checkbox.checked = task[1].toLowerCase() === 'x'; checkbox.disabled = true; checkbox.tabIndex = -1; checkbox.setAttribute('aria-label', checkbox.checked ? 'Completed task' : 'Incomplete task'); listItem.className = 'markdown-task'; listItem.append(checkbox); appendMarkdownInline(listItem, task[2]); } else appendMarkdownInline(listItem, item[1]); list.append(listItem); index++; }
+   while (index < lines.length) { const item = pattern.exec(lines[index]); if (!item) break; const listItem = el('li'); const task = /^\[([ xX])\]\s+(.+)$/.exec(item[1]); if (task) { const checkbox = el('input'); checkbox.id = uid('markdown-task'); checkbox.type = 'checkbox'; checkbox.checked = task[1].toLowerCase() === 'x'; checkbox.disabled = true; checkbox.tabIndex = -1; checkbox.setAttribute('aria-label', checkbox.checked ? 'Completed task' : 'Incomplete task'); listItem.className = 'markdown-task'; listItem.append(checkbox); appendMarkdownInline(listItem, task[2]); } else appendMarkdownInline(listItem, item[1]); list.append(listItem); index++; }
    parent.append(list); continue;
   }
   const paragraphLines = [lines[index++]];
@@ -89,7 +89,7 @@ function markdownEditor(parent, name, title, value = '', maxLength = 4000, readO
  if (readOnly) { const preview = el('div', undefined, 'markdown-preview'); renderMarkdown(preview, value); if (!String(value || '').trim()) preview.append(el('p', 'No content.', 'help')); group.append(preview); parent.append(group); return {input: null, refresh: () => {}}; }
  const editor = el('div', undefined, 'markdown-editor'); const toolbar = el('div', undefined, 'markdown-toolbar'); const subject = title === 'Description' ? 'description' : 'comment'; let previewing = previewByDefault;
  const modeButton = button(previewByDefault ? 'Edit' : 'Preview', () => setMode(!previewing), 'markdown-mode'); modeButton.setAttribute('aria-label', `Preview ${subject}`); modeButton.title = `Preview ${subject}`; toolbar.append(modeButton);
- const input = el('textarea'); input.id = inputID; input.name = name; input.value = value || ''; input.maxLength = maxLength; input.placeholder = 'Write Markdown…'; input.spellcheck = true; input.dataset.markdownControl = 'true'; const preview = el('div', undefined, 'markdown-preview'); preview.hidden = true; preview.tabIndex = 0;
+ const input = noAutofill(el('textarea')); input.id = inputID; input.name = name; input.value = value || ''; input.maxLength = maxLength; input.placeholder = 'Write Markdown…'; input.spellcheck = true; input.dataset.markdownControl = 'true'; const preview = el('div', undefined, 'markdown-preview'); preview.hidden = true; preview.tabIndex = 0;
  function replaceSelection(transform, placeholder = 'text') { const start = input.selectionStart ?? input.value.length; const end = input.selectionEnd ?? start; const selected = input.value.slice(start, end) || placeholder; input.setRangeText(transform(selected), start, end, 'select'); input.dispatchEvent(new Event('input', {bubbles: true})); input.focus(); }
  const tools = [], dividers = []; function addDivider() { const divider = el('span', undefined, 'markdown-divider'); divider.setAttribute('role', 'separator'); divider.setAttribute('aria-orientation', 'vertical'); divider.setAttribute('aria-hidden', 'true'); dividers.push(divider); toolbar.append(divider); }
  function addTool(label, icon, transform, placeholder) { const tool = button(icon, () => replaceSelection(transform, placeholder), 'markdown-tool'); tool.setAttribute('aria-label', label); tool.title = label; tools.push(tool); toolbar.append(tool); }

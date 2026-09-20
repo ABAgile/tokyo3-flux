@@ -30,6 +30,21 @@ a validated HTTPS Gravatar avatar URL.
 
 ## Components and interaction
 
+- All page content lives inside `#content`, which has exactly two mounts. The persistent planning
+  frame is a `page-stack` carrying the project lens, the sprint summaries, the planning filter slot
+  and the board body, so Board, List and Archive read like every other page. `#page-root` holds one
+  page root for every other view, named by `data-content-view`: the standard `page-stack` (Projects,
+  Sprints, Members, Labels, History) or a page-specific composition (the first-run checklist). Only
+  one mount is shown at a time; the frame is hidden rather than rebuilt, so filters and summaries
+  keep their state, and a view that patches its own root in place keeps it across renders.
+  `aria-busy` belongs to the body being rebuilt, never to the region holding the filters. The stack
+  is a single column with one 16px gap, so every page spaces its sections alike. Pages are assembled
+  from shared components rather than per-page markup: `section-head` (title with right-aligned
+  actions), `help` guidance text, the `empty` state, the bordered `panel` surface shared by sprint,
+  project-lens, delivery-trend, burn-down, workspace-gate, first-run and maintenance panels, the
+  `metrics` row of value/caption pairs, the filter slot/bar/chips, and the maintenance list/row used
+  by Projects, Members and Labels. Board/List, GitLab integration, delivery trend and History stay
+  page-specific compositions built from those same parts.
 - Sidebar 208px on desktop, top navigation below 900px. Main padding 32px on desktop, 16px below
   900px. Navigation icons use a fixed 24px column so menu labels align. The workspace control has
   icon-only Create and Refresh actions beside its label. The sidebar footer is right-aligned. The theme
@@ -42,9 +57,10 @@ a validated HTTPS Gravatar avatar URL.
 - Every filtered page uses the same `filter-bar` component: a horizontal line of labeled native
   selects and an optional search box on the left, and a right-aligned `filter-bar-count` for the
   visible record count. It is the only filter container; there is no separate toolbar component.
-  Board and Archive host it in its slot above the content, directly under the page heading. Pages
-  that own a section layout — Projects and Sprints — host it inside the content, immediately below
-  the section heading it filters. The planning filter bar is one element that is relocated between
+  Board and Archive host it in the planning frame's slot, above the board body and below the
+  summaries. Pages
+  that own a section layout — Projects and Sprints — host it inside their own section, immediately
+  below the section heading it filters. The planning filter bar is one element that is relocated between
   those hosts rather than duplicated, so its controls keep their state and identity across views.
   Maintenance views without work filters hide it.
 - One shared board belongs to each workspace; projects classify items optionally, and a work item
@@ -246,14 +262,30 @@ a validated HTTPS Gravatar avatar URL.
 - Modal dialogs have a 640px maximum width and a 16px viewport margin; the item editor expands to
   960px on wide screens. Dialog content always sits on an opaque panel surface over the dimmed
   backdrop, whether that content is a form or a plain panel. Textareas start at 120px high.
-- Use native labeled forms and modal dialogs with focus return. All controls have visible focus. The
+- Use native labeled forms and modal dialogs with focus return. All controls have visible focus.
+  Every form control carries a name when its value is submitted and a unique id otherwise, so a
+  control rendered twice — the item editor and the detail pane — never collides; text-like controls
+  opt out of autofill unless a real autocomplete token applies. The
   main region is a focus-management target for the skip link and for Escape, not a control, so it
   never paints a focus ring around the whole page.
   Errors and save/conflict status are announced with live regions. Transient progress and errors are
   separate surfaces: a polite status line carries progress and success and is written only when its
   text changes, so an unchanged board is never re-announced, while errors persist in their own
   assertive bar with an explicit Dismiss until dismissed or cleared by a later success. Workspace
-  revision belongs to the non-live count, never to the status line.
+  revision belongs to the non-live count, never to the status line. The persistent bars — stale
+  planning revision, undo offer and error — stay separate live regions because their politeness and
+  lifetimes differ and they can be shown together, but they share one `notice-bar` presentation with
+  accent, warning and danger variants: 12px text, an inset surface, and one trailing action button.
+  Inline progress and validation inside forms, comments, attachments and the workspace gate use one
+  status line: polite while it reports progress, assertive while it carries an error, hidden while it
+  says nothing. Inline write failures use the matching assertive error line, which is empty and
+  hidden until a request fails and is cleared by the next attempt. Guidance, empty states, status and
+  error lines are always the shared components; pages add a variant class rather than new markup.
+  History keeps its own row list rather than reshaping the maintenance list, and Board, List, GitLab
+  integration and the delivery trend stay page-specific compositions built from the shared panels,
+  heads, metrics and filter parts.
+  A skip link precedes the sidebar so keyboard users reach the main region without traversing
+  navigation.
 - A workspace with no sprints and no work items shows a three-step setup path instead of empty
   columns: create a project, create and start a sprint, add the first work item. Steps may be done
   in any order, show a done state from current planning records, and link to the relevant view.
