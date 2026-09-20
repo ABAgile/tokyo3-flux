@@ -1,6 +1,9 @@
 package store
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -74,5 +77,57 @@ func TestLinkObservationDigestIsScopedAndOrdered(t *testing.T) {
 	}
 	if !strings.Contains(linkObservationDigest, "ORDER BY i.item_id") {
 		t.Error("digest must aggregate item links in a stable order")
+	}
+}
+
+// The digest is SQL that only runs on a real server, so a syntax or function
+// availability mistake would surface as a broken freshness poll rather than a
+// failing build. Exercise it against the database and confirm it actually
+// tracks an observation change.
+func TestWorkspaceStateDigestTracksObservations(t *testing.T) {
+	s, b := linkedBoard(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(observedMR))
+	})
+	ctx := context.Background()
+	first, err := s.WorkspaceState(ctx, b.Workspace.ID, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Role != "admin" || first.Revision != b.Workspace.Revision {
+		t.Fatalf("unexpected state: %+v", first)
+	}
+	if len(first.Links) != 64 {
+		t.Fatalf("digest is not a sha256 hex string: %q", first.Links)
+	}
+
+	// An unchanged workspace must keep answering the same value, or every poll
+	// would look like a change and refetch the board.
+	repeat, err := s.WorkspaceState(ctx, b.Workspace.ID, "alice")
+	if err != nil || repeat.Links != first.Links {
+		t.Fatalf("digest is unstable: %q vs %q (%v)", repeat.Links, first.Links, err)
+	}
+
+	execSQL(t, s, "UPDATE external_links SET outcome='rate_limited'")
+	changed, err := s.WorkspaceState(ctx, b.Workspace.ID, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Links == first.Links {
+		t.Fatal("digest did not change with the observation")
+	}
+
+	// A workspace with no links still answers, rather than returning NULL.
+	empty := bootstrap(t, s)
+	blank, err := s.WorkspaceState(ctx, empty.Workspace.ID, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blank.Links != "" {
+		t.Fatalf("link-free workspace digest = %q, want empty", blank.Links)
+	}
+
+	// Membership gates the probe.
+	if _, err = s.WorkspaceState(ctx, b.Workspace.ID, "mallory"); !errors.Is(err, p.ErrForbidden) {
+		t.Fatalf("non-member freshness poll: %v", err)
 	}
 }
