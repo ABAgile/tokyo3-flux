@@ -175,13 +175,27 @@ func TestSaveDeletesColumnAfterItemsMove(t *testing.T) {
 	}
 }
 
-// Items are never removed by Apply today, but the full-rewrite implementation
-// cleaned up their child rows; the diff must preserve that.
-func TestSaveClearsAssociationsForRemovedItems(t *testing.T) {
-	tx := saveDiff(t, func(b *p.Board) { b.Items = b.Items[1:] })
-	for _, table := range []string{"DELETE FROM item_labels WHERE workspace_id=$1 AND item_id=$2", "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2", "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2", "DELETE FROM dependencies WHERE workspace_id=$1 AND item_id=$2"} {
-		if got := tx.count(table); got != 1 {
-			t.Errorf("removed item cleanup for %q = %d, want 1", table, got)
+// Items are archived, never removed, so a vanished item means the caller
+// applied something save cannot persist coherently. Clearing the child rows
+// would strand the parent work_items row as a half-deleted card, so the
+// transaction must fail instead and leave the workspace untouched.
+func TestSaveRefusesRemovedItems(t *testing.T) {
+	before := testBoard(500)
+	next := cloneSaveState(before)
+	removed := next.Items[0].ID
+	next.Items = next.Items[1:]
+	next.Workspace.Revision++
+	tx := &recordingTx{}
+	err := save(context.Background(), tx, before, next)
+	if err == nil {
+		t.Fatal("save accepted an item removal")
+	}
+	if !strings.Contains(err.Error(), removed) {
+		t.Errorf("error does not name the vanished item: %v", err)
+	}
+	for _, table := range []string{"DELETE FROM item_labels", "DELETE FROM item_projects", "DELETE FROM item_sprints", "DELETE FROM dependencies"} {
+		if got := tx.count(table); got != 0 {
+			t.Errorf("refused save still withdrew %d rows from %q", got, table)
 		}
 	}
 }

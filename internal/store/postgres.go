@@ -911,29 +911,24 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 // itemAssociation describes one child table that stores a set of strings per
 // work item. Statements are fixed literals; only bind parameters vary.
 type itemAssociation struct {
-	deleteAll  string
 	deleteSome string
 	insert     string
 	values     func(p.Item) []string
 }
 
 var itemAssociations = []itemAssociation{{
-	deleteAll:  "DELETE FROM item_labels WHERE workspace_id=$1 AND item_id=$2",
 	deleteSome: "DELETE FROM item_labels WHERE workspace_id=$1 AND item_id=$2 AND label=ANY($3::text[])",
 	insert:     "INSERT INTO item_labels(workspace_id,item_id,label) VALUES($1,$2,$3)",
 	values:     func(it p.Item) []string { return it.Labels },
 }, {
-	deleteAll:  "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2",
 	deleteSome: "DELETE FROM item_projects WHERE workspace_id=$1 AND item_id=$2 AND project_id=ANY($3::text[])",
 	insert:     "INSERT INTO item_projects(workspace_id,item_id,project_id) VALUES($1,$2,$3)",
 	values:     p.ItemProjectIDs,
 }, {
-	deleteAll:  "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2",
 	deleteSome: "DELETE FROM item_sprints WHERE workspace_id=$1 AND item_id=$2 AND sprint_id=ANY($3::text[])",
 	insert:     "INSERT INTO item_sprints(workspace_id,item_id,sprint_id) VALUES($1,$2,$3)",
 	values:     func(it p.Item) []string { return it.SprintIDs },
 }, {
-	deleteAll:  "DELETE FROM dependencies WHERE workspace_id=$1 AND item_id=$2",
 	deleteSome: "DELETE FROM dependencies WHERE workspace_id=$1 AND item_id=$2 AND depends_on=ANY($3::text[])",
 	insert:     "INSERT INTO dependencies(workspace_id,item_id,depends_on) VALUES($1,$2,$3)",
 	values:     func(it p.Item) []string { return it.Dependencies },
@@ -1048,15 +1043,16 @@ func save(ctx context.Context, tx pgx.Tx, before, b p.Board) error {
 			return err
 		}
 	}
+	// Work items are archived, never deleted, so no command drops one from the
+	// board. Withdrawing a vanished item's associations here would leave its
+	// work_items row behind with no labels, projects, sprints or dependencies:
+	// a silently half-deleted card rather than a refusal. Fail the transaction
+	// instead, so a future command that does remove items has to say how the
+	// parent row is retired.
 	currentItems := indexByID(b.Items, func(v p.Item) string { return v.ID })
 	for _, old := range before.Items {
-		if _, ok := currentItems[old.ID]; ok {
-			continue
-		}
-		for _, association := range itemAssociations {
-			if _, err := tx.Exec(ctx, association.deleteAll, wid, old.ID); err != nil {
-				return err
-			}
+		if _, ok := currentItems[old.ID]; !ok {
+			return fmt.Errorf("work item %q disappeared from the board; item removal is not a supported command", old.ID)
 		}
 	}
 	// Child rows are withdrawn before the workspace label catalog so a renamed
