@@ -33,6 +33,8 @@ type Repository interface {
 	CommentRepository
 	AttachmentRepository
 	ProposalRepository
+	StateRepository
+	ArchiveRepository
 }
 
 // PlanningRepository is the native planning core: board reads and the
@@ -261,23 +263,13 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.resultRevalidated(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/revision", func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := h.repo.(StateRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
-		v, err := repo.WorkspaceState(r.Context(), r.PathValue("workspace"), h.subject(r, machine))
+		v, err := h.repo.WorkspaceState(r.Context(), r.PathValue("workspace"), h.subject(r, machine))
 		if machine {
 			v.Role = "viewer"
 		}
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/archive", func(w http.ResponseWriter, r *http.Request) {
-		repo, ok := h.repo.(ArchiveRepository)
-		if !ok {
-			h.failure(w, r, ErrNotFound)
-			return
-		}
 		query := r.URL.Query()
 		offset, offsetErr := strconv.Atoi(defaultQuery(query.Get("offset"), "0"))
 		limit, limitErr := strconv.Atoi(defaultQuery(query.Get("limit"), strconv.Itoa(ArchivePageLimit)))
@@ -285,7 +277,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		v, err := repo.ArchivedItems(r.Context(), r.PathValue("workspace"), h.subject(r, machine), offset, limit)
+		v, err := h.repo.ArchivedItems(r.Context(), r.PathValue("workspace"), h.subject(r, machine), offset, limit)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/gitlab/projects", func(w http.ResponseWriter, r *http.Request) {

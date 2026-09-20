@@ -28,6 +28,7 @@ type fakeRepository struct {
 	subject          string
 	err              error
 	attachment       Attachment
+	archived         []Item
 }
 
 func (f *fakeRepository) Workspaces(_ context.Context, subject string) ([]Workspace, error) {
@@ -69,6 +70,20 @@ func (f *fakeRepository) GitLabMergeRequestsFor(ctx context.Context, workspace, 
 func (f *fakeRepository) Board(_ context.Context, _, subject string) (Board, error) {
 	f.subject = subject
 	return testBoard(), f.err
+}
+func (f *fakeRepository) WorkspaceState(_ context.Context, _, subject string) (WorkspaceState, error) {
+	f.subject = subject
+	return WorkspaceState{Revision: 1, Role: "admin", Links: "digest"}, f.err
+}
+func (f *fakeRepository) ArchivedItems(_ context.Context, _, subject string, offset, limit int) ([]Item, error) {
+	f.subject = subject
+	if f.err != nil {
+		return nil, f.err
+	}
+	if offset >= len(f.archived) {
+		return []Item{}, nil
+	}
+	return f.archived[offset:min(offset+limit, len(f.archived))], nil
 }
 func (f *fakeRepository) Change(_ context.Context, _, subject, _ string, _ Command) (int64, error) {
 	f.changes++
