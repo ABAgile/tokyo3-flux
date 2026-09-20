@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 
 	p "abagile.com/tokyo3/flux/internal/planning"
 )
@@ -53,14 +54,16 @@ func (s *Store) ArchivedItems(ctx context.Context, wid, subject string, offset, 
 }
 
 // attachArchivedAttachments loads attachments for exactly the returned page so
-// archived cards keep their download links without a per-item query.
+// archived cards keep their download links without a per-item query. Rows pass
+// the same integrity gate the per-card read applies, so an archived card never
+// advertises a download the transfer path would refuse.
 func attachArchivedAttachments(ctx context.Context, s *Store, wid string, ids []string, items []p.Item) error {
 	indexes := make(map[string]int, len(items))
 	for i := range items {
 		indexes[items[i].ID] = i
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id,item_id,storage_key,name,content_type,size,digest,uploader,created_at
- FROM item_attachments WHERE workspace_id=$1 AND item_id=ANY($2::text[]) ORDER BY item_id,id LIMIT $3`,
+	rows, err := s.pool.Query(ctx, "SELECT "+attachmentColumns+
+		" FROM item_attachments WHERE workspace_id=$1 AND item_id=ANY($2::text[]) ORDER BY item_id,id LIMIT $3",
 		wid, ids, p.MaxItemAttachments*len(ids)+1)
 	if err != nil {
 		return err
@@ -68,10 +71,11 @@ func attachArchivedAttachments(ctx context.Context, s *Store, wid string, ids []
 	defer rows.Close()
 	for rows.Next() {
 		var attachment p.Attachment
-		if err = rows.Scan(&attachment.ID, &attachment.ItemID, &attachment.StorageKey,
-			&attachment.Name, &attachment.ContentType, &attachment.Size, &attachment.Digest,
-			&attachment.Uploader, &attachment.CreatedAt); err != nil {
+		if err = scanAttachment(rows, &attachment); err != nil {
 			return err
+		}
+		if checkStoredAttachment(attachment) != nil {
+			return errors.New("archived card contains invalid attachment metadata")
 		}
 		index, ok := indexes[attachment.ItemID]
 		if !ok || len(items[index].Attachments) >= p.MaxItemAttachments {

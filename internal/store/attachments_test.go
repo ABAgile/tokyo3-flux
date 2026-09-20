@@ -70,3 +70,32 @@ func TestPostgresBoardReportsAttachmentCountsOnly(t *testing.T) {
 		t.Fatal("unsafe stored content type served")
 	}
 }
+
+// Every reader shares one integrity gate, so a row that could not have been
+// written through AddAttachment is refused on the way out regardless of which
+// path reaches it. Without this, an archived card could advertise a download
+// the transfer path would only reject after the user clicked it.
+func TestStoredAttachmentGateIsShared(t *testing.T) {
+	sound := p.Attachment{
+		ID: 1, ItemID: "i1", Name: "notes.txt", ContentType: "text/plain",
+		Size: 12, Digest: "sha256:" + strings.Repeat("a", 64),
+		Uploader: "alice", StorageKey: p.NewID(),
+	}
+	if err := checkStoredAttachment(sound); err != nil {
+		t.Fatalf("well-formed attachment refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*p.Attachment){
+		"no storage key":   func(a *p.Attachment) { a.StorageKey = "" },
+		"path storage key": func(a *p.Attachment) { a.StorageKey = "../escape" },
+		"no uploader":      func(a *p.Attachment) { a.Uploader = " " },
+		"unsafe type":      func(a *p.Attachment) { a.ContentType = "text/html" },
+		"bad digest":       func(a *p.Attachment) { a.Digest = "sha256:zz" },
+		"oversize":         func(a *p.Attachment) { a.Size = p.MaxAttachmentBytes + 1 },
+	} {
+		broken := sound
+		mutate(&broken)
+		if err := checkStoredAttachment(broken); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

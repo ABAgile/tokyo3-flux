@@ -73,6 +73,17 @@ func validateAttachmentMetadata(attachment p.Attachment) error {
 
 const attachmentColumns = `id,item_id,storage_key,name,content_type,size,digest,uploader,created_at`
 
+// checkStoredAttachment is the single integrity gate for attachment rows on
+// the way out of the database. Every reader applies it, so a row that could
+// not have been written through AddAttachment is refused rather than served
+// with a download link the transfer path would only reject later.
+func checkStoredAttachment(attachment p.Attachment) error {
+	if !validAttachmentStorageKey(attachment.StorageKey) || strings.TrimSpace(attachment.Uploader) == "" {
+		return errors.New("stored attachment has no usable object key or uploader")
+	}
+	return validateAttachmentMetadata(attachment)
+}
+
 func scanAttachment(row pgx.Row, attachment *p.Attachment) error {
 	return row.Scan(&attachment.ID, &attachment.ItemID, &attachment.StorageKey,
 		&attachment.Name, &attachment.ContentType, &attachment.Size, &attachment.Digest,
@@ -142,8 +153,7 @@ func (s *Store) Attachments(ctx context.Context, wid, subject, itemID string) ([
 		if err = scanAttachment(rows, &attachment); err != nil {
 			return nil, err
 		}
-		if !validAttachmentStorageKey(attachment.StorageKey) || strings.TrimSpace(attachment.Uploader) == "" ||
-			validateAttachmentMetadata(attachment) != nil {
+		if checkStoredAttachment(attachment) != nil {
 			return nil, errors.New("card contains invalid attachment metadata")
 		}
 		if len(out) >= p.MaxItemAttachments {
