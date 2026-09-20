@@ -262,3 +262,49 @@ func TestPruneAuditKeepsBurndownWindow(t *testing.T) {
 		t.Fatalf("retention removed history inside the burn-down window: %d", retained)
 	}
 }
+
+// refreshBatch fills its job channel before starting any worker, so the
+// channel buffer must hold a whole batch. If the query limit and the buffer
+// ever diverge the producer blocks on itself and the tick never returns; this
+// exercises the exact boundary with more due links than one batch can carry.
+func TestRefreshBatchFillsAFullBatchWithoutBlocking(t *testing.T) {
+	var calls atomic.Int32
+	s, b := linkedBoard(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(observedMR))
+	})
+	s.SetRefreshInterval(time.Minute)
+	ctx := context.Background()
+	// linkedBoard attaches MR !7; add enough distinct links to overflow a
+	// single batch without reaching the per-item link cap.
+	second := newItem(b, "More linked work")
+	apply(t, s, &b, p.Command{Kind: "item.create", Item: &second})
+	for i := range refreshBatchSize + 3 {
+		target := b.Items[i%2].ID
+		apply(t, s, &b, p.Command{Kind: "link.attach", Target: target,
+			Link: &p.LinkTarget{Project: 42, Kind: "mr", Number: int64(100 + i)}})
+	}
+	var due int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM external_links WHERE workspace_id=$1", b.Workspace.ID).Scan(&due); err != nil {
+		t.Fatal(err)
+	}
+	if due <= refreshBatchSize {
+		t.Fatalf("links = %d, want more than one batch of %d", due, refreshBatchSize)
+	}
+	makeDue(t, s, b)
+	finished := make(chan error, 1)
+	go func() { finished <- s.refreshBatch(ctx, refreshLog()) }()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("refreshBatch blocked filling a full job channel")
+	}
+	// One tick must consume a whole batch and no more, so the remaining links
+	// stay for the next tick instead of being dropped or double-fetched.
+	if observed := calls.Load(); observed != refreshBatchSize {
+		t.Fatalf("provider fetches = %d, want %d", observed, refreshBatchSize)
+	}
+}
