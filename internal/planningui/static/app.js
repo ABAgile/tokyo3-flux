@@ -250,10 +250,24 @@ async function refresh(preloaded) {
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) $('content').setAttribute('aria-busy', 'false'); } }
 }
-function postChange(command, key = requestKey()) {
- return api(root + '/changes', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf, 'Idempotency-Key': key }, body: JSON.stringify(command) });
+// minimal skips the committed board in the receipt. A batch only needs the
+// board once, so every command but the last asks for a minimal receipt and the
+// whole sequence costs one board read instead of one per command.
+function postChange(command, key = requestKey(), minimal = false) {
+ const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf, 'Idempotency-Key': key };
+ if (minimal) headers.Prefer = 'return=minimal';
+ return api(root + '/changes', { method: 'POST', headers, body: JSON.stringify(command) });
 }
 function preloadedBoard(receipt) { return receipt?.board && typeof receipt.board_etag === 'string' && receipt.board_etag ? {board: receipt.board, etag: receipt.board_etag} : undefined; }
+// The receipt board is read after the commit, so a concurrent change can carry
+// it past the revision this command produced. Its own revision is the one the
+// next command in a batch must present, or the batch conflicts on a value the
+// server has already moved beyond.
+function receiptRevision(receipt, fallback) {
+ const board = preloadedBoard(receipt)?.board.workspace?.revision;
+ if (Number.isSafeInteger(board)) return board;
+ return Number.isSafeInteger(receipt?.revision) ? receipt.revision : fallback;
+}
 async function change(command, key = requestKey()) {
  if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
  busy = true; renderControls(); notice('Saving changes…');
@@ -321,16 +335,18 @@ async function quick(command) {
 }
 // Bulk edits are separate revision-checked commands applied in order. The
 // revision from each receipt seeds the next command, so one board read settles
-// the whole batch and a mid-batch conflict stops rather than skips ahead.
+// the whole batch and a mid-batch conflict stops rather than skips ahead. Only
+// the final command asks for the committed board; the rest take a minimal
+// receipt so the batch does not pay for a board read it discards.
 async function runSequence(label, commands) {
  if (!writable()) { notice('Planning is read-only or a request is in progress.', true); return false; }
  if (!commands.length) { notice('Nothing to apply for the current selection.'); return true; }
  let revision = board.workspace.revision, receipt, applied = 0, failure = '';
  busy = true; renderControls();
  try {
-  for (const command of commands) {
+  for (const [index, command] of commands.entries()) {
    notice(`${label} · ${applied}/${commands.length}…`);
-   try { receipt = await postChange({...command, revision}); revision = Number.isSafeInteger(receipt?.revision) ? receipt.revision : revision + 1; applied++; }
+   try { receipt = await postChange({...command, revision}, requestKey(), index < commands.length - 1); revision = receiptRevision(receipt, revision + 1); applied++; }
    catch (error) { failure = error.message; break; }
   }
  } finally { busy = false; renderControls(); }

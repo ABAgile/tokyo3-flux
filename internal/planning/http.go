@@ -426,10 +426,23 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		// would have produced, so a saved change needs no follow-up board fetch
 		// and the client keeps revalidating afterwards. A failed read here is not
 		// a failed change: the revision still answers, and the client refetches.
+		//
+		// A batch of commands only needs the board once, so a client applying a
+		// sequence asks for a minimal receipt on every command but the last and
+		// pays for one board read instead of one per command.
 		result := map[string]any{"revision": rev}
+		if preferMinimal(r) {
+			w.Header().Set("Preference-Applied", "return=minimal")
+			respond(w, 200, result)
+			return
+		}
 		if board, boardErr := h.repo.Board(r.Context(), workspaceID, subject); boardErr == nil {
 			board = BrowserBoard(board)
 			if _, etag, marshalErr := marshalWithETag(board); marshalErr == nil {
+				// The board is read after the commit, so a concurrent change can
+				// advance it past rev. The board carries its own revision, which is
+				// what a client must present next; rev still reports what this
+				// command committed.
 				result["board"], result["board_etag"] = board, etag
 			}
 		}
@@ -836,6 +849,21 @@ func marshalWithETag(v any) ([]byte, string, error) {
 	}
 	sum := sha256.Sum256(body)
 	return body, `"` + hex.EncodeToString(sum[:]) + `"`, nil
+}
+
+// preferMinimal reports whether the client asked for a receipt without the
+// committed board, per the RFC 7240 return=minimal preference.
+func preferMinimal(r *http.Request) bool {
+	for _, header := range r.Header.Values("Prefer") {
+		for preference := range strings.SplitSeq(header, ",") {
+			name, value, _ := strings.Cut(strings.TrimSpace(preference), "=")
+			if strings.EqualFold(strings.TrimSpace(name), "return") &&
+				strings.EqualFold(strings.Trim(strings.TrimSpace(value), `"`), "minimal") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func etagMatches(header, etag string) bool {

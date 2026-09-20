@@ -23,6 +23,7 @@ import (
 
 type fakeRepository struct {
 	changes          int
+	boardReads       int
 	workspaceCreates int
 	commentAdds      int
 	subject          string
@@ -68,6 +69,7 @@ func (f *fakeRepository) GitLabMergeRequestsFor(ctx context.Context, workspace, 
 	return f.gitLabMergeRequests(ctx, workspace, subject, project, search)
 }
 func (f *fakeRepository) Board(_ context.Context, _, subject string) (Board, error) {
+	f.boardReads++
 	f.subject = subject
 	return testBoard(), f.err
 }
@@ -573,6 +575,68 @@ func TestChangeReturnsCommittedBoard(t *testing.T) {
 	browser.ServeHTTP(readResponse, read)
 	if readResponse.Code != http.StatusNotModified {
 		t.Fatalf("receipt validator rejected by board read: %d", readResponse.Code)
+	}
+
+	// A batch only needs the board once. A command that asks for a minimal
+	// receipt must commit without paying for a board read it would discard.
+	reads := repo.boardReads
+	minimal := httptest.NewRequest("POST", root+"/changes", strings.NewReader(`{"kind":"item.rank","revision":1,"target":"a"}`))
+	minimal.AddCookie(cookies[0])
+	minimal.Header.Set("Content-Type", "application/json")
+	minimal.Header.Set("X-CSRF-Token", csrf)
+	minimal.Header.Set("Idempotency-Key", strings.Repeat("m", 20))
+	minimal.Header.Set("Prefer", "return=minimal")
+	minimalResponse := httptest.NewRecorder()
+	changes := repo.changes
+	browser.ServeHTTP(minimalResponse, minimal)
+	if minimalResponse.Code != 200 {
+		t.Fatalf("minimal change status %d: %s", minimalResponse.Code, minimalResponse.Body.String())
+	}
+	if repo.changes != changes+1 {
+		t.Fatalf("minimal receipt did not commit the change: %d", repo.changes)
+	}
+	if repo.boardReads != reads {
+		t.Fatalf("minimal receipt still read the board: %d reads", repo.boardReads-reads)
+	}
+	if applied := minimalResponse.Header().Get("Preference-Applied"); applied != "return=minimal" {
+		t.Fatalf("preference not reported: %q", applied)
+	}
+	var lean struct {
+		Revision  int64  `json:"revision"`
+		BoardETag string `json:"board_etag"`
+		Board     *Board `json:"board"`
+	}
+	if err = json.Unmarshal(minimalResponse.Body.Bytes(), &lean); err != nil {
+		t.Fatal(err)
+	}
+	if lean.Revision != 2 || lean.Board != nil || lean.BoardETag != "" {
+		t.Fatalf("minimal receipt carried a board: %s", minimalResponse.Body.String())
+	}
+}
+
+// The preference is only honoured when the client actually asked for it.
+func TestPreferMinimal(t *testing.T) {
+	for _, testCase := range []struct {
+		headers []string
+		want    bool
+	}{
+		{headers: nil, want: false},
+		{headers: []string{"return=minimal"}, want: true},
+		{headers: []string{"  RETURN = Minimal "}, want: true},
+		{headers: []string{`return="minimal"`}, want: true},
+		{headers: []string{"wait=10, return=minimal"}, want: true},
+		{headers: []string{"wait=10", "return=minimal"}, want: true},
+		{headers: []string{"return=representation"}, want: false},
+		{headers: []string{"return=minimalist"}, want: false},
+		{headers: []string{"minimal"}, want: false},
+	} {
+		r := httptest.NewRequest("POST", "http://localhost/", nil)
+		for _, header := range testCase.headers {
+			r.Header.Add("Prefer", header)
+		}
+		if got := preferMinimal(r); got != testCase.want {
+			t.Errorf("preferMinimal(%q) = %v, want %v", testCase.headers, got, testCase.want)
+		}
 	}
 }
 

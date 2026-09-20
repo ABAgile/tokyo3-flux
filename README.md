@@ -420,8 +420,14 @@ the same payload/key. Planning changes return `{"revision":N}` together with the
 committed `board` and its `board_etag`, so no follow-up board read is needed;
 the validator is the one `GET /board` would answer with, so a client can keep
 revalidating from it. A change that commits but cannot be read back returns the
-revision alone, and the client reloads the board itself. Comment creation
-returns the immutable comment JSON.
+revision alone, and the client reloads the board itself. Send
+`Prefer: return=minimal` to receive `{"revision":N}` without the board; the
+response then carries `Preference-Applied: return=minimal`. A client applying a
+batch sets it on every command but the last, so the batch pays for one board
+read instead of one per command. The embedded board is read after the commit,
+so a concurrent change can carry it past the returned `revision`; the board's
+own `workspace.revision` is the value a following command must present.
+Comment creation returns the immutable comment JSON.
 Validation errors are 400, conflicts 409,
 permission denials 403 and missing authorized records 404. Authorization-bearing
 mutations are denied even with a browser cookie.
