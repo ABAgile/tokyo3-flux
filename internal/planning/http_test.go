@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -204,6 +205,13 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		{name: "unknown field", method: "POST", path: "/changes", body: `{"sql":"DROP TABLE work_items"}`, token: csrf, cookie: true, status: 400},
 		{name: "trailing JSON", method: "POST", path: "/changes", body: `{} {}`, token: csrf, cookie: true, status: 400},
 		{name: "oversized", method: "POST", path: "/changes", body: `{"reason":"` + strings.Repeat("a", 70<<10) + `"}`, token: csrf, cookie: true, status: 400},
+		{name: "archive default page", method: "GET", path: "/archive", cookie: true, status: 200},
+		{name: "archive explicit page", method: "GET", path: "/archive?offset=1&limit=2", cookie: true, status: 200},
+		{name: "archive negative offset", method: "GET", path: "/archive?offset=-1", cookie: true, status: 400},
+		{name: "archive zero limit", method: "GET", path: "/archive?limit=0", cookie: true, status: 400},
+		{name: "archive oversized limit", method: "GET", path: "/archive?limit=" + strconv.Itoa(ArchivePageLimit+1), cookie: true, status: 400},
+		{name: "archive unparsable page", method: "GET", path: "/archive?offset=x", cookie: true, status: 400},
+		{name: "freshness probe", method: "GET", path: "/revision", cookie: true, status: 200},
 		{name: "bad pagination", method: "GET", path: "/history?before=-1", cookie: true, status: 400},
 		{name: "history", method: "GET", path: "/history?before=5", cookie: true, status: 200},
 		{name: "project planning route retired", method: "POST", path: "/projects/p/changes", body: `{}`, token: csrf, cookie: true, status: 404},

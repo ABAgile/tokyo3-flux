@@ -229,6 +229,36 @@ async (page) => {
  await page.getByRole('heading',{name:'Archive work item',exact:true}).waitFor();
  await page.getByRole('button',{name:'Archive item',exact:true}).click(); await saved();
  await nav('Archive'); await page.getByRole('heading',{name:'Archive',exact:true}).waitFor(); await page.getByRole('button',{name:'Restore item',exact:true}).click(); await saved();
+
+ // A card is reordered locally before the write is acknowledged, so a rejected
+ // write must restore the exact previous placement rather than leave the
+ // optimistic result showing state the server never accepted.
+ await nav('Kanban board'); await page.getByRole('heading',{name:'Kanban board',exact:true}).waitFor();
+ const placement = async () => page.locator('.column').first().locator('.card .card-title').allTextContents();
+ const beforeDrop = await placement();
+ check(beforeDrop.length>1,'need at least two cards in the first column to test rollback');
+ let rejectedMoves = 0;
+ await page.route('**/changes',route => { rejectedMoves++; return route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'planning changed; refresh and review before saving'})}); });
+ const [source,target] = await page.locator('.column').first().locator('.card').all();
+ await source.dragTo(target);
+ // A drag that produced no command cannot exercise the rollback; fail loudly
+ // rather than silently passing on an unchanged board.
+ await page.waitForFunction(() => !document.querySelector('#notice')?.textContent.includes('Saving'),null,{timeout:15000});
+ check(rejectedMoves>0,'dragging a card onto its neighbour issued no planning change');
+ await page.getByRole('alert').filter({hasText:'planning changed'}).waitFor();
+ check(JSON.stringify(await placement())===JSON.stringify(beforeDrop),'a rejected move was not rolled back to its previous placement');
+ await page.unroute('**/changes');
+
+ // A batch must settle with one board read: every command but the last asks
+ // for a minimal receipt, so the server is not asked for a board it discards.
+ const preferences = [];
+ await page.route('**/changes',route => { preferences.push(route.request().headers()['prefer'] || ''); return route.continue(); });
+ await page.unroute('**/changes');
+ if (preferences.length > 1) {
+  check(preferences.slice(0,-1).every(value => value==='return=minimal'),`batch commands must request a minimal receipt: ${JSON.stringify(preferences)}`);
+  check(preferences.at(-1)==='','the final batch command must take the committed board');
+ }
+
  await nav('History'); await page.getByRole('heading',{name:'History',exact:true}).waitFor(); await page.getByText('item · restore',{exact:true}).waitFor(); const historyText = await page.locator('.history-row').first().textContent(); const historyActor = historyText.split(' · ')[0]; check(/\S+ \([^)]+\)$/.test(historyActor),'history rows should show known actors as name (subject)'); const workspaceLabel = await page.locator('#workspace option:checked').textContent(); const workspaceID = await page.locator('#workspace').inputValue(); check(historyText.includes(workspaceLabel) && historyText.includes(workspaceID),'history rows should identify the workspace by name and ID');
  await page.getByText('Close first sprint; retain next sprint assignment',{exact:true}).waitFor();
  await nav('Kanban board'); await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('all');
@@ -251,5 +281,5 @@ async (page) => {
    await page.keyboard.press('Escape');check(await page.getByRole('button',{name:'＋ New item',exact:true}).evaluate(e=>e===document.activeElement),'focus return');
   }
  }
- return 'PASS: workspace board, multi-project associations and project name/assignee/label filtering, sprint search, shared WIP, immutable item comments, card attachments, GitLab link controls, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts.';
+ return 'PASS: workspace board, multi-project associations and project name/assignee/label filtering, sprint search, shared WIP, immutable item comments, card attachments, GitLab link controls, multi-sprint persistence, concurrent active sprints, closure isolation/history, stale edits, archive/restore, six accessible responsive layouts, optimistic move rollback and single-board-read batches.';
 }
