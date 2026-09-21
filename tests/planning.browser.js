@@ -151,6 +151,32 @@ async (page) => {
  await page.getByRole('button',{name:'Help: Open sprints',exact:true}).click();
  const sprintTooltip = page.getByRole('tooltip').filter({hasText:'Select no open sprint'}); await sprintTooltip.waitFor(); check(await sprintTooltip.evaluate(tooltip => { const form=tooltip.closest('form').getBoundingClientRect(); return tooltip.getBoundingClientRect().right <= form.right + 1; }),'field help popover overflows the card');
  await page.getByRole('dialog').click({position:{x:10,y:10},force:true}); await page.getByRole('dialog').waitFor({state:'hidden'});
+ // A card link is URL state: opening a card names it, Back and Forward move
+ // between the board and the card, and a canonical link reopens it on its own.
+ await page.getByRole('button',{name:title,exact:true}).click();
+ const sharedItemID = await page.evaluate(() => new URL(location.href).searchParams.get('item'));
+ check(!!sharedItemID,'opening a card did not record it in the URL');
+ const shareAction = page.getByRole('dialog').getByRole('button',{name:`Copy a link to \u201c${title}\u201d`,exact:true});
+ check(await shareAction.count()===1,'card header has no copy-link action'); check((await shareAction.textContent()).trim()==='Copy link','copy link is not a compact text action');
+ check(await shareAction.evaluate(node => node.previousElementSibling?.classList.contains('help-popover') && !!node.closest('h2')),'copy link does not follow the details popover in the heading');
+ // Clipboard permission depends on the browser context, so either outcome is
+ // accepted; what must never happen is a silent action.
+ await shareAction.click(); await page.locator('.card-link-copy.is-copied,.card-link-copy.is-copy-failed').first().waitFor();
+ check(await shareAction.evaluate(node => (node.classList.contains('is-copied') && node.textContent.includes('Link copied')) || node.classList.contains('is-copy-failed')),'copy link gives no visual feedback');
+ await page.waitForTimeout(2200); check((await shareAction.textContent()).trim()==='Copy link','copy link did not return to its resting label');
+ const cardStatus = page.locator('.item-status'); check(await cardStatus.count()===1,'card status summary is missing');
+ check(await cardStatus.evaluate(node => !node.open && node.querySelector('.item-status-head') !== null && node.getBoundingClientRect().height <= 72),'card status is not a compact collapsed one-liner');
+ await cardStatus.locator('.item-status-head').click(); check(await cardStatus.evaluate(node => node.open && getComputedStyle(node.querySelector('.item-status-body')).display !== 'none'),'card status does not expand'); await cardStatus.locator('.item-status-head').click();
+ await page.getByRole('dialog').click({position:{x:10,y:10},force:true}); await page.getByRole('dialog').waitFor({state:'hidden'});
+ check(await page.evaluate(() => new URL(location.href).searchParams.get('item'))===null,'closing a card left it in the URL');
+ await page.goBack(); await page.getByRole('dialog').waitFor();
+ check(await page.evaluate(() => new URL(location.href).searchParams.get('item'))===sharedItemID,'Back did not reopen the shared card');
+ await page.goForward(); await page.getByRole('dialog').waitFor({state:'hidden'});
+ const sharedLink = await page.evaluate(id => { const url = new URL(location.href); const workspace = url.searchParams.get('workspace'); url.search = ''; url.searchParams.set('workspace', workspace); url.searchParams.set('item', id); return url.href; }, sharedItemID);
+ await page.goto(sharedLink); await page.getByRole('dialog').waitFor();
+ check(await page.getByRole('dialog').getByLabel('Title',{exact:true}).inputValue()===title,'a canonical card link did not open the shared card');
+ await page.getByRole('dialog').click({position:{x:10,y:10},force:true}); await page.getByRole('dialog').waitFor({state:'hidden'});
+ await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await page.getByRole('button',{name:title,exact:true}).waitFor();
  await page.getByRole('button',{name:title,exact:true}).click();
  await page.getByRole('combobox',{name:'Move to',exact:true}).selectOption({label:'In progress'}); await save();
  await page.reload(); await page.getByRole('combobox',{name:'Scope',exact:true}).selectOption('all'); await page.getByRole('button',{name:title,exact:true}).waitFor();
@@ -225,9 +251,17 @@ async (page) => {
  await page.getByRole('button',{name:'Save changes',exact:true}).click(); await saved();
  await page.getByRole('combobox',{name:'Project',exact:true}).selectOption('none');
  await page.getByRole('button',{name:'Concurrent accepted edit',exact:true}).click();
+ const archivedLink = await page.evaluate(() => { const url = new URL(location.href); const workspace = url.searchParams.get('workspace'), item = url.searchParams.get('item'); url.search = ''; url.searchParams.set('workspace', workspace); url.searchParams.set('item', item); return url.href; });
  await page.getByRole('button',{name:'Archive item',exact:true}).click();
  await page.getByRole('heading',{name:'Archive work item',exact:true}).waitFor();
  await page.getByRole('button',{name:'Archive item',exact:true}).click(); await saved();
+ // A link copied while the card was active must keep opening it after archiving,
+ // read-only, with its archived state and a restore action.
+ await page.goto(archivedLink); await page.getByRole('dialog').waitFor();
+ check(await page.getByRole('dialog').getByLabel('Title',{exact:true}).inputValue()==='Concurrent accepted edit','shared link did not reopen the archived card');
+ check(await page.locator('.item-status').getByText('Archived',{exact:true}).count()===1,'shared archived card does not report its archived state');
+ check(await page.getByRole('dialog').getByRole('button',{name:'Restore item',exact:true}).count()===1,'shared archived card has no restore action');
+ await page.getByRole('dialog').click({position:{x:10,y:10},force:true}); await page.getByRole('dialog').waitFor({state:'hidden'});
  await nav('Archive'); await page.getByRole('heading',{name:'Archive',exact:true}).waitFor(); await page.getByRole('button',{name:'Restore item',exact:true}).click(); await saved();
 
  // A card is reordered locally before the write is acknowledged, so a rejected

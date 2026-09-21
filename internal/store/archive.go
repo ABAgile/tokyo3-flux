@@ -7,6 +7,15 @@ import (
 	p "abagile.com/tokyo3/flux/internal/planning"
 )
 
+// itemColumns is the single work-item projection shared by the archive page
+// and the single-card read, so a shared link renders exactly what the archive
+// list would render.
+const itemColumns = `i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.rank,i.revision,i.archived,
+ ARRAY(SELECT p.project_id FROM item_projects p WHERE p.workspace_id=i.workspace_id AND p.item_id=i.id ORDER BY (p.project_id=i.project_id) DESC, p.project_id),
+ ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
+ ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
+ ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id)`
+
 // ArchivedItems returns one page of archived work. The board payload carries
 // only the live working set, so archived items are read separately and never
 // participate in planning writes.
@@ -17,12 +26,8 @@ func (s *Store) ArchivedItems(ctx context.Context, wid, subject string, offset, 
 	if offset < 0 || limit <= 0 || limit > p.ArchivePageLimit {
 		return nil, p.ErrInvalid
 	}
-	rows, err := s.pool.Query(ctx, `SELECT i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.rank,i.revision,i.archived,
- ARRAY(SELECT p.project_id FROM item_projects p WHERE p.workspace_id=i.workspace_id AND p.item_id=i.id ORDER BY (p.project_id=i.project_id) DESC, p.project_id),
- ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
- ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
- ARRAY(SELECT sprint_id FROM item_sprints s WHERE s.workspace_id=i.workspace_id AND s.item_id=i.id ORDER BY sprint_id)
- FROM work_items i WHERE i.workspace_id=$1 AND i.archived ORDER BY i.rank,i.id LIMIT $2 OFFSET $3`, wid, limit, offset)
+	rows, err := s.pool.Query(ctx, "SELECT "+itemColumns+
+		" FROM work_items i WHERE i.workspace_id=$1 AND i.archived ORDER BY i.rank,i.id LIMIT $2 OFFSET $3", wid, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -47,17 +52,17 @@ func (s *Store) ArchivedItems(ctx context.Context, wid, subject string, offset, 
 	if len(out) == 0 {
 		return out, nil
 	}
-	if err = attachArchivedAttachments(ctx, s, wid, ids, out); err != nil {
+	if err = attachItemAttachments(ctx, s, wid, ids, out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// attachArchivedAttachments loads attachments for exactly the returned page so
+// attachItemAttachments loads attachments for exactly the items read so
 // archived cards keep their download links without a per-item query. Rows pass
 // the same integrity gate the per-card read applies, so an archived card never
 // advertises a download the transfer path would refuse.
-func attachArchivedAttachments(ctx context.Context, s *Store, wid string, ids []string, items []p.Item) error {
+func attachItemAttachments(ctx context.Context, s *Store, wid string, ids []string, items []p.Item) error {
 	indexes := make(map[string]int, len(items))
 	for i := range items {
 		indexes[items[i].ID] = i

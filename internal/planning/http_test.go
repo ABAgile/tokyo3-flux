@@ -88,6 +88,19 @@ func (f *fakeRepository) ArchivedItems(_ context.Context, _, subject string, off
 	}
 	return f.archived[offset:min(offset+limit, len(f.archived))], nil
 }
+func (f *fakeRepository) Item(_ context.Context, _, subject, item string) (ItemView, error) {
+	f.subject = subject
+	if f.err != nil {
+		return ItemView{}, f.err
+	}
+	board := testBoard()
+	for _, candidate := range append(board.Items, f.archived...) {
+		if candidate.ID == item {
+			return ItemView{Item: candidate, Role: board.Role, Revision: board.Workspace.Revision}, nil
+		}
+	}
+	return ItemView{}, ErrNotFound
+}
 func (f *fakeRepository) Change(_ context.Context, _, subject, _ string, _ Command) (int64, error) {
 	f.changes++
 	f.subject = subject
@@ -211,6 +224,10 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		{name: "archive zero limit", method: "GET", path: "/archive?limit=0", cookie: true, status: 400},
 		{name: "archive oversized limit", method: "GET", path: "/archive?limit=" + strconv.Itoa(ArchivePageLimit+1), cookie: true, status: 400},
 		{name: "archive unparsable page", method: "GET", path: "/archive?offset=x", cookie: true, status: 400},
+		{name: "shared card link", method: "GET", path: "/items/a", cookie: true, status: 200},
+		{name: "shared card link anonymous", method: "GET", path: "/items/a", status: 303},
+		{name: "shared card link unknown item", method: "GET", path: "/items/missing", cookie: true, status: 404},
+		{name: "shared card link malformed item", method: "GET", path: "/items/%0a", cookie: true, status: 400},
 		{name: "freshness probe", method: "GET", path: "/revision", cookie: true, status: 200},
 		{name: "bad pagination", method: "GET", path: "/history?before=-1", cookie: true, status: 400},
 		{name: "history", method: "GET", path: "/history?before=5", cookie: true, status: 200},
@@ -692,5 +709,54 @@ func TestItemAttachmentListing(t *testing.T) {
 	browser.ServeHTTP(blankResponse, blank)
 	if blankResponse.Code != 200 && blankResponse.Code != 400 {
 		t.Fatalf("unexpected status for a padded item id: %d", blankResponse.Code)
+	}
+}
+
+// A shared card link must open the current card whether it is active or
+// archived, and must fail identically for a missing card and for a workspace
+// the reader cannot enter.
+func TestSharedItemLink(t *testing.T) {
+	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, _ := fluxauth.NewFixture(manager)
+	loginResponse := httptest.NewRecorder()
+	login.ServeHTTP(loginResponse, httptest.NewRequest("GET", "http://localhost/auth/login", nil))
+	cookies := loginResponse.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("no session")
+	}
+	repo := &fakeRepository{archived: []Item{{ID: "old", Title: "Old", ColumnID: "done", Revision: 4, Archived: true}}}
+	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	browser := manager.Gate(h.Handler(false))
+	root := "http://localhost/api/v2/workspaces/w"
+	read := func(path string) (*httptest.ResponseRecorder, ItemView) {
+		t.Helper()
+		request := httptest.NewRequest("GET", root+path, nil)
+		request.AddCookie(cookies[0])
+		response := httptest.NewRecorder()
+		browser.ServeHTTP(response, request)
+		var view ItemView
+		_ = json.Unmarshal(response.Body.Bytes(), &view)
+		return response, view
+	}
+
+	active, view := read("/items/a")
+	if active.Code != 200 || view.Item.ID != "a" || view.Item.Archived || view.Revision != 1 || view.Role != "member" {
+		t.Fatalf("active card: %d %s", active.Code, active.Body.String())
+	}
+	archived, archivedView := read("/items/old")
+	if archived.Code != 200 || archivedView.Item.ID != "old" || !archivedView.Item.Archived {
+		t.Fatalf("archived card: %d %s", archived.Code, archived.Body.String())
+	}
+	missing, _ := read("/items/nope")
+	if missing.Code != 404 {
+		t.Fatalf("missing card status %d", missing.Code)
+	}
+	repo.err = ErrForbidden
+	forbidden, _ := read("/items/a")
+	if forbidden.Code != 404 || forbidden.Body.String() != missing.Body.String() {
+		t.Fatalf("non-member response leaks card existence: %d %s", forbidden.Code, forbidden.Body.String())
 	}
 }

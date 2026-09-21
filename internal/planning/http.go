@@ -35,6 +35,7 @@ type Repository interface {
 	ProposalRepository
 	StateRepository
 	ArchiveRepository
+	ItemRepository
 }
 
 // PlanningRepository is the native planning core: board reads and the
@@ -101,6 +102,22 @@ type StateRepository interface {
 // from the board payload, so this is the only way a browser reaches them.
 type ArchiveRepository interface {
 	ArchivedItems(context.Context, string, string, int, int) ([]Item, error)
+}
+
+// ItemView answers one shared card link. The item is the current record, not a
+// historical snapshot, and may be active or archived, so a link keeps resolving
+// across archive and restore transitions. Revision is the workspace revision a
+// revision-checked write from the shared view must present.
+type ItemView struct {
+	Item     Item   `json:"item"`
+	Role     string `json:"role"`
+	Revision int64  `json:"revision"`
+}
+
+// ItemRepository resolves a single card by identity. Shared links depend on it
+// so a browser never pages through the archive looking for one card.
+type ItemRepository interface {
+	Item(context.Context, string, string, string) (ItemView, error)
 }
 
 type ProposalRepository interface {
@@ -279,6 +296,27 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		}
 		v, err := h.repo.ArchivedItems(r.Context(), r.PathValue("workspace"), h.subject(r, machine), offset, limit)
 		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/items/{item}", func(w http.ResponseWriter, r *http.Request) {
+		itemID := r.PathValue("item")
+		if !validItemPathID(itemID) {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := h.repo.Item(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID)
+		if err != nil {
+			// A shared link is handed around, so a reader outside the workspace must
+			// not be able to tell an existing card from a missing one.
+			if errors.Is(err, ErrForbidden) {
+				err = ErrNotFound
+			}
+			h.failure(w, r, err)
+			return
+		}
+		if machine {
+			v.Role = "viewer"
+		}
+		respond(w, 200, v)
 	})
 	mux.HandleFunc("GET "+root+"/gitlab/projects", func(w http.ResponseWriter, r *http.Request) {
 		if machine {

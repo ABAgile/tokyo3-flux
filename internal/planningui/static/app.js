@@ -18,6 +18,9 @@ let projectSearch = '';
 const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
 const projectFilters = {assignee: new Set(), label: new Set()};
 let selectedItemID = '', detailPane, detailState;
+// The open card is URL state: `item` names the card whose details are on
+// screen, so the address bar is always a shareable link to the current card.
+let sharedItemID = '', sharedItemSync = false, editorItemID = '';
 let attachmentTooltip, attachmentTooltipTarget, observationTooltipTarget;
 let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
 // Archived work is paged from its own endpoint; the board payload carries only
@@ -156,7 +159,9 @@ function workspacePreference() { return workspaceURLState() || localStorage.getI
 function persistWorkspaceURL(id) {
  const url = new URL(window.location.href);
  if (id) { url.searchParams.set('workspace', id); localStorage.setItem('flux-plan-workspace', id); }
- else { url.searchParams.delete('workspace'); localStorage.removeItem('flux-plan-workspace'); }
+ // Leaving a workspace leaves its cards: a card link without a workspace names
+ // nothing, so the open-card state goes with it.
+ else { url.searchParams.delete('workspace'); url.searchParams.delete('item'); sharedItemID = ''; editorItemID = ''; localStorage.removeItem('flux-plan-workspace'); }
  window.history.replaceState(null, '', url);
 }
 function validWorkspaceList(data) { return Array.isArray(data) && data.every(workspace => workspace && typeof workspace.id === 'string' && workspace.id && typeof workspace.name === 'string' && workspace.name && typeof workspace.role === 'string' && Number.isSafeInteger(workspace.revision)); }
@@ -174,14 +179,93 @@ async function loadWorkspaces(selected = '') {
 }
 function planningURLState() {
  const params = new URLSearchParams(window.location.search); const mode = params.get('mode');
- return {mode: mode === 'list' || mode === 'board' ? mode : undefined, project: params.get('project') || undefined, assignee: params.get('assignee') || undefined, label: params.get('label') || undefined, scope: params.get('scope') || undefined};
+ return {mode: mode === 'list' || mode === 'board' ? mode : undefined, project: params.get('project') || undefined, assignee: params.get('assignee') || undefined, label: params.get('label') || undefined, scope: params.get('scope') || undefined, item: params.get('item') || undefined};
 }
 // Filters serialize as comma-separated values so a multi-value planning view
 // stays shareable as a URL.
 function filterURLValue(name) { const values = filterValues(name); return values.length ? values.join(',') : 'all'; }
-function persistPlanningURL() {
- if (!board) return; const url = new URL(window.location.href); url.searchParams.set('mode', presentation); FILTER_NAMES.forEach(name => url.searchParams.set(name, filterURLValue(name))); url.searchParams.set('scope', $('scope').value || 'active'); window.history.replaceState(null, '', url);
+function persistPlanningURL({push = false} = {}) {
+ if (!board) return; const url = new URL(window.location.href); url.searchParams.set('mode', presentation); FILTER_NAMES.forEach(name => url.searchParams.set(name, filterURLValue(name))); url.searchParams.set('scope', $('scope').value || 'active');
+ if (sharedItemID) url.searchParams.set('item', sharedItemID); else url.searchParams.delete('item');
+ if (url.href === window.location.href) return;
+ if (push) window.history.pushState(null, '', url); else window.history.replaceState(null, '', url);
 }
+// Opening and closing a card is a navigation, so it gets its own history entry
+// and Back/Forward move between the board and the open card. Switching directly
+// from one card to another closes and opens within the same task; the update is
+// coalesced into one entry so Back does not stop at an intermediate state.
+function setSharedItem(id) {
+ const next = String(id || '');
+ if (next === sharedItemID) return;
+ sharedItemID = next;
+ if (sharedItemSync) return;
+ sharedItemSync = true;
+ queueMicrotask(() => { sharedItemSync = false; if ((new URL(window.location.href).searchParams.get('item') || '') !== sharedItemID) persistPlanningURL({push: true}); });
+}
+// A shared link carries only the workspace and the card. Filters are deliberately
+// dropped: a reader must never receive a link whose active scope hides the very
+// card it points at.
+function cardShareURL(itemID) {
+ const url = new URL(window.location.href); url.hash = ''; url.search = '';
+ url.searchParams.set('workspace', board.workspace.id); url.searchParams.set('item', itemID);
+ return url.href;
+}
+// The outcome is shown on the control itself as well as announced, so a pointer
+// user who never reads the status line still sees that the copy happened. The
+// cue is a state swap rather than an animation, so reduced motion needs nothing.
+const COPY_FEEDBACK_MS = 2000;
+function markCopyOutcome(control, ok) {
+ if (!control?.isConnected) return;
+ const label = control.dataset.copyLabel || control.textContent;
+ control.dataset.copyLabel = label;
+ control.textContent = ok ? '\u2713 Link copied' : '! Not copied';
+ control.classList.add(ok ? 'is-copied' : 'is-copy-failed');
+ setTimeout(() => { if (!control.isConnected) return; control.textContent = label; control.classList.remove('is-copied', 'is-copy-failed'); }, COPY_FEEDBACK_MS);
+}
+async function copyCardLink(item, control) {
+ const link = cardShareURL(item.id);
+ try {
+  if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+  await navigator.clipboard.writeText(link);
+  markCopyOutcome(control, true); notice(`Link to \u201c${item.title}\u201d copied to the clipboard.`);
+ } catch { markCopyOutcome(control, false); notice(`Card link could not be copied automatically. Copy it from the address bar or use ${link}`, true); }
+}
+// A card link resolves against the board first and falls back to the single-card
+// read, which answers for archived cards too. Archive pages are never walked:
+// the card is found by identity regardless of how much history exists.
+async function resolveSharedItem(itemID) {
+ const local = board.items.find(value => value.id === itemID);
+ if (local) return local;
+ const current = board, path = root;
+ let response;
+ try { response = await api(`${path}/items/${encodeURIComponent(itemID)}`); } catch { return undefined; }
+ if (board !== current || root !== path) return undefined;
+ return response?.item?.id === itemID ? response.item : undefined;
+}
+async function openSharedItem(itemID) {
+ if (!board || !itemID) return false;
+ if (detailState?.itemID === itemID || (editorItemID === itemID && $('editor').open)) return true;
+ const item = await resolveSharedItem(itemID);
+ if (!item) { setSharedItem(''); notice('Card not found or no longer available.', true); return false; }
+ if (view === 'board' && presentation === 'list' && detailPane) {
+  if (!closeDetail({focus: false})) return false;
+  selectedItemID = item.id; openItemDetail(item);
+ } else editItemModal(item);
+ return true;
+}
+// Back/Forward restores the whole planning URL, including which card is open.
+// Unsaved editor input is protected first: a refused close leaves the view and
+// the address bar exactly as they were.
+async function applyHistoryNavigation() {
+ const state = planningURLState(); const workspace = workspaceURLState();
+ if (board && workspace && workspace !== board.workspace.id) { pendingPlanningURLState = state; await chooseWorkspace(workspace); return; }
+ if (!board) return;
+ const target = String(state.item || '');
+ if (detailState && detailState.itemID !== target && !closeDetail({focus: false})) { sharedItemID = detailState.itemID; persistPlanningURL(); return; }
+ if ($('editor').open && editorItemID !== target && !busy) closeEditor();
+ applyPlanningURLState(state);
+}
+window.addEventListener('popstate', () => { void applyHistoryNavigation(); });
 function knownFilterValue(name, value) {
  if (value === 'none') return true;
  if (name === 'project') return board.projects.some(project => project.id === value);
@@ -193,7 +277,11 @@ function applyPlanningURLState(state = planningURLState()) {
  FILTER_NAMES.forEach(name => setFilterValues(name, String(state[name] || '').split(',').map(value => value.trim()).filter(value => value && value !== 'all' && knownFilterValue(name, value))));
  const project = singleFilterValue('project'); presentation = state.mode === 'list' || (!state.mode && project !== 'all' && project !== 'none') ? 'list' : 'board';
  const requestedScope = state.scope; const validScope = requestedScope && (['active', 'backlog', 'all'].includes(requestedScope) || board.sprints.some(value => value.id === requestedScope)); $('scope').value = validScope ? requestedScope : project !== 'all' && project !== 'none' ? 'all' : 'active';
+ // The requested card is kept in the URL while it resolves, so a reload of a
+ // shared link never drops the card it names before the details open.
+ sharedItemID = String(state.item || '');
  render(); persistPlanningURL();
+ if (sharedItemID) void openSharedItem(sharedItemID);
 }
 pendingPlanningURLState = planningURLState();
 function mergeEntities(previous = [], next = [], key) {
@@ -1684,8 +1772,68 @@ function renderItemAttachments(fields, item, readOnly) {
  } else heading.append(headingTitle);
  section.append(heading, status, list); fields.append(section); renderList();
 }
+// The card's own planning state, stated explicitly: where it sits, whether it
+// is archived or blocked, and which sprints hold it. GitLab entries are labelled
+// as cached provider observations, never as authoritative planning state.
+function itemStatusSummary(item) {
+ const section = el('details', undefined, 'item-status'); section.dataset.stateKey = `item:${item.id}:status`; section.setAttribute('aria-label', 'Current card status');
+ const column = board.columns.find(value => value.id === item.column_id);
+ const category = {todo: 'To do', doing: 'In progress', done: 'Done'}[column?.category] || 'Uncategorised';
+ const openSprints = (item.sprint_ids || []).map(id => board.sprints.find(sprint => sprint.id === id)?.name || id);
+ const closedSprints = board.closed_scope.filter(scope => scope.item_id === item.id).map(scope => board.sprints.find(sprint => sprint.id === scope.sprint_id)?.name || scope.sprint_id);
+ const links = board.links.filter(link => link.items.includes(item.id));
+ // The summary is the whole status in one line; everything that would push the
+ // editor down \u2014 sprint history and cached provider observations \u2014 waits behind
+ // the disclosure.
+ const head = el('summary', undefined, 'item-status-head');
+ const badges = el('div', undefined, 'tags item-status-badges');
+ // Two orthogonal facts, never merged: where the card sits in the workflow
+ // (its column's workspace-defined lifecycle category) and whether the card is
+ // still on the board. A Done card is not archived, and an archived card keeps
+ // the column it was archived from.
+ const workflow = el('span', `${column?.name || item.column_id} \u00b7 ${category}`, 'badge');
+ workflow.title = `Board column \u201c${column?.name || item.column_id}\u201d, lifecycle category ${category}`;
+ badges.append(workflow);
+ // "Live" is the board's own vocabulary for the working set. "In scope" is
+ // deliberately avoided here: sprint and project metrics already use it for
+ // sprint scope, and this badge sits beside the sprint badge on the same line.
+ const presence = el('span', item.archived ? 'Archived' : 'Live', item.archived ? 'badge warning' : 'badge');
+ presence.title = item.archived ? 'Archived: removed from the board and from open sprints; history is retained and it can be restored.' : 'Live: on the board and not archived. Completion is the column category, and sprint scope is the sprint badge.';
+ badges.append(presence);
+ if (blocked(item)) badges.append(el('span', 'Blocked by dependency', 'badge warning'));
+ badges.append(el('span', openSprints.length ? `${openSprints.length} open sprint${openSprints.length === 1 ? '' : 's'}` : 'Backlog', 'badge'));
+ if (links.length) badges.append(el('span', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`, 'badge'));
+ const toggle = el('span', undefined, 'item-status-toggle'); toggle.setAttribute('aria-hidden', 'true');
+ head.append(badges, toggle);
+ const body = el('div', undefined, 'item-status-body');
+ body.append(helpText(`Sprints: ${openSprints.length ? openSprints.join(', ') : 'Backlog \u00b7 no open sprint'}${closedSprints.length ? ` \u00b7 Closed sprint history: ${closedSprints.join(', ')}` : ''}`));
+ body.append(helpText(`Progress is the column\u2019s lifecycle category (To do, In progress, Done), chosen per column in Board setup. ${item.archived ? 'Archived is separate from progress: this card is off the board and out of open sprints, and keeps the column it was archived from.' : 'Done means the card sits in a Done column; it stays on the board until it is archived.'}`));
+ if (links.length) {
+  const observations = el('div', undefined, 'item-status-links');
+  links.forEach(link => { const row = el('div', undefined, 'item-status-link'); row.append(cardObservationIcon(link, `status:${item.id}:${link.id}`), el('span', linkDisplayName(link))); observations.append(row); });
+  body.append(helpText('Cached GitLab observations \u00b7 provider data, not Flux planning state'), observations);
+ }
+ section.append(head, body);
+ return section;
+}
+// Restoring from a shared view keeps the same card URL: the link a reader was
+// given must keep resolving after the card returns to the board.
+async function restoreSharedItem(item, context) {
+ if (!writable()) return;
+ await quick({kind: 'item.restore', target: item.id});
+ if (!board) return;
+ if (context?.mode === 'modal') closeEditor(); else closeDetail({force: true, focus: false});
+ await openSharedItem(item.id);
+}
 function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
- if (item.id && titleHost) titleHost.append(' ', helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'));
+ if (item.id && titleHost) {
+  // A text action reads better than another glyph beside the card title: it
+  // follows the details popover in the heading and states its own outcome.
+  const share = button('Copy link', () => void copyCardLink(item, share), 'card-link-copy');
+  share.setAttribute('aria-label', `Copy a link to \u201c${item.title}\u201d`); share.title = 'Copy a shareable link to this card';
+  titleHost.append(' ', helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'), ' ', share);
+ }
+ if (item.id) fields.append(itemStatusSummary(item));
  const layout = el('div', undefined, 'item-editor-layout'); const primary = el('div', undefined, 'item-editor-primary'); const controls = el('div', undefined, 'item-editor-controls'); layout.append(primary, controls); fields.append(layout);
  const title = field(primary, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240;
  markdownEditor(primary, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
@@ -1710,6 +1858,9 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
  if (item.id && !item.archived && !readOnly) {
   const archive = writeButton('Archive item', () => archiveItem(item, context), 'danger'); archive.dataset.itemFooter = 'true'; archive.dataset.write = 'true'; archive.classList.add('archive-footer'); const footer = context.footer || context.form.querySelector('.dialog-foot'); const cancel = footer?.querySelector('#cancel,.detail-cancel'); if (footer) footer.insertBefore(archive, cancel || footer.lastElementChild);
  }
+ if (item.id && item.archived && board.role !== 'viewer') {
+  const restore = writeButton('Restore item', () => void restoreSharedItem(item, context)); restore.dataset.itemFooter = 'true'; restore.dataset.write = 'true'; const footer = context.footer || context.form.querySelector('.dialog-foot'); const cancel = footer?.querySelector('#cancel,.detail-cancel'); if (footer) footer.insertBefore(restore, cancel || footer.lastElementChild);
+ }
  if (item.id) { renderItemAttachments(primary, item, readOnly); renderItemComments(primary, item); }
 }
 function createDetailPane() { const pane = el('aside', undefined, 'item-detail-pane'); pane.hidden = true; pane.setAttribute('aria-label', 'Selected work item'); detailPane = pane; return pane; }
@@ -1724,7 +1875,7 @@ function detailDraftIsDirty(state) {
 function detailDiscardAllowed() { return !detailState?.dirty || window.confirm(`Discard unsaved changes to “${detailState.item?.title || 'this item'}”?`); }
 function closeDetail({force = false, focus = true} = {}) {
  if (busy) return false; if (!detailState) { selectedItemID = ''; detailPane?.removeAttribute('data-item'); updateDetailPaneVisibility(); return true; }
- if (!force && !detailDiscardAllowed()) return false; const state = detailState; detailState = undefined; selectedItemID = ''; if (state.pane) { state.pane.hidden = true; state.pane.replaceChildren(); state.pane.parentElement?.classList.remove('has-detail'); } syncListSelection(); if (focus) { const target = state.origin?.isConnected ? state.origin : [...document.querySelectorAll('.list-row')].find(row => row.dataset.item === state.itemID); if (target) target.focus({preventScroll:true}); } return true;
+ if (!force && !detailDiscardAllowed()) return false; const state = detailState; detailState = undefined; selectedItemID = ''; setSharedItem(''); if (state.pane) { state.pane.hidden = true; state.pane.replaceChildren(); state.pane.parentElement?.classList.remove('has-detail'); } syncListSelection(); if (focus) { const target = state.origin?.isConnected ? state.origin : [...document.querySelectorAll('.list-row')].find(row => row.dataset.item === state.itemID); if (target) target.focus({preventScroll:true}); } return true;
 }
 function selectItem(itemID, origin) {
  if (!board || view !== 'board' || presentation !== 'list') return false; if (detailState?.itemID === itemID) { if (origin) detailState.origin = origin; detailState.form?.querySelector('[name="title"]')?.focus({preventScroll:true}); return true; }
@@ -1735,7 +1886,7 @@ function openItemDetail(item, draft, origin) {
  if (!detailPane) return; const readOnly = board.role === 'viewer' || item.archived; const form = el('form', undefined, 'item-detail-form'); const heading = el('div', undefined, 'item-detail-head'); const title = el('h2', item.title, 'item-detail-title'); const actions = el('div', undefined, 'item-detail-head-actions'); const close = button('×', () => closeDetail(), 'item-detail-close'); close.setAttribute('aria-label', 'Close item details'); actions.append(close); heading.append(title, actions);
  const fields = el('div', undefined, 'item-detail-fields'); const error = errorLine('', 'item-detail-error'); const footer = el('div', undefined, 'item-detail-footer'); const cancel = button('Cancel', () => closeDetail(), 'detail-cancel'); const save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.dataset.write = 'true'; footer.append(cancel, save); form.append(heading, fields, error, footer); detailPane.replaceChildren(form); detailPane.hidden = false;
  const context = {mode:'detail', form, footer, origin}; buildItemEditor(fields, item, draft, readOnly, context, title); if (readOnly) { fields.querySelectorAll('input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])').forEach(input => { input.disabled = true; }); fields.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach(input => { input.disabled = true; }); } save.hidden = readOnly;
- const revision = board.workspace.revision; let pending, key; const state = detailState = {itemID:item.id, item, form, pane:detailPane, origin, dirty:false, initialDraft:null}; const updateDirty = () => { if (detailState === state) state.dirty = detailDraftIsDirty(state); }; form.addEventListener('input', updateDirty); form.addEventListener('change', updateDirty); state.initialDraft = itemEditorDraft(form); updateDetailPaneVisibility();
+ const revision = board.workspace.revision; let pending, key; const state = detailState = {itemID:item.id, item, form, pane:detailPane, origin, dirty:false, initialDraft:null}; setSharedItem(item.id); const updateDirty = () => { if (detailState === state) state.dirty = detailDraftIsDirty(state); }; form.addEventListener('input', updateDirty); form.addEventListener('change', updateDirty); state.initialDraft = itemEditorDraft(form); updateDetailPaneVisibility();
  form.addEventListener('submit', async event => {
   event.preventDefault(); if (readOnly || busy || detailState !== state) return; setErrorText(error, ''); save.disabled = true; cancel.disabled = true; close.disabled = true; const data = new FormData(form); const command = {revision, ...(() => { const desired = data.getAll('link_ids'); state.desiredLinkIDs = desired; return {kind:'item.update', target:item.id, item:{...item, project_id:undefined, title:String(data.get('title') || '').trim(), description:data.get('description'), column_id:data.get('column_id'), project_ids:data.getAll('project_id').filter(Boolean), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; })()}; const serialized = JSON.stringify(command); if (pending !== serialized) { key = requestKey(); pending = serialized; }
   try { await change(command, key); await reconcileItemLinks(item.id, state.desiredLinkIDs || []); if (detailState !== state || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) { closeDetail({force:true}); return; } state.item = latest; state.initialDraft = itemEditorDraft(form); state.dirty = false; updateDetailHeader(latest); notice('Changes saved.'); }
@@ -1747,6 +1898,7 @@ function openItemDetail(item, draft, origin) {
 function reopenItemEditor(item, draft, mode, origin) { if (mode === 'detail') openItemDetail(item, draft, origin); else editItemModal(item, draft); }
 function editItemModal(item, draft) {
  const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs; const project = singleFilterValue('project'); const projectIDs = ['all', 'none'].includes(project) ? [] : [project]; item ||= {title:'', description:'', column_id:board.columns[0].id, project_id:projectIDs[0] || '', project_ids:projectIDs, sprint_ids:[], assignee:'', labels:[], dependencies:[]}; const context = {mode:'modal', form:$('editor-form')};
+ editorItemID = existing ? item.id : ''; if (existing) setSharedItem(item.id);
  openEditor(existing ? 'Work item' : 'Create work item', fields => { context.form = $('editor-form'); buildItemEditor(fields, item, draft, readOnly, context, $('editor-title')); }, data => { if (existing) desiredLinkIDs = data.getAll('link_ids'); return {kind:existing ? 'item.update' : 'item.create', target:item.id || '', item:{...item, project_id:undefined, title:data.get('title').trim(), description:data.get('description'), column_id:data.get('column_id'), project_ids:data.getAll('project_id').filter(Boolean), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')}}; }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
 }
 function editItem(item, draft) { if (item && view === 'board' && presentation === 'list') return selectItem(item.id); return editItemModal(item, draft); }
@@ -2154,6 +2306,10 @@ window.addEventListener('resize', repositionAttachmentTooltip); document.addEven
 document.addEventListener('pointerdown', e => { document.querySelectorAll('.attachment-actions[open],.card-attachments[open]').forEach(menu => { if (!menu.contains(e.target)) menu.open = false; }); const editor = $('editor'); if (!editor.open || busy) return; const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeEditor(); });
 function setPresentation(next) { if (!['board', 'list'].includes(next) || next === presentation || loading || busy || integrationFormOpen) return; if (detailState && !closeDetail({focus:false})) return; presentation = next; bulkSelection.clear(); render(); persistPlanningURL(); }
 $('dismiss').onclick = $('cancel').onclick = () => { if (!busy) closeEditor(); };
+// A closed item editor is no longer a view of that card. The check is deferred
+// because closing one dialog to open another — archive, observations, restore —
+// happens within the same task and must not drop the card from the URL.
+$('editor').addEventListener('close', () => { setTimeout(() => { if ($('editor').open || detailState) return; editorItemID = ''; setSharedItem(''); }, 0); });
 $('proposals').onclick = () => showProposals();
 $('new-item').onclick = () => editItem(); $('columns').onclick = setupBoard; $('new-workspace').onclick = showWorkspaceCreate; $('refresh').onclick = refresh; $('planning-refresh').onclick = refresh;
 $('presentation-board').onclick = () => setPresentation('board'); $('presentation-list').onclick = () => setPresentation('list');

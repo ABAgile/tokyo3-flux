@@ -323,7 +323,30 @@ a validated HTTPS Gravatar avatar URL.
   lens and All open work, while new items inherit that project. Project scope defaults to List;
   changing the Project filter on Kanban preserves the current presentation. Board/List mode,
   project, assignee, label and scope are persisted as shareable URL query state; multi-value filters
-  serialize as comma-separated values and unknown values are dropped on load. Loading, no-work, no-workspace, unavailable, and
+  serialize as comma-separated values and unknown values are dropped on load. The open card is URL
+  state too: `item` names it, opening and closing a card pushes a history entry so Back and Forward
+  move between the board and the card, and unsaved editor input is protected before either the view
+  or the address bar changes. The card heading carries its details popover followed by a compact
+  `Copy link` text action, which yields a canonical `?workspace=<id>&item=<id>` URL carrying no
+  filters, title, status or revision, so a reader's active scope can never hide the shared card.
+  The action is never silent: for two seconds it states its own outcome in place — `✓ Link copied`
+  or `! Not copied`, a state change rather than an animation — besides writing the status or error
+  line.
+  Card status is one collapsed line of badges — column with its lifecycle category, `Live`
+  or `Archived`, blocked, sprint count, GitLab link count — that expands to sprint names,
+  closed-sprint history, cached observations and a note on how progress is derived, so it never
+  pushes the editor fields down. Progress and presence stay separate facts: progress is the
+  card's column category (To do, In progress, Done) as configured per column, while archived means
+  off the board and out of open sprints. A Done card stays live until archived, and an
+  archived card keeps the column it was archived from; neither badge is derived from the other.
+  `In scope` stays reserved for sprint and project scope metrics and is never used for presence. A shared link opens the current card — never a
+  historical snapshot — resolving active cards from the board and every other card, archived
+  included, from the single-card read rather than by walking archive pages. An archived card opens
+  read-only with its `Archived` state, column and lifecycle category, blocked state, sprint
+  memberships, comments, attachments and cached GitLab observations, plus a revision-checked
+  Restore item action where permitted; restoring keeps the same card URL. GitLab entries stay
+  labelled as cached provider data. A card that is missing or not readable says "Card not found or
+  no longer available" and never silently opens another card. Loading, no-work, no-workspace, unavailable, and
   stale-revision states must be
   explicit. Render user Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system. Verify both themes at 1440px,
