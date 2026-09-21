@@ -54,9 +54,10 @@ func (s *Store) Burndown(ctx context.Context, wid, subject, sprintID, project, a
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return p.Burndown{}, err
 	}
-	rows, err := tx.Query(ctx, `SELECT at,before_state,after_state FROM audit_events
+	rows, err := tx.Query(ctx, `SELECT DISTINCT ON ((at AT TIME ZONE 'UTC')::date)
+ at,before_state,after_state FROM audit_events
  WHERE workspace_id=$1 AND outcome='success' AND at>=$2 AND at<$3 AND `+auditBoardState+`
- ORDER BY at,id`, wid, start, endExclusive)
+ ORDER BY (at AT TIME ZONE 'UTC')::date,at DESC,id DESC`, wid, start, endExclusive)
 	if err != nil {
 		return p.Burndown{}, err
 	}
