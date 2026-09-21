@@ -116,6 +116,8 @@ def main():
             if kind == 'merge_requests':
                 data.update(iid=number, title='Fixture MR <script>never executed</script>',
                             state='opened', draft=False, detailed_merge_status='not_approved',
+                            reviewers=[dict(id=42, name='Alex Example', username='alex'),
+                                       dict(id=43, name='Blake Reviewer', username='blake')],
                             head_pipeline=dict(id=1000 + number,
                                                sha='head-a' if number == 7 else 'old-head',
                                                status='success',

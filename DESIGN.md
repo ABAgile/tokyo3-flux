@@ -84,7 +84,9 @@ a validated HTTPS Gravatar avatar URL.
   Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics. The project
   lens uses the same full-width panel flow as sprint summaries, with a standard section gap between them.
   Desktop List rows use an Asana-like table grid with separate
-  Title, Project, Assignee, Labels, Sprints, and Links / Status columns plus a shared header;
+  Title, Project, People, Labels, Sprints, and Links / Status columns plus a shared header; the People cell
+  carries the same participant stack as a card followed by the assignee's name in text, so the column stays
+  scannable as a table;
   descriptions are not shown and the title cell is title-only. Links / Status owns blocked/archived
   state, a Board-aligned `GitLab links · count` header with View observations beside the label
   and left-aligned when wrapped, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width
@@ -102,8 +104,18 @@ a validated HTTPS Gravatar avatar URL.
   header: sprint information spans the left, actions sit in the top-right, and metrics sit below the actions; an
   expanded burn-down spans the full panel width. At constrained widths, the header becomes a single column and
   metrics use a full-width wrapping row.
-- Cards show all associated projects (or No project) and all open sprint memberships as badges; project and assignee
-  share a metadata row, with the assignee aligned right. Cards show attachments in a compact Asana-like
+- Cards show all associated projects (or No project) and all open sprint memberships as badges; project and the
+  participant stack share a metadata row, with the stack aligned right. Participants are a read-only aggregate of
+  who is involved with a card: the assignee, the reviewers of its cached merge-request observations, and its comment
+  authors. The same person appears once with every role merged, ordered assignee, reviewers, then most recent
+  commenters, and at most twelve are carried per card so a long thread never turns a board read into a roster dump.
+  They are derived server-side in one grouped read, never per card, never written back, and never a reason to bump an
+  item revision, so a new comment changes who is shown without touching planning state; the stack refreshes with the
+  board rather than on the observation poll. The stack overlaps up to four 24px avatars and then a `+N` cue, each
+  carrying an accessible name and role description, with `Unassigned` stated in words when a card has nobody. The
+  assignee is distinguished by a static accent ring and an `Assignee` role in its label — no animation, and never by
+  colour alone. Reviewer identities come from the cached provider observation and may belong to people who are not
+  workspace members; an admin-maintained workspace name always wins over the provider's. Cards show attachments in a compact Asana-like
   collapsed file dropdown at the bottom of the card, separated by a divider and using a fixed-size
   open/close cue with a paperclip/count cue; opening it reveals a vertical quick-download list with
   single-line file-type marks, truncated names and sizes, saving card space without page-level scroll;

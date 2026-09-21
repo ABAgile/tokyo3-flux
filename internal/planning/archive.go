@@ -34,12 +34,23 @@ func BrowserBoard(b Board) Board {
 		}
 	}
 	items := make([]Item, 0, len(b.Items))
+	present := make(map[string]bool, len(b.Items))
 	for _, item := range b.Items {
 		if item.Archived && !retained[item.ID] {
 			continue
 		}
+		present[item.ID] = true
 		items = append(items, item)
 	}
 	b.Items = items
+	// Participants describe cards, so a withheld card must not leave its people
+	// behind in the payload.
+	participants := make([]Participant, 0, len(b.Participants))
+	for _, participant := range b.Participants {
+		if present[participant.ItemID] {
+			participants = append(participants, participant)
+		}
+	}
+	b.Participants = participants
 	return b
 }

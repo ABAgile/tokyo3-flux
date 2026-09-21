@@ -165,6 +165,10 @@ type Board struct {
 	Sprints           []Sprint        `json:"sprints"`
 	Members           []Member        `json:"members"`
 	ClosedScope       []Scope         `json:"closed_scope"`
+	// Participants is derived from assignment, cached reviewers and comment
+	// authors. It travels with the board so a card can show who is involved
+	// without one request per card, and is never written back.
+	Participants []Participant `json:"participants"`
 }
 type Event struct {
 	LegacyProjectID string    `json:"legacy_project_id,omitempty"`

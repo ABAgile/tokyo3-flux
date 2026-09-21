@@ -36,6 +36,16 @@ type Pipeline struct {
 	ProviderState   string     `json:"provider_state"`
 	CurrentHead     bool       `json:"current_head"`
 }
+
+// Reviewer is a cached provider identity, not a Flux membership: a reviewer may
+// have no workspace account at all. ID is the GitLab user id, which is also the
+// subject used for members that do have one.
+type Reviewer struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name,omitempty"`
+	Username  string `json:"username,omitempty"`
+	AvatarURL string `json:"avatar_url,omitempty"`
+}
 type Observation struct {
 	SourceUpdatedAt *time.Time `json:"source_updated_at,omitempty"`
 	URL             string     `json:"url"`
@@ -45,7 +55,12 @@ type Observation struct {
 	Review          string     `json:"review"`
 	HeadSHA         string     `json:"head_sha"`
 	Pipeline        *Pipeline  `json:"pipeline"`
+	Reviewers       []Reviewer `json:"reviewers,omitempty"`
 }
+
+// MaxObservationReviewers bounds the reviewer list a provider response may
+// contribute to one cached observation.
+const MaxObservationReviewers = 20
 
 const MaxExternalID int64 = 9007199254740991 // JSON/JavaScript exact integer range.
 

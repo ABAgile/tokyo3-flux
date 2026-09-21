@@ -657,6 +657,14 @@ type response struct {
 	SHA          string     `json:"sha"`
 	Status       string     `json:"status"`
 	HeadPipeline *response  `json:"head_pipeline"`
+	Reviewers    []userRef  `json:"reviewers"`
+}
+
+type userRef struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Username  string `json:"username"`
+	AvatarURL string `json:"avatar_url"`
 }
 
 func failed(outcome string) Result { return Result{Outcome: outcome, RetryAfter: 30 * time.Second} }
@@ -735,6 +743,7 @@ func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 		obs.Draft = data.Draft
 		obs.Review = bounded(data.Review, 80)
 		obs.HeadSHA = data.SHA
+		obs.Reviewers = c.reviewers(data.Reviewers)
 		if pipe := data.HeadPipeline; pipe != nil && pipe.ID > 0 {
 			if pipe.ID > p.MaxExternalID || len(pipe.SHA) > 128 {
 				return failed("invalid_response")
@@ -751,6 +760,30 @@ func (c *Client) Fetch(ctx context.Context, target p.LinkTarget) Result {
 		obs.Pipeline.URL = c.safeURL(data.WebURL)
 	}
 	return Result{Observation: obs, Outcome: "ok", RetryAfter: 30 * time.Second}
+}
+
+// reviewers keeps the cached identities a card needs to show who is reviewing.
+// Only fields already displayed elsewhere are kept, avatars pass the same URL
+// gate as member profiles, and the list is deduplicated and bounded so a
+// provider cannot grow the cached observation without limit.
+func (c *Client) reviewers(raw []userRef) []p.Reviewer {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]p.Reviewer, 0, min(len(raw), p.MaxObservationReviewers))
+	seen := map[int64]bool{}
+	for _, user := range raw {
+		if user.ID <= 0 || user.ID > p.MaxExternalID || seen[user.ID] || len(out) >= p.MaxObservationReviewers {
+			continue
+		}
+		seen[user.ID] = true
+		out = append(out, p.Reviewer{ID: user.ID, Name: bounded(user.Name, 120),
+			Username: bounded(user.Username, 120), AvatarURL: c.safeAvatarURL(user.AvatarURL)})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 func normalize(v *response) *p.Pipeline {
 	state := "unknown"

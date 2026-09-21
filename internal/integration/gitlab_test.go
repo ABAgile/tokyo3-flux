@@ -298,3 +298,53 @@ func TestConcurrencyAndRetryBounds(t *testing.T) {
 		}
 	}
 }
+
+// Reviewer identities travel with the cached observation so a card can show who
+// is reviewing. They are bounded, deduplicated, and their avatars pass the same
+// URL gate as member profiles.
+func TestMergeRequestReviewers(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reviewers := []string{
+			fmt.Sprintf(`{"id":42,"name":"Alex Example","username":"alex","avatar_url":%q}`, server.URL+"/uploads/avatar.png"),
+			`{"id":42,"name":"Duplicate","username":"alex"}`,
+			`{"id":0,"name":"Invalid"}`,
+			`{"id":43,"name":"Blake","username":"blake","avatar_url":"http://evil.example/avatar.png"}`,
+		}
+		_, _ = fmt.Fprintf(w, `{"id":10,"iid":3,"project_id":42,"sha":"head","reviewers":[%s]}`, strings.Join(reviewers, ","))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := c.Fetch(context.Background(), p.LinkTarget{Project: 42, Kind: "mr", Number: 3})
+	if result.Outcome != "ok" || result.Observation == nil {
+		t.Fatalf("unexpected result %+v", result)
+	}
+	got := result.Observation.Reviewers
+	if len(got) != 2 {
+		t.Fatalf("reviewers = %+v, want the two valid distinct users", got)
+	}
+	if got[0].ID != 42 || got[0].Username != "alex" || got[0].AvatarURL != server.URL+"/uploads/avatar.png" {
+		t.Errorf("first reviewer lost its identity: %+v", got[0])
+	}
+	if got[1].ID != 43 || got[1].AvatarURL != "" {
+		t.Errorf("off-instance avatar was not refused: %+v", got[1])
+	}
+}
+
+func TestPipelineObservationHasNoReviewers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"id":3,"project_id":42,"sha":"old","status":"failed","reviewers":[{"id":42,"name":"Alex"}]}`))
+	}))
+	defer server.Close()
+	c, err := New(server.URL, "server-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := c.Fetch(context.Background(), p.LinkTarget{Project: 42, Kind: "pipeline", Number: 3})
+	if result.Outcome != "ok" || len(result.Observation.Reviewers) != 0 {
+		t.Fatalf("pipeline observation carries reviewers: %+v", result.Observation)
+	}
+}

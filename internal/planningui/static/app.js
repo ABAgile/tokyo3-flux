@@ -590,6 +590,46 @@ function avatarView(name, avatarURL) {
  if (avatarURL) { const image = el('img'); image.src = avatarURL; image.alt = ''; image.decoding = 'async'; image.referrerPolicy = 'no-referrer'; image.onerror = () => image.remove(); avatar.append(image); }
  return avatar;
 }
+// Participants are derived server-side from assignment, cached reviewers and
+// comment authors, so a card states who is involved without one request per
+// card. A reviewer who is not a workspace member carries its own provider
+// identity; everyone else resolves against the workspace roster.
+const PARTICIPANT_ROLE_LABELS = Object.freeze({assignee: 'Assignee', reviewer: 'Reviewer', commenter: 'Commenter'});
+const PARTICIPANT_STACK_LIMIT = 4;
+function itemParticipants(item) { return (board.participants || []).filter(participant => participant.item_id === item.id); }
+function participantInfo(participant) {
+ const member = board.members.find(value => value.subject === participant.subject);
+ // An admin-maintained workspace name wins over the provider's, so a card and
+ // the roster never disagree about the same person.
+ const name = member?.name || String(participant.name || '').trim() || (participant.subject === session?.subject && session.name) || (participant.username ? `@${participant.username}` : `Unnamed member (${participant.subject})`);
+ const roles = (participant.roles || []).map(role => PARTICIPANT_ROLE_LABELS[role] || role);
+ return {name, roles, avatarURL: participant.avatar_url || member?.avatar_url || (participant.subject === session?.subject && session.avatar_url) || '', assignee: (participant.roles || []).includes('assignee')};
+}
+function participantDescription(participant) { const info = participantInfo(participant); return info.roles.length ? `${info.name} \u00b7 ${info.roles.join(', ')}` : info.name; }
+function participantStack(item) {
+ const participants = itemParticipants(item);
+ const stack = el('div', undefined, 'participant-stack'); stack.dataset.cardSection = 'participants';
+ if (!participants.length) { stack.append(el('span', 'Unassigned', 'participant-empty')); stack.setAttribute('aria-label', 'No participants \u00b7 unassigned'); return stack; }
+ stack.setAttribute('role', 'group');
+ stack.setAttribute('aria-label', `Participants: ${participants.map(participantDescription).join('; ')}`);
+ participants.slice(0, PARTICIPANT_STACK_LIMIT).forEach(participant => {
+  const info = participantInfo(participant); const description = participantDescription(participant);
+  const avatar = avatarView(info.name, info.avatarURL); avatar.classList.add('participant-avatar');
+  // The assignee keeps a static accent ring so the planning owner is legible
+  // without colour alone and without motion.
+  if (info.assignee) { avatar.classList.add('is-assignee'); avatar.dataset.participantRole = 'assignee'; }
+  avatar.title = description; avatar.removeAttribute('aria-hidden'); avatar.setAttribute('role', 'img'); avatar.setAttribute('aria-label', description);
+  stack.append(avatar);
+ });
+ const overflow = participants.length - PARTICIPANT_STACK_LIMIT;
+ if (overflow > 0) {
+  const more = el('span', `+${overflow}`, 'participant-more');
+  const rest = participants.slice(PARTICIPANT_STACK_LIMIT).map(participantDescription).join('; ');
+  more.title = rest; more.setAttribute('role', 'img'); more.setAttribute('aria-label', `${overflow} more: ${rest}`);
+  stack.append(more);
+ }
+ return stack;
+}
 function assigneeView(subject) {
  const info = memberInfo(subject); const node = el('span', undefined, 'assignee'); node.setAttribute('aria-label', `Assignee: ${info.name}`); node.title = info.name;
  node.append(avatarView(info.name, info.avatarURL), el('span', info.name)); return node;
@@ -919,7 +959,7 @@ function applyFilterChange(name) {
 function cardRenderSignature(item, links) {
  const linkIdentity = links.map(link => ({id:link.id, project:link.project, kind:link.kind, number:link.number, items:link.items}));
  const itemView = {id:item.id, title:item.title, column_id:item.column_id, project_id:item.project_id, project_ids:itemProjectIDs(item), assignee:item.assignee, labels:item.labels, sprint_ids:item.sprint_ids, archived:item.archived, attachments:attachmentsLoaded(item) ? item.attachments : null, attachment_count:attachmentCount(item)};
- return JSON.stringify({item:itemView, links:linkIdentity, projects:itemProjectIDs(item).map(projectName), assignee:memberInfo(item.assignee), sprints:item.sprint_ids.map(id => board.sprints.find(s => s.id === id)?.name || id), labels:item.labels.map(labelInfo), blocked:blocked(item)});
+ return JSON.stringify({item:itemView, links:linkIdentity, projects:itemProjectIDs(item).map(projectName), assignee:memberInfo(item.assignee), participants:itemParticipants(item).map(participant => [participant.subject, participant.roles, participantInfo(participant).name, participantInfo(participant).avatarURL]), sprints:item.sprint_ids.map(id => board.sprints.find(s => s.id === id)?.name || id), labels:item.labels.map(labelInfo), blocked:blocked(item)});
 }
 function observationOutcomeText(link) {
  const outcomes = {unobserved:'Not observed',ok:'Observed',inaccessible:'Access denied',not_found:'Not found or hidden',unavailable:'Unavailable',invalid_response:'Invalid response',rate_limited:'Rate limited',busy:'Connector busy',disabled:'Disabled',outdated:'Older result ignored',refreshing:'Refresh pending'};
@@ -965,7 +1005,7 @@ function card(item, peers) {
  c.dataset.item = item.id;
  makeDraggable(c, 'card', item.id, item.title); itemFileDropZone(c, item);
  dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
- const meta = el('div', undefined, 'card-meta'); const projects = el('div', undefined, 'card-projects'); projects.append(...projectBadges(item)); meta.append(projects, assigneeView(item.assignee));
+ const meta = el('div', undefined, 'card-meta'); const projects = el('div', undefined, 'card-projects'); projects.append(...projectBadges(item)); meta.append(projects, participantStack(item));
  c.append(top, meta);
  const sprintTags = el('div', undefined, 'tags'); sprintTags.dataset.cardSection = 'sprints'; item.sprint_ids.forEach(id => { const tag = el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'); tag.dataset.sprintId = id; sprintTags.append(tag); }); c.append(sprintTags);
  const tags = el('div', undefined, 'tags'); tags.dataset.cardSection = 'labels'; item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
@@ -1188,10 +1228,14 @@ function listRow(item) {
  const links = board.links.filter(link => link.items.includes(item.id)); if (links.length) { const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links'); linkIndicator.setAttribute('aria-label', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`); const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); const observationLink = button('View observations', () => showLinks(item), 'card-link-details list-row-observation-link'); observationLink.dataset.focusKey = `item:${item.id}:list-observations`; observationLink.setAttribute('aria-label', `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`); observationLink.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, observationLink); linkIndicator.append(linkHead); links.forEach(link => { const line = el('span', undefined, 'list-row-link-line'); if (link.kind === 'mr') line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`)); line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`)); linkIndicator.append(line); }); statusContent.append(linkIndicator); }
  const attachmentTotal = attachmentCount(item); if (attachmentTotal) { const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments'); attachmentIndicator.setAttribute('aria-label', `${attachmentTotal} attachment${attachmentTotal === 1 ? '' : 's'}`); attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachmentTotal))); statusContent.append(attachmentIndicator); }
  if (statusContent.childElementCount) status.append(statusContent); else status.append(el('span', '—', 'list-cell-empty'));
- const assignee = listCell('Assignee', 'list-cell-assignee'); assignee.append(assigneeView(item.assignee));
+ // The list shows the same participant aggregate as a card, and keeps the
+ // assignee's name in text so the column stays scannable as a table.
+ const people = listCell('People', 'list-cell-people'); const peopleContent = el('div', undefined, 'list-row-people');
+ peopleContent.append(participantStack(item), el('span', memberName(item.assignee), 'list-row-assignee-name'));
+ people.append(peopleContent);
  const labels = listCell('Labels', 'list-cell-labels'); item.labels.forEach(label => labels.append(labelBadge(label))); if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
  const sprints = listCell('Sprints', 'list-cell-sprints'); item.sprint_ids.forEach(id => sprints.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
- row.append(title, project, assignee, labels, sprints, status);
+ row.append(title, project, people, labels, sprints, status);
  row.classList.toggle('is-selected', selectedItemID === item.id); row.classList.toggle('is-bulk-selected', bulkSelected); row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}|bulk:${bulkSelected}`; return row;
 }
 function listSection(column, items) {

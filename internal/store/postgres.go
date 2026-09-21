@@ -554,6 +554,15 @@ func (s *Store) Board(ctx context.Context, wid, subject string) (p.Board, error)
 	if err != nil {
 		return b, err
 	}
+	// Participants are derived for board reads only. The write path loads the
+	// same board to validate and snapshot a command, and neither needs to know
+	// who commented, so it does not pay for this query or carry the result into
+	// audit.
+	commenters, err := loadCommenters(ctx, tx, wid)
+	if err != nil {
+		return b, err
+	}
+	b.Participants = p.BuildParticipants(b.Items, b.Links, commenters)
 	b.ConnectorInstance = s.connector.Instance()
 	b.RefreshSeconds = int64(s.refreshInterval / time.Second)
 	if err := tx.Commit(ctx); err != nil {
@@ -748,6 +757,31 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 		return b, err
 	}
 	return b, nil
+}
+
+// loadCommenters returns the most recent distinct comment authors per card. It
+// is one grouped query for the whole workspace: a per-card request would make a
+// board read scale with the number of cards, and comment bodies are deliberately
+// left to the separate comments endpoint.
+func loadCommenters(ctx context.Context, tx pgx.Tx, wid string) ([]p.Commenter, error) {
+	rows, err := tx.Query(ctx, `SELECT item_id,author FROM (
+ SELECT item_id,author,max(id) AS latest,
+  row_number() OVER (PARTITION BY item_id ORDER BY max(id) DESC) AS position
+ FROM item_comments WHERE workspace_id=$1 GROUP BY item_id,author) ranked
+ WHERE position<=$2 ORDER BY item_id,latest DESC`, wid, p.MaxItemParticipants)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []p.Commenter{}
+	for rows.Next() {
+		var v p.Commenter
+		if err = rows.Scan(&v.ItemID, &v.Subject); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }
 
 // Change serializes workspace mutations before checking revision and WIP. Domain
