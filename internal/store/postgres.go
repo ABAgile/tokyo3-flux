@@ -1152,6 +1152,17 @@ func save(ctx context.Context, tx pgx.Tx, before, b p.Board) error {
 	for _, scope := range before.ClosedScope {
 		previousScope[scope] = struct{}{}
 	}
+	removedScope := make([]p.Scope, 0)
+	for scope := range previousScope {
+		if !slices.Contains(b.ClosedScope, scope) {
+			removedScope = append(removedScope, scope)
+		}
+	}
+	for _, scope := range removedScope {
+		if _, err := tx.Exec(ctx, "DELETE FROM closed_sprint_scope WHERE workspace_id=$1 AND sprint_id=$2 AND item_id=$3", wid, scope.SprintID, scope.ItemID); err != nil {
+			return err
+		}
+	}
 	for _, scope := range b.ClosedScope {
 		if _, ok := previousScope[scope]; ok {
 			continue

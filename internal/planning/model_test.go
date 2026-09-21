@@ -200,6 +200,23 @@ func TestReopenSprintRestoresPreservedScope(t *testing.T) {
 		t.Fatalf("reopened sprint accepted twice: %v", err)
 	}
 }
+func TestReclosingSprintReplacesPreservedScope(t *testing.T) {
+	b := testBoard()
+	b.Sprints[0].State = "active"
+	b.Items[0].SprintIDs = []string{"s1"}
+	b.Items[1].SprintIDs = []string{"s1"}
+	mustApply(t, &b, Command{Kind: "sprint.close", Target: "s1", Reason: "First closure"})
+	mustApply(t, &b, Command{Kind: "sprint.reopen", Target: "s1"})
+	b.Items[0].SprintIDs = nil
+	mustApply(t, &b, Command{Kind: "sprint.close", Target: "s1", Reason: "Updated closure"})
+	if len(b.ClosedScope) != 1 || b.ClosedScope[0].ItemID != b.Items[1].ID {
+		t.Fatalf("reclosure retained stale scope: %+v", b.ClosedScope)
+	}
+	mustApply(t, &b, Command{Kind: "sprint.reopen", Target: "s1"})
+	if !slices.Equal(b.Items[0].SprintIDs, nil) || !slices.Equal(b.Items[1].SprintIDs, []string{"s1"}) {
+		t.Fatalf("reopen restored stale scope: %+v", b.Items)
+	}
+}
 func TestMultiProjectAssociations(t *testing.T) {
 	b := testBoard()
 	item := Item{Title: "Shared project work", ColumnID: "ready", ProjectIDs: []string{"p1", "p2"}}

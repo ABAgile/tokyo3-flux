@@ -22,6 +22,44 @@ func countWorkspaces(t *testing.T, s *Store) int {
 	return count
 }
 
+func TestReclosingSprintPersistsLatestScope(t *testing.T) {
+	s := testStore(t)
+	b := bootstrap(t, s)
+	apply(t, s, &b, p.Command{Kind: "sprint.save", Sprint: &p.Sprint{Name: "Review", Goal: "Latest scope", Start: "2026-09-21", End: "2026-10-04"}})
+	sprintID := b.Sprints[len(b.Sprints)-1].ID
+	apply(t, s, &b, p.Command{Kind: "sprint.start", Target: sprintID})
+	for _, title := range []string{"Keep", "Remove"} {
+		item := newItem(b, title)
+		item.SprintIDs = []string{sprintID}
+		apply(t, s, &b, p.Command{Kind: "item.create", Item: &item})
+	}
+	var keep, remove p.Item
+	for _, item := range b.Items {
+		switch item.Title {
+		case "Keep":
+			keep = item
+		case "Remove":
+			remove = item
+		}
+	}
+	apply(t, s, &b, p.Command{Kind: "sprint.close", Target: sprintID, Reason: "First closure"})
+	apply(t, s, &b, p.Command{Kind: "sprint.reopen", Target: sprintID})
+	remove.SprintIDs = nil
+	remove.Revision = b.Items[slices.IndexFunc(b.Items, func(item p.Item) bool { return item.ID == remove.ID })].Revision
+	apply(t, s, &b, p.Command{Kind: "item.update", Target: remove.ID, Item: &remove})
+	apply(t, s, &b, p.Command{Kind: "sprint.close", Target: sprintID, Reason: "Updated closure"})
+	if len(b.ClosedScope) != 1 || b.ClosedScope[0].ItemID != keep.ID {
+		t.Fatalf("latest closure scope = %+v, want only %s", b.ClosedScope, keep.ID)
+	}
+	apply(t, s, &b, p.Command{Kind: "sprint.reopen", Target: sprintID})
+	if slices.Contains(b.Items[slices.IndexFunc(b.Items, func(item p.Item) bool { return item.ID == remove.ID })].SprintIDs, sprintID) {
+		t.Fatal("reopen restored stale scope")
+	}
+	if !slices.Contains(b.Items[slices.IndexFunc(b.Items, func(item p.Item) bool { return item.ID == keep.ID })].SprintIDs, sprintID) {
+		t.Fatal("reopen lost current scope")
+	}
+}
+
 // A repeated request with the same key and name must return the original
 // workspace rather than creating a second one. This is the path a browser
 // takes when the response to its first create was lost.

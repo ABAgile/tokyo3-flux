@@ -610,6 +610,7 @@ func Apply(b *Board, c Command) error {
 				return invalid("carry-over destination must be another open sprint")
 			}
 		}
+		b.ClosedScope = slices.DeleteFunc(b.ClosedScope, func(scope Scope) bool { return scope.SprintID == c.Target })
 		for j := range b.Items {
 			item := &b.Items[j]
 			if !slices.Contains(item.SprintIDs, c.Target) {
