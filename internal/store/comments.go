@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	p "abagile.com/tokyo3/flux/internal/planning"
@@ -21,48 +22,63 @@ func commentDigest(itemID, body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Comments returns the append-only item discussion without loading it into the
-// planning board or its revision-checked snapshots.
+// Comments retains the original oldest-first read for internal callers. New
+// HTTP clients should use CommentPage so long-lived discussions remain browsable.
 func (s *Store) Comments(ctx context.Context, wid, subject, itemID string) ([]p.Comment, error) {
-	if !validCommentItemID(itemID) {
-		return nil, p.ErrInvalid
+	page, err := s.CommentPage(ctx, wid, subject, itemID, 0, p.CommentPageLimit)
+	return page.Comments, err
+}
+
+// CommentPage returns one newest-first cursor page, reordered chronologically
+// for the caller. The cursor points before the oldest returned comment.
+func (s *Store) CommentPage(ctx context.Context, wid, subject, itemID string, before int64, limit int) (p.CommentPage, error) {
+	if !validCommentItemID(itemID) || before < 0 || limit <= 0 || limit > p.CommentPageLimit {
+		return p.CommentPage{}, p.ErrInvalid
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return nil, err
+		return p.CommentPage{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err = role(ctx, tx, wid, subject); err != nil {
-		return nil, err
+		return p.CommentPage{}, err
 	}
 	var exists bool
 	if err = tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM work_items WHERE workspace_id=$1 AND id=$2)", wid, itemID).Scan(&exists); err != nil {
-		return nil, err
+		return p.CommentPage{}, err
 	}
 	if !exists {
-		return nil, p.ErrNotFound
+		return p.CommentPage{}, p.ErrNotFound
 	}
 	rows, err := tx.Query(ctx, `SELECT id,item_id,author,body,created_at
- FROM item_comments WHERE workspace_id=$1 AND item_id=$2 ORDER BY id LIMIT $3`, wid, itemID, p.MaxItemComments)
+ FROM item_comments
+ WHERE workspace_id=$1 AND item_id=$2 AND ($3::bigint=0 OR id<$3)
+ ORDER BY id DESC LIMIT $4`, wid, itemID, before, limit+1)
 	if err != nil {
-		return nil, err
+		return p.CommentPage{}, err
 	}
 	defer rows.Close()
-	comments := make([]p.Comment, 0)
+	comments := make([]p.Comment, 0, limit)
 	for rows.Next() {
 		var comment p.Comment
 		if err = rows.Scan(&comment.ID, &comment.ItemID, &comment.Author, &comment.Body, &comment.CreatedAt); err != nil {
-			return nil, err
+			return p.CommentPage{}, err
 		}
 		comments = append(comments, comment)
 	}
 	if err = rows.Err(); err != nil {
-		return nil, err
+		return p.CommentPage{}, err
 	}
+	page := p.CommentPage{Comments: comments}
+	if len(comments) > limit {
+		page.NextBefore = comments[limit-1].ID
+		page.Comments = comments[:limit]
+	}
+	slices.Reverse(page.Comments)
 	if err = tx.Commit(ctx); err != nil {
-		return nil, err
+		return p.CommentPage{}, err
 	}
-	return comments, nil
+	return page, nil
 }
 
 // AddComment appends one immutable comment. It intentionally does not lock or

@@ -110,9 +110,9 @@ func (f *fakeRepository) History(_ context.Context, _, subject string, _ int64) 
 	f.subject = subject
 	return []Event{}, f.err
 }
-func (f *fakeRepository) Comments(_ context.Context, _, subject, item string) ([]Comment, error) {
+func (f *fakeRepository) CommentPage(_ context.Context, _, subject, item string, _ int64, _ int) (CommentPage, error) {
 	f.subject = subject
-	return []Comment{{ID: 1, ItemID: item, Author: subject, Body: "existing comment"}}, f.err
+	return CommentPage{Comments: []Comment{{ID: 1, ItemID: item, Author: subject, Body: "existing comment"}}}, f.err
 }
 func (f *fakeRepository) AddComment(_ context.Context, _, subject, item, _, body string) (Comment, error) {
 	f.commentAdds++
@@ -192,6 +192,8 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		{name: "create workspace bearer", method: "POST", url: "http://localhost/api/v2/workspaces", body: `{"name":"Team Alpha"}`, cookie: true, token: csrf, auth: "Bearer browser-credential", status: 403},
 		{name: "create workspace unknown field", method: "POST", url: "http://localhost/api/v2/workspaces", body: `{"name":"Team Alpha","subject":"spoofed"}`, cookie: true, token: csrf, status: 400},
 		{name: "comments", method: "GET", path: "/items/a/comments", cookie: true, status: 200},
+		{name: "comments page", method: "GET", path: "/items/a/comments?before=10&limit=2", cookie: true, status: 200},
+		{name: "comments bad page", method: "GET", path: "/items/a/comments?limit=0", cookie: true, status: 400},
 		{name: "comment missing csrf", method: "POST", path: "/items/a/comments", body: `{"body":"hello"}`, cookie: true, status: 403},
 		{name: "comment", method: "POST", path: "/items/a/comments", body: `{"body":"hello"}`, cookie: true, token: csrf, status: 200},
 		{name: "comment unknown field", method: "POST", path: "/items/a/comments", body: `{"body":"hello","author":"spoof"}`, cookie: true, token: csrf, status: 400},

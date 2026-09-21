@@ -29,6 +29,7 @@ const (
 	MaxWorkspaceItems  = 10000
 	MaxCommentLength   = 4000
 	MaxItemComments    = 500
+	CommentPageLimit   = MaxItemComments
 	MaxAttachmentBytes = 20 << 20
 	// MaxBufferedAttachmentBytes bounds the download path that verifies an
 	// attachment in memory before any response byte is committed. Objects above
@@ -131,6 +132,10 @@ type Comment struct {
 	Author    string    `json:"author"`
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
+}
+type CommentPage struct {
+	Comments   []Comment `json:"comments"`
+	NextBefore int64     `json:"next_before,omitempty"`
 }
 type Sprint struct {
 	ID       string `json:"id"`

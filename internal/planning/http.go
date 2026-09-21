@@ -65,7 +65,7 @@ type BurndownRepository interface {
 }
 
 type CommentRepository interface {
-	Comments(context.Context, string, string, string) ([]Comment, error)
+	CommentPage(context.Context, string, string, string, int64, int) (CommentPage, error)
 	AddComment(context.Context, string, string, string, string, string) (Comment, error)
 }
 
@@ -231,7 +231,14 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
-		v, err := h.repo.Comments(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID)
+		query := r.URL.Query()
+		before, beforeErr := strconv.ParseInt(defaultQuery(query.Get("before"), "0"), 10, 64)
+		limit, limitErr := strconv.Atoi(defaultQuery(query.Get("limit"), strconv.Itoa(CommentPageLimit)))
+		if beforeErr != nil || limitErr != nil || before < 0 || limit <= 0 || limit > CommentPageLimit {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := h.repo.CommentPage(r.Context(), r.PathValue("workspace"), h.subject(r, machine), itemID, before, limit)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("POST "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {

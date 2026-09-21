@@ -694,6 +694,14 @@ const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024, MAX_ITEM_ATTACHMENTS = 100;
 // One upload at a time per browser, so a card drop and the editor picker
 // cannot race each other onto the same item.
 let uploadBusy = false;
+const uploadRequestKeys = new Map();
+function uploadSignature(item, file) { return [item.id, file.name, file.size, file.lastModified || 0, file.type || ''].join('\u0000'); }
+function uploadRequestKey(item, file) {
+ const signature = uploadSignature(item, file); let key = uploadRequestKeys.get(signature);
+ if (!key) { if (uploadRequestKeys.size >= 1000) uploadRequestKeys.delete(uploadRequestKeys.keys().next().value); key = requestKey(); uploadRequestKeys.set(signature, key); }
+ return {signature, key};
+}
+function clearUploadRequestKey(signature) { uploadRequestKeys.delete(signature); }
 function attachmentRejection(item, file) {
  if (attachmentCount(item) >= MAX_ITEM_ATTACHMENTS) return `This card already has the maximum of ${MAX_ITEM_ATTACHMENTS} attachments.`;
  if (!file || typeof file.name !== 'string' || !file.name || !Number.isFinite(file.size) || file.size < 0) return 'Choose a file first.';
@@ -704,13 +712,14 @@ function attachmentRejection(item, file) {
 // file drops. Progress is reported as a 0..1 fraction, or undefined when the
 // browser cannot measure the request body.
 async function uploadItemFile(item, file, onProgress) {
- const currentBoard = board, currentRoot = root;
+ const currentRoot = root; const request = uploadRequestKey(item, file);
  const form = new FormData(); form.append('file', file);
  const data = await apiUpload(`${currentRoot}/items/${encodeURIComponent(item.id)}/attachments`, {
-  headers: {'X-CSRF-Token': session.csrf, 'Idempotency-Key': requestKey()}, body: form, onProgress,
+  headers: {'X-CSRF-Token': session.csrf, 'Idempotency-Key': request.key}, body: form, onProgress,
  });
  if (!validAttachments([data]) || data.item_id !== item.id) throw new Error('Attachment response is invalid. Refresh to retry.');
- if (board !== currentBoard || root !== currentRoot) return undefined;
+ clearUploadRequestKey(request.signature);
+ if (root !== currentRoot) return undefined;
  // Without the current list there is nothing to append to, so the count is
  // advanced and the list reloaded rather than invented from one response.
  if (attachmentsLoaded(item)) setItemAttachments(item, [...item.attachments.filter(value => value.id !== data.id), data]);
@@ -1709,7 +1718,9 @@ async function reconcileItemLinks(itemID, desiredIDs) {
 function commentTime(value) {
  const date = new Date(value); if (Number.isNaN(date.getTime())) return {label:'Unknown time', dateTime:''}; return {label:date.toLocaleString(), dateTime:date.toISOString()};
 }
-function validComments(data) { return Array.isArray(data) && data.every(comment => comment && Number.isSafeInteger(comment.id) && comment.id > 0 && typeof comment.item_id === 'string' && typeof comment.author === 'string' && comment.author && typeof comment.body === 'string' && comment.body && typeof comment.created_at === 'string' && !Number.isNaN(Date.parse(comment.created_at))); }
+const COMMENT_PAGE_LIMIT = 100;
+function validComment(comment) { return comment && Number.isSafeInteger(comment.id) && comment.id > 0 && typeof comment.item_id === 'string' && typeof comment.author === 'string' && comment.author && typeof comment.body === 'string' && comment.body && typeof comment.created_at === 'string' && !Number.isNaN(Date.parse(comment.created_at)); }
+function validCommentPage(data) { return data && Array.isArray(data.comments) && data.comments.every(validComment) && (data.next_before === undefined || (Number.isSafeInteger(data.next_before) && data.next_before >= 0)); }
 function commentNode(comment) {
  const row = el('article', undefined, 'comment'); row.dataset.commentId = String(comment.id); row.dataset.renderSignature = JSON.stringify({comment, member:memberInfo(comment.author)});
  const info = memberInfo(comment.author); const avatar = el('span', undefined, 'avatar comment-avatar'); avatar.setAttribute('aria-hidden', 'true'); avatar.append(el('span', initials(info.name), 'avatar-fallback'));
@@ -1721,37 +1732,40 @@ function renderCommentList(list, comments) {
  reconcileKeyedChildren(list, next, node => `comment:${node.dataset.commentId}`);
 }
 function renderItemComments(fields, item) {
- const currentBoard = board, currentRoot = root; const section = el('section', undefined, 'item-comments'); const heading = panelHead('Comments'); const status = statusLine(); const list = el('div', undefined, 'comment-list'); let commentBusy = false; let commentLoad = 0; let addButton, textarea, refreshCommentPreview;
+ const currentRoot = root; const section = el('section', undefined, 'item-comments'); const heading = panelHead('Comments'); const status = statusLine(); const older = button('Load older comments'); older.className = 'comment-load-older'; older.hidden = true; const list = el('div', undefined, 'comment-list'); let comments = [], nextBefore = 0, commentBusy = false, commentLoad = 0, pendingCommentBody = '', pendingCommentKey = ''; let addButton, textarea, refreshCommentPreview;
  const setStatus = (text, error = false) => setStatusText(status, text, error); setStatus('Loading comments…');
- section.append(heading, status, list);
+ section.append(heading, status, older, list);
  if (board.role !== 'member' && board.role !== 'admin') section.append(helpText('Viewers can read comments; members and admins can add them.'));
  else {
   const composer = el('div', undefined, 'comment-composer'); const editor = markdownEditor(composer, 'comment_body', 'Add a comment', '', 4000); textarea = editor.input; textarea.dataset.commentControl = 'true'; refreshCommentPreview = editor.refresh; addButton = button('Add comment', addComment, 'primary'); addButton.dataset.commentWrite = 'true'; addButton.disabled = !canComment(); composer.append(addButton); section.append(composer);
  }
  fields.append(section);
- async function loadComments() {
-  const loadID = ++commentLoad; setStatus('Loading comments…');
+ async function loadComments(before = 0, append = false) {
+  const loadID = ++commentLoad; setStatus('Loading comments…'); older.disabled = true;
   try {
-   const data = await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments');
-   if (loadID !== commentLoad || board !== currentBoard || root !== currentRoot || !section.isConnected) return false;
-   if (!validComments(data)) throw new Error('Comments are invalid. Reopen the item to retry.');
-   renderCommentList(list, data); setStatus(data.length ? `${data.length} comment${data.length === 1 ? '' : 's'}.` : 'No comments yet.'); return true;
-  } catch (error) { if (loadID === commentLoad && board === currentBoard && root === currentRoot && section.isConnected) setStatus(error.message, true); return false; }
+   const query = new URLSearchParams({limit: String(COMMENT_PAGE_LIMIT)}); if (before) query.set('before', String(before));
+   const page = await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments?' + query);
+   if (loadID !== commentLoad || root !== currentRoot || !section.isConnected) return false;
+   if (!validCommentPage(page)) throw new Error('Comments are invalid. Reopen the item to retry.');
+   comments = append ? [...page.comments, ...comments] : page.comments; nextBefore = page.next_before || 0; older.hidden = !nextBefore; older.disabled = false; renderCommentList(list, comments); setStatus(comments.length ? `${comments.length}${nextBefore ? '+' : ''} comment${comments.length === 1 ? '' : 's'} loaded.` : 'No comments yet.'); return true;
+  } catch (error) { if (loadID === commentLoad && root === currentRoot && section.isConnected) { older.hidden = !nextBefore; older.disabled = false; setStatus(error.message, true); } return false; }
  }
+ older.onclick = () => { if (nextBefore && !commentBusy) void loadComments(nextBefore, true); };
  async function addComment() {
   if (!addButton || commentBusy || !canComment()) return; const body = textarea.value.trim();
   if (!body) { setStatus('Comment cannot be empty.', true); textarea.focus(); return; }
+  if (body !== pendingCommentBody) { pendingCommentBody = body; pendingCommentKey = requestKey(); }
   commentBusy = true; commentLoad++; addButton.disabled = true; setStatus('Adding comment…');
   try {
-   await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf,'Idempotency-Key':requestKey()}, body:JSON.stringify({body})});
-   if (board !== currentBoard || root !== currentRoot || !section.isConnected) return; textarea.value = ''; refreshCommentPreview(); textarea.dispatchEvent(new Event('input', {bubbles:true})); await loadComments();
-  } catch (error) { if (board === currentBoard && root === currentRoot && section.isConnected) setStatus(error.message, true); }
+   await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments', {method:'POST', headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf,'Idempotency-Key':pendingCommentKey}, body:JSON.stringify({body})});
+   if (root !== currentRoot || !section.isConnected) return; pendingCommentBody = ''; pendingCommentKey = ''; textarea.value = ''; refreshCommentPreview(); textarea.dispatchEvent(new Event('input', {bubbles:true})); await loadComments();
+  } catch (error) { if (root === currentRoot && section.isConnected) setStatus(error.message, true); }
   finally { commentBusy = false; if (addButton && section.isConnected) { addButton.disabled = !canComment(); renderControls(); } }
  }
- loadComments();
+ void loadComments();
 }
 function renderItemAttachments(fields, item, readOnly) {
- const currentBoard = board, currentRoot = root;
+ const currentRoot = root;
  const section = el('section', undefined, 'item-attachments'); section.setAttribute('aria-label', 'Attachments');
  const heading = el('div', undefined, 'section-head');
  const headingTitle = el('div', undefined, 'attachment-heading');
@@ -1774,7 +1788,7 @@ function renderItemAttachments(fields, item, readOnly) {
   if (attachmentBusy || !writable()) return; attachmentBusy = true; setStatus(`Removing ${attachment.name}…`);
   try {
    await api(attachmentHref(item, attachment, currentRoot), {method:'DELETE', headers:{'X-CSRF-Token':session.csrf}});
-   if (board !== currentBoard || root !== currentRoot || !section.isConnected) return;
+   if (root !== currentRoot || !section.isConnected) return;
    setItemAttachments(item, (item.attachments || []).filter(value => value.id !== attachment.id)); renderList(); renderContent(); setStatus(item.attachments.length ? 'Attachment removed.' : 'No attachments yet.');
   } catch (error) { if (section.isConnected) setStatus(error.message, true); }
   finally { attachmentBusy = false; if (section.isConnected) renderControls(); }
@@ -1793,7 +1807,7 @@ function renderItemAttachments(fields, item, readOnly) {
    attachmentBusy = true; uploadBusy = true; add.disabled = true; setStatus(`Uploading ${file.name}…`); showProgress(0); let uploaded = false;
    try {
     await uploadItemFile(item, file, fraction => { if (!section.isConnected) return; showProgress(fraction); if (fraction !== undefined) setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`); });
-    if (board !== currentBoard || root !== currentRoot || !section.isConnected) return false;
+    if (root !== currentRoot || !section.isConnected) return false;
     renderList(); renderContent(); setStatus('Attachment uploaded.'); uploaded = true;
    } catch (error) { if (section.isConnected) setStatus(error.message, true); }
    finally { attachmentBusy = false; uploadBusy = false; hideProgress(); if (section.isConnected) { add.disabled = !writable(); renderControls(); if (!add.disabled) add.focus(); } }

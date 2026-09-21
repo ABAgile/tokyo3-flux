@@ -71,6 +71,32 @@ func TestPostgresItemCommentsAreSeparateAppendOnlyStream(t *testing.T) {
 	}
 }
 
+func TestPostgresCommentCursorPagesRecentHistory(t *testing.T) {
+	s := testStore(t)
+	b := bootstrap(t, s)
+	ctx := context.Background()
+	item := newItem(b, "Paged comments")
+	apply(t, s, &b, p.Command{Kind: "item.create", Item: &item})
+	item = b.Items[0]
+	for i := 1; i <= 5; i++ {
+		if _, err := s.AddComment(ctx, b.Workspace.ID, "alice", item.ID, p.NewID(), string(rune('0'+i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	page, err := s.CommentPage(ctx, b.Workspace.ID, "alice", item.ID, 0, 2)
+	if err != nil || len(page.Comments) != 2 || page.Comments[0].Body != "4" || page.Comments[1].Body != "5" || page.NextBefore == 0 {
+		t.Fatalf("latest page = %+v, %v", page, err)
+	}
+	page, err = s.CommentPage(ctx, b.Workspace.ID, "alice", item.ID, page.NextBefore, 2)
+	if err != nil || len(page.Comments) != 2 || page.Comments[0].Body != "2" || page.Comments[1].Body != "3" || page.NextBefore == 0 {
+		t.Fatalf("middle page = %+v, %v", page, err)
+	}
+	page, err = s.CommentPage(ctx, b.Workspace.ID, "alice", item.ID, page.NextBefore, 2)
+	if err != nil || len(page.Comments) != 1 || page.Comments[0].Body != "1" || page.NextBefore != 0 {
+		t.Fatalf("oldest page = %+v, %v", page, err)
+	}
+}
+
 func TestPostgresOnlyPlanningMembersCanAddComments(t *testing.T) {
 	s := testStore(t)
 	b := bootstrap(t, s)

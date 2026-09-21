@@ -387,7 +387,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. The workspace collectio
 | `GET /gitlab/users?search=TEXT` | Admin-only active GitLab user catalog for workspace membership management; results are connector-provided and capped. |
 | `GET /gitlab/merge-requests?project=ID&scope=recent\|assigned_to_me\|board_members&search=TEXT` | Search merge requests in one currently approved project; browser members/admins only. Numeric search targets an exact project-scoped IID; assignment scopes use workspace GitLab member IDs. |
 | `GET /burndown?sprint=ID&project=ID\|all\|none&assignee=SUBJECT\|all\|none` | Daily native remaining-work counts and scope; filters are combinable. |
-| `GET /items/{item}/comments` | Read the item’s flat append-only comments, including author and creation time. |
+| `GET /items/{item}/comments?before=ID&limit=N` | Read a newest-first cursor page of the item’s flat append-only comments, returned chronologically within the page; `next_before` loads older comments. `limit` is at most 500. |
 | `POST /items/{item}/comments` | Add one comment as the authenticated planning member; does not require or change planning revision. |
 | `GET /items/{item}/attachments` | List one card’s attachment metadata after workspace membership authorization; board reads carry only the count. |
 | `GET /items/{item}/attachments/{attachment}` | Download one attachment after workspace membership authorization. |
@@ -490,8 +490,7 @@ are capped at 50 results/IDs per request. Each item permits 20
 labels, 50 dependencies and 20 external links. Titles are at most 240 bytes,
 descriptions 16,000, comments and rationale/goals 4,000. Each item permits 100 attachments
 of at most 20 MiB each (10,000 attachments per workspace); filenames and MIME types are at most
-255 bytes. Comment reads return
-up to 500 oldest comments per item. Self-dependencies and cycles are rejected; WIP has no
+255 bytes. Comment pages return up to 500 comments per request and expose a cursor for older history. Self-dependencies and cycles are rejected; WIP has no
 administrator bypass.
 
 Mutation bodies are capped at 64 KiB. Proposals allow 1–50 operations/import records
