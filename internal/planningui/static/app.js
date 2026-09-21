@@ -1,6 +1,7 @@
 // Flux planning shell. Loaded as an ES module, so strict mode is implicit.
 import {$, el, button, options, svgNode, syncAttributes, field, uid, noAutofill} from './modules/dom.js';
 import {api, apiRevalidated, apiUpload, requestKey} from './modules/api.js';
+import {itemPayloadFromForm} from './modules/item-command.js';
 // Board reads are revalidated against the copy already in memory, so a refresh
 // that finds nothing new transfers no payload. The ETag is scoped to the root
 // it was issued for and discarded whenever the workspace changes.
@@ -1944,9 +1945,6 @@ function selectItem(itemID, origin) {
  if (!closeDetail({focus:false})) return false; const item = board.items.find(value => value.id === itemID); if (!item) return false; selectedItemID = itemID; openItemDetail(item, undefined, origin); return true;
 }
 function updateDetailHeader(item) { if (!detailState?.form || !item) return; detailState.item = item; const title = detailState.form.querySelector('.item-detail-title'); if (title?.firstChild) title.firstChild.nodeValue = item.title; const help = title?.querySelector('.help-popover-content'); if (help) help.textContent = `Card ID: ${item.id}\nRevision: ${item.revision}`; }
-function itemPayloadFromForm(data, item) {
- return {...item, project_id:undefined, title:String(data.get('title') || '').trim(), description:data.get('description'), column_id:data.get('column_id'), project_ids:data.getAll('project_id').filter(Boolean), sprint_ids:data.getAll('sprint_ids'), assignee:data.get('assignee'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies')};
-}
 function openItemDetail(item, draft, origin) {
  if (!detailPane) return; const readOnly = board.role === 'viewer' || item.archived; const form = el('form', undefined, 'item-detail-form'); const heading = el('div', undefined, 'item-detail-head'); const title = el('h2', item.title, 'item-detail-title'); const actions = el('div', undefined, 'item-detail-head-actions'); const close = button('×', () => closeDetail(), 'item-detail-close'); close.setAttribute('aria-label', 'Close item details'); actions.append(close); heading.append(title, actions);
  const fields = el('div', undefined, 'item-detail-fields'); const error = errorLine('', 'item-detail-error'); const footer = el('div', undefined, 'item-detail-footer'); const cancel = button('Cancel', () => closeDetail(), 'detail-cancel'); const save = button('Save changes', undefined, 'primary'); save.type = 'submit'; save.dataset.write = 'true'; footer.append(cancel, save); form.append(heading, fields, error, footer); detailPane.replaceChildren(form); detailPane.hidden = false;
