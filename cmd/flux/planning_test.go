@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
 
+	"abagile.com/tokyo3/flux/internal/planning"
 	"abagile.com/tokyo3/flux/internal/store"
 	"github.com/abagile/tokyo3-base/cli"
 	"github.com/abagile/tokyo3-base/ratelimit"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPlanValidation(t *testing.T) {
@@ -44,14 +48,35 @@ func TestPlanningSeed(t *testing.T) {
 	if dsn == "" {
 		t.Skip("set FLUX_TEST_DATABASE_URL for PostgreSQL seed integration")
 	}
-	// Use the store integration tests for schema isolation. This test uses a
-	// dedicated database supplied by the test operator and unique workspace IDs.
 	ctx := context.Background()
-	s, err := store.Open(ctx, cli.DB{URL: dsn})
+	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	schema := "flux_seed_test_" + strings.ToLower(planning.NewID())
+	quoted := pgx.Identifier{schema}.Sanitize()
+	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := admin.Exec(ctx, "DROP SCHEMA "+quoted+" CASCADE"); err != nil {
+			t.Error(err)
+		}
+		admin.Close()
+	})
+	databaseURL, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := databaseURL.Query()
+	query.Set("search_path", schema)
+	databaseURL.RawQuery = query.Encode()
+	s, err := store.Open(ctx, cli.DB{URL: databaseURL.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
 	if err = s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
