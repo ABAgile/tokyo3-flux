@@ -828,7 +828,7 @@ function itemProjectIDs(item) {
 }
 function projectBadges(item, className = 'card-project') {
  const names = itemProjectIDs(item).map(projectName); if (!names.length) names.push('No project');
- return names.map(name => el('span', name, `badge ${className}`));
+ return names.map(name => el('span', name, `badge badge-project ${className}`));
 }
 function labelInfo(name) { return board.labels.find(label => label.name === name) || {name, color: '#dcefe4'}; }
 function renderProjectSummary() {
@@ -840,7 +840,7 @@ function renderProjectSummary() {
  const coverage = el('div', undefined, 'project-sprint-coverage'); coverage.append(el('span', 'Active sprint coverage', 'project-sprint-coverage-label')); active.forEach(sprint => { const count = items.filter(item => item.sprint_ids.includes(sprint.id)).length; coverage.append(el('span', `${sprint.name} · ${count}`, 'badge')); }); if (unscheduled) coverage.append(el('span', `Backlog · ${unscheduled}`, 'badge')); if (!active.length && !unscheduled) coverage.append(el('span', 'None', 'muted'));
  summary.hidden = false; summary.setAttribute('aria-label', `${project.name} project summary`); summary.replaceChildren(head, metrics, coverage);
 }
-function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge label-badge'); badge.dataset.label = name; badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
+function labelBadge(name) { const label = labelInfo(name); const badge = el('span', name, 'badge badge-label label-badge'); badge.dataset.label = name; badge.style.backgroundColor = label.color; badge.style.color = labelForeground(label.color); return badge; }
 function styleLabelOptions(select) { [...select.options].forEach(option => { const label = labelInfo(option.value); option.style.backgroundColor = label.color; option.style.color = labelForeground(label.color); }); }
 function done(item) { return board.columns.find(c => c.id === item.column_id)?.category === 'done'; }
 // Dependency targets may be archived, so resolution spans the board payload and
@@ -1007,7 +1007,7 @@ function card(item, peers) {
  dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
  const meta = el('div', undefined, 'card-meta'); const projects = el('div', undefined, 'card-projects'); projects.append(...projectBadges(item)); meta.append(projects, participantStack(item));
  c.append(top, meta);
- const sprintTags = el('div', undefined, 'tags'); sprintTags.dataset.cardSection = 'sprints'; item.sprint_ids.forEach(id => { const tag = el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'); tag.dataset.sprintId = id; sprintTags.append(tag); }); c.append(sprintTags);
+ const sprintTags = el('div', undefined, 'tags'); sprintTags.dataset.cardSection = 'sprints'; item.sprint_ids.forEach(id => { const tag = el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge badge-sprint'); tag.dataset.sprintId = id; sprintTags.append(tag); }); c.append(sprintTags);
  const tags = el('div', undefined, 'tags'); tags.dataset.cardSection = 'labels'; item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
  if (item.archived) {
   const controls = el('div', undefined, 'card-controls');
@@ -1234,7 +1234,7 @@ function listRow(item) {
  peopleContent.append(participantStack(item), el('span', memberName(item.assignee), 'list-row-assignee-name'));
  people.append(peopleContent);
  const labels = listCell('Labels', 'list-cell-labels'); item.labels.forEach(label => labels.append(labelBadge(label))); if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
- const sprints = listCell('Sprints', 'list-cell-sprints'); item.sprint_ids.forEach(id => sprints.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge'))); if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
+ const sprints = listCell('Sprints', 'list-cell-sprints'); item.sprint_ids.forEach(id => sprints.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge badge-sprint'))); if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
  row.append(title, project, people, labels, sprints, status);
  row.classList.toggle('is-selected', selectedItemID === item.id); row.classList.toggle('is-bulk-selected', bulkSelected); row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}|bulk:${bulkSelected}`; return row;
 }

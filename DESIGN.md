@@ -105,7 +105,12 @@ a validated HTTPS Gravatar avatar URL.
   expanded burn-down spans the full panel width. At constrained widths, the header becomes a single column and
   metrics use a full-width wrapping row.
 - Cards show all associated projects (or No project) and all open sprint memberships as badges; project and the
-  participant stack share a metadata row, with the stack aligned right. Participants are a read-only aggregate of
+  participant stack share a metadata row, with the stack aligned right. Project, sprint and label badges are told
+  apart by shape and a leading glyph rather than colour alone, since label colours already own the palette: a
+  project badge (`badge-project`) is `▤` on the inset surface with a 1px border-toned hairline, a sprint badge
+  (`badge-sprint`) is `◷` on the same inset surface with no outline and body ink, and a label badge (`badge-label`) is `▥`
+  on its own palette swatch with a faint hairline of its contrasting ink. Hairlines are inset shadows, so all badges keep
+  one height, and the glyphs carry empty alternative text so screen readers read only the name. Participants are a read-only aggregate of
   who is involved with a card: the assignee, the reviewers of its cached merge-request observations, and its comment
   authors. The same person appears once with every role merged, ordered assignee, reviewers, then most recent
   commenters, and at most twelve are carried per card so a long thread never turns a board read into a roster dump.
