@@ -165,29 +165,18 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("POST /api/v2/workspaces", func(w http.ResponseWriter, r *http.Request) {
-		if machine || r.Header.Get("Authorization") != "" {
-			h.failure(w, r, ErrForbidden)
+		if !h.authorizeBrowserWrite(w, r, machine) {
 			return
 		}
-		if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
-			h.failure(w, r, ErrForbidden)
-			return
-		}
-		if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
+		if !jsonContentType(r) || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
 		var input struct {
 			Name string `json:"name"`
 		}
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&input); err != nil {
-			h.failure(w, r, ErrInvalid)
-			return
-		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			h.failure(w, r, ErrInvalid)
+		if err := decodeJSON(w, r, &input); err != nil {
+			h.failure(w, r, err)
 			return
 		}
 		workspace, err := h.repo.CreateWorkspace(r.Context(), input.Name, h.subject(r, false), r.Header.Get("Idempotency-Key"))
@@ -242,15 +231,10 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("POST "+commentsRoot, func(w http.ResponseWriter, r *http.Request) {
-		if machine || r.Header.Get("Authorization") != "" {
-			h.failure(w, r, ErrForbidden)
+		if !h.authorizeBrowserWrite(w, r, machine) {
 			return
 		}
-		if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
-			h.failure(w, r, ErrForbidden)
-			return
-		}
-		if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
+		if !jsonContentType(r) || !validCommentIdempotencyKey(r.Header.Get("Idempotency-Key")) {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
@@ -262,14 +246,8 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		var input struct {
 			Body string `json:"body"`
 		}
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&input); err != nil {
-			h.failure(w, r, ErrInvalid)
-			return
-		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			h.failure(w, r, ErrInvalid)
+		if err := decodeJSON(w, r, &input); err != nil {
+			h.failure(w, r, err)
 			return
 		}
 		comment, err := h.repo.AddComment(r.Context(), r.PathValue("workspace"), h.subject(r, false), itemID, r.Header.Get("Idempotency-Key"), input.Body)
@@ -438,27 +416,16 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("POST "+root+"/changes", func(w http.ResponseWriter, r *http.Request) {
-		if machine || r.Header.Get("Authorization") != "" {
-			h.failure(w, r, ErrForbidden)
+		if !h.authorizeBrowserWrite(w, r, machine) {
 			return
 		}
-		if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
-			h.failure(w, r, ErrForbidden)
-			return
-		}
-		if strings.Split(r.Header.Get("Content-Type"), ";")[0] != "application/json" {
+		if !jsonContentType(r) {
 			h.failure(w, r, ErrInvalid)
 			return
 		}
 		var c Command
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&c); err != nil {
-			h.failure(w, r, ErrInvalid)
-			return
-		}
-		if err := dec.Decode(new(any)); err != io.EOF {
-			h.failure(w, r, ErrInvalid)
+		if err := decodeJSON(w, r, &c); err != nil {
+			h.failure(w, r, err)
 			return
 		}
 		workspaceID, subject := r.PathValue("workspace"), h.subject(r, false)
@@ -521,13 +488,36 @@ func requestID(ctx context.Context) string {
 	return id
 }
 
-func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
+func (h *HTTP) authorizeBrowserWrite(w http.ResponseWriter, r *http.Request, machine bool) bool {
 	if machine || r.Header.Get("Authorization") != "" {
 		h.failure(w, r, ErrForbidden)
-		return
+		return false
 	}
 	if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
 		h.failure(w, r, ErrForbidden)
+		return false
+	}
+	return true
+}
+
+func jsonContentType(r *http.Request) bool {
+	return strings.Split(r.Header.Get("Content-Type"), ";")[0] == "application/json"
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return ErrInvalid
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
+	if !h.authorizeBrowserWrite(w, r, machine) {
 		return
 	}
 	if h.blobs == nil {
@@ -724,12 +714,7 @@ func verifyAttachmentObject(object blobstore.Object, expectedDigest string, dst 
 }
 
 func (h *HTTP) deleteAttachment(w http.ResponseWriter, r *http.Request, machine bool) {
-	if machine || r.Header.Get("Authorization") != "" {
-		h.failure(w, r, ErrForbidden)
-		return
-	}
-	if !h.sessions.ValidateCSRF(r, r.Header.Get("X-CSRF-Token"), "planning") {
-		h.failure(w, r, ErrForbidden)
+	if !h.authorizeBrowserWrite(w, r, machine) {
 		return
 	}
 	if h.blobs == nil {
