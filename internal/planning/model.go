@@ -259,7 +259,7 @@ func Apply(b *Board, c Command) error {
 		if b.Role != "admin" {
 			return ErrForbidden
 		}
-		i := slices.IndexFunc(b.Members, func(m Member) bool { return m.Subject == c.Target })
+		i := memberIndex(b, c.Target)
 		if i < 0 {
 			return ErrNotFound
 		}
@@ -785,7 +785,7 @@ func Validate(b *Board) error {
 		if strings.TrimSpace(item.Title) == "" || len(item.Title) > 240 || len(item.Description) > 16000 || !hasColumn(b, item.ColumnID) {
 			return invalid("item requires title and valid column; content may exceed limits")
 		}
-		if item.Assignee != "" && !slices.ContainsFunc(b.Members, func(m Member) bool { return m.Subject == item.Assignee }) {
+		if item.Assignee != "" && memberIndex(b, item.Assignee) < 0 {
 			return invalid("assignee must be a workspace member")
 		}
 		projects := ItemProjectIDs(item)

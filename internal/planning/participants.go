@@ -1,6 +1,9 @@
 package planning
 
-import "strconv"
+import (
+	"slices"
+	"strconv"
+)
 
 // Participant roles, in the order a card presents them. The assignee is the
 // planning owner, a reviewer comes from a cached merge-request observation, and
@@ -57,12 +60,9 @@ func BuildParticipants(items []Item, links []ExternalLink, commenters []Commente
 			indexes[itemID] = byItem
 		}
 		if index, seen := byItem[subject]; seen {
-			for _, held := range out[index].Roles {
-				if held == role {
-					return
-				}
+			if !slices.Contains(out[index].Roles, role) {
+				out[index].Roles = append(out[index].Roles, role)
 			}
-			out[index].Roles = append(out[index].Roles, role)
 			return
 		}
 		if len(byItem) >= MaxItemParticipants {
