@@ -220,6 +220,30 @@ func TestReclosingSprintReplacesPreservedScope(t *testing.T) {
 		t.Fatalf("reopen restored stale scope: %+v", b.Items)
 	}
 }
+func TestSprintClosureAndArchive(t *testing.T) {
+	b := testBoard()
+	b.Sprints[0].State = "active"
+	b.Items[0].SprintIDs = []string{"s1"}
+	b.Items[1].SprintIDs = []string{"s1"}
+	b.Items[1].ColumnID = "done"
+	mustApply(t, &b, Command{Kind: "sprint.close", Target: "s1", Destination: "s2", Reason: "Carry unfinished work"})
+	closure := SprintClosureFor(b, "s1", "s2")
+	if closure.ScopeCount != 2 || closure.CompletedCount != 1 || closure.CarryOverCount != 1 {
+		t.Fatalf("closure summary = %+v", closure)
+	}
+	mustApply(t, &b, Command{Kind: "sprint.archive", Target: "s1"})
+	if b.Sprints[0].State != "archived" {
+		t.Fatalf("state = %q", b.Sprints[0].State)
+	}
+	if err := Apply(&b, Command{Kind: "sprint.reopen", Target: "s1", Revision: b.Workspace.Revision}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("archived sprint reopened: %v", err)
+	}
+	visible := BrowserBoard(b)
+	if slices.ContainsFunc(visible.Sprints, func(s Sprint) bool { return s.ID == "s1" }) || slices.ContainsFunc(visible.ClosedScope, func(scope Scope) bool { return scope.SprintID == "s1" }) {
+		t.Fatalf("archived sprint leaked into browser board: %+v", visible)
+	}
+}
+
 func TestMultiProjectAssociations(t *testing.T) {
 	b := testBoard()
 	item := Item{Title: "Shared project work", ColumnID: "ready", ProjectIDs: []string{"p1", "p2"}}

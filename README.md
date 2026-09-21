@@ -22,7 +22,10 @@ planning evidence and draft suggestions for a human to review and approve.
   memberships and optionally assigns unfinished work to another open sprint. Closed sprints can
   be re-opened, restoring their preserved scope while retaining other memberships; closing a
   reopened sprint replaces that preserved scope with its current memberships.
-  Closed-scope metrics describe current cards, not historical completion.
+  Closed-scope metrics describe current cards, not historical completion. Closed sprints can be
+  archived after closure; archiving removes them from working selectors without deleting them and
+  preserves an immutable closure summary in paginated sprint history. Archived sprints cannot be
+  reopened or edited and do not count toward the 200 non-archived sprint limit.
 - Item comments are a separate flat, append-only stream. Each comment retains its
   author and creation time; members and admins can add comments, viewers can read
   them, and comments never alter planning revisions, audit snapshots or burn-down
@@ -183,12 +186,13 @@ window in bounded batches. It uses admin credentials because the runtime role ha
 `audit_events`, and the minimum keeps a full-length sprint's burn-down history intact. Schedule
 it periodically: every planning change records a board snapshot, so the table grows with
 activity and never shrinks on its own.
-Serving requires schema 12 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 13 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
 comments; migration 010 adds attachment metadata; migration 011 adds normalized multi-project
 item associations; migration 012 adds the durable attachment-cleanup queue used to retry
-failed blob deletions. Back up and restore-test
+failed blob deletions; migration 013 adds immutable sprint-closure summaries and the archived
+sprint history projection. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -204,6 +208,7 @@ GRANT INSERT, UPDATE, DELETE ON board_columns TO flux_runtime;
 GRANT INSERT, DELETE ON item_labels, workspace_labels, dependencies, item_sprints, item_projects TO flux_runtime;
 GRANT INSERT ON closed_sprint_scope, work_item_events, audit_events,
   idempotency_keys TO flux_runtime;
+GRANT INSERT, UPDATE ON sprint_closures TO flux_runtime;
 GRANT INSERT, UPDATE ON workspace_integrations, integration_runs, proposals TO flux_runtime;
 GRANT INSERT, DELETE ON approved_gitlab_projects, item_external_links,
   webhook_deliveries TO flux_runtime;
@@ -387,6 +392,7 @@ Authenticated JSON routes use `Cache-Control: no-store`. The workspace collectio
 | `GET /projects`, `GET /board` | Project list and planning board. The board carries the live working set; archived items appear only while closed sprint scope or a dependency edge still references them. Each item reports `attachment_count` rather than attachment metadata. The board also carries a derived `participants` list: per card, the assignee, the reviewers of cached merge-request observations and the most recent comment authors, deduplicated with merged roles and capped at twelve per card, so a card shows who is involved without one request per card. It is read-only and never accepted from a client. The board is a conditional read: it answers an `ETag`, and a matching `If-None-Match` returns 304 with no body. |
 | `GET /revision` | Cheap freshness probe returning workspace revision, caller role, and a GitLab observation digest, so clients poll without reading the board. |
 | `GET /archive?offset=N&limit=N` | One page of archived work items, up to 50 per request, ordered with the board. |
+| `GET /sprints/archive?offset=N&limit=N` | One page of archived sprints and immutable closure summaries, up to 50 per request, newest closure first. |
 | `GET /items/{item}` | One card by identity, active or archived, with the caller role and workspace revision. Backs shared card links, so a link resolves without paging the archive; a missing card and a workspace the caller cannot enter answer the same 404. |
 | `GET /gitlab/projects` | Server-side GitLab project catalog; admins see connector-visible projects, other readers see only current approvals. |
 | `GET /gitlab/users?search=TEXT` | Admin-only active GitLab user catalog for workspace membership management; results are connector-provided and capped. |
@@ -448,7 +454,8 @@ Command kinds and payloads:
   optional existing `target` and entity revision where applicable.
 - `column.rank` (`target`, optional `before`), `column.delete` (`target`,
   destination column); `sprint.start` (`target`), `sprint.close` (`target`, reason,
-  optional destination open sprint), `sprint.reopen` (`target`).
+  optional destination open sprint), `sprint.reopen` (`target`), `sprint.archive` (`target`,
+  closed sprint only).
 - `label.save` (`name`, `color`, optional target), `label.delete` (`target`);
   admin-only `member.save` (`member:{subject,role,name}`, optional existing target),
   `member.delete` (`target`), and legacy `member.name` (`target` subject, name).
@@ -481,12 +488,14 @@ remains fully recorded in planning history.
 
 Labels may use names such as `type::bug` or `priority::high`; each workspace label
 also has a selectable palette color shown on cards. Columns have name, category
-(`todo|doing|done`) and WIP (0 = unlimited). Sprints have name, goal and start/end
-(`YYYY-MM-DD`).
+(`todo|doing|done`) and WIP (0 = unlimited). Sprints have name, goal, start/end
+(`YYYY-MM-DD`) and lifecycle state (`planned|active|closed|archived`). Closure summaries record
+closure time, committed scope, completed-at-closure count and carry-over count.
 
 ## Limits and development
 
-Per workspace: 1,000 items including archived work, 200 sprints, 100 projects; each item
+Per workspace: 1,000 live items (10,000 total including archived work), 200 non-archived
+sprints plus paginated archived history, 100 projects; each item
 supports up to 100 project associations,
 12 columns for creation, 500 labels for creation, 200 registered GitLab links,
 100 approved GitLab projects and 200 pending proposals. Daily burn-down timelines

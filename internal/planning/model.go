@@ -26,11 +26,13 @@ const (
 	MaxItems = 1000
 	// MaxWorkspaceItems bounds the total rows a workspace may hold, archived
 	// items included, so a board load stays predictable.
-	MaxWorkspaceItems  = 10000
-	MaxCommentLength   = 4000
-	MaxItemComments    = 500
-	CommentPageLimit   = MaxItemComments
-	MaxAttachmentBytes = 20 << 20
+	MaxWorkspaceItems      = 10000
+	MaxSprints             = 200
+	MaxCommentLength       = 4000
+	MaxItemComments        = 500
+	CommentPageLimit       = MaxItemComments
+	SprintArchivePageLimit = 50
+	MaxAttachmentBytes     = 20 << 20
 	// MaxBufferedAttachmentBytes bounds the download path that verifies an
 	// attachment in memory before any response byte is committed. Objects above
 	// it are verified while streaming instead of being held in memory.
@@ -145,6 +147,23 @@ type Sprint struct {
 	End      string `json:"end"`
 	State    string `json:"state"`
 	Revision int64  `json:"revision"`
+}
+type SprintClosure struct {
+	SprintID       string    `json:"sprint_id"`
+	ClosedAt       time.Time `json:"closed_at"`
+	Scope          []string  `json:"scope"`
+	ScopeCount     int       `json:"scope_count"`
+	CompletedCount int       `json:"completed_count"`
+	CarryOverCount int       `json:"carry_over_count"`
+}
+type SprintHistory struct {
+	Sprint  Sprint        `json:"sprint"`
+	Closure SprintClosure `json:"closure"`
+}
+type SprintHistoryPage struct {
+	Records    []SprintHistory `json:"records"`
+	Total      int             `json:"total"`
+	NextOffset *int            `json:"next_offset,omitempty"`
 }
 type Scope struct {
 	SprintID string `json:"sprint_id"`
@@ -546,8 +565,8 @@ func Apply(b *Board, c Command) error {
 		}
 		sp := *c.Sprint
 		if c.Target == "" {
-			if len(b.Sprints) >= 200 {
-				return invalid("maximum 200 sprints")
+			if activeSprintCount(b) >= MaxSprints {
+				return invalid(fmt.Sprintf("maximum %d non-archived sprints", MaxSprints))
 			}
 			sp.ID = NewID()
 			sp.State = "planned"
@@ -559,8 +578,8 @@ func Apply(b *Board, c Command) error {
 				return ErrNotFound
 			}
 			old := b.Sprints[i]
-			if old.State == "closed" {
-				return invalid("closed sprint is immutable")
+			if old.State == "closed" || old.State == "archived" {
+				return invalid("closed or archived sprint is immutable")
 			}
 			if sp.Revision != old.Revision {
 				return ErrConflict
@@ -570,6 +589,16 @@ func Apply(b *Board, c Command) error {
 			sp.Revision = old.Revision + 1
 			b.Sprints[i] = sp
 		}
+	case "sprint.archive":
+		i := sprintIndex(b, c.Target)
+		if i < 0 {
+			return ErrNotFound
+		}
+		if b.Sprints[i].State != "closed" {
+			return invalid("only a closed sprint can be archived")
+		}
+		b.Sprints[i].State = "archived"
+		b.Sprints[i].Revision++
 	case "sprint.start":
 		i := sprintIndex(b, c.Target)
 		if i < 0 {
@@ -614,7 +643,7 @@ func Apply(b *Board, c Command) error {
 		}
 		if c.Destination != "" {
 			j := sprintIndex(b, c.Destination)
-			if j < 0 || b.Sprints[j].State == "closed" || c.Destination == c.Target {
+			if j < 0 || (b.Sprints[j].State != "planned" && b.Sprints[j].State != "active") || c.Destination == c.Target {
 				return invalid("carry-over destination must be another open sprint")
 			}
 		}
@@ -716,8 +745,43 @@ func itemIndex(b *Board, id string) int {
 	return slices.IndexFunc(b.Items, func(v Item) bool { return v.ID == id })
 }
 
-// activeItemCount counts the live working set; archived items are retained for
-// history and reference but do not consume the board limit.
+// activeSprintCount counts planned, active, and closed sprints; archived
+// history is retained but does not consume the planning limit.
+func activeSprintCount(b *Board) int {
+	count := 0
+	for _, sprint := range b.Sprints {
+		if sprint.State != "archived" {
+			count++
+		}
+	}
+	return count
+}
+
+// SprintClosureFor captures the immutable closure summary for a sprint after
+// Apply has moved its scope and assigned carry-over work.
+func SprintClosureFor(b Board, sprintID, destination string) SprintClosure {
+	closure := SprintClosure{SprintID: sprintID}
+	for _, scope := range b.ClosedScope {
+		if scope.SprintID != sprintID {
+			continue
+		}
+		closure.Scope = append(closure.Scope, scope.ItemID)
+		closure.ScopeCount++
+		i := itemIndex(&b, scope.ItemID)
+		if i < 0 {
+			continue
+		}
+		item := b.Items[i]
+		finished := category(&b, item.ColumnID) == "done"
+		if finished {
+			closure.CompletedCount++
+		} else if destination != "" && slices.Contains(item.SprintIDs, destination) {
+			closure.CarryOverCount++
+		}
+	}
+	return closure
+}
+
 func activeItemCount(b *Board) int {
 	count := 0
 	for _, item := range b.Items {
@@ -777,7 +841,7 @@ func Validate(b *Board) error {
 	for _, s := range b.Sprints {
 		start, e1 := time.Parse("2006-01-02", s.Start)
 		end, e2 := time.Parse("2006-01-02", s.End)
-		if strings.TrimSpace(s.Name) == "" || len(s.Name) > 120 || strings.TrimSpace(s.Goal) == "" || len(s.Goal) > 4000 || e1 != nil || e2 != nil || end.Before(start) {
+		if strings.TrimSpace(s.Name) == "" || len(s.Name) > 120 || strings.TrimSpace(s.Goal) == "" || len(s.Goal) > 4000 || e1 != nil || e2 != nil || end.Before(start) || !slices.Contains([]string{"planned", "active", "closed", "archived"}, s.State) {
 			return invalid("sprint needs name, goal, and valid ordered dates")
 		}
 	}
@@ -802,7 +866,7 @@ func Validate(b *Board) error {
 		sprints := map[string]bool{}
 		for _, id := range item.SprintIDs {
 			i := sprintIndex(b, id)
-			if i < 0 || b.Sprints[i].State == "closed" || item.Archived || sprints[id] {
+			if i < 0 || (b.Sprints[i].State != "planned" && b.Sprints[i].State != "active") || item.Archived || sprints[id] {
 				return invalid("sprint memberships must be unique open sprints in this workspace")
 			}
 			sprints[id] = true

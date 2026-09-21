@@ -62,6 +62,9 @@ var itemProjectsMigration string
 //go:embed 012_attachment_cleanup.sql
 var attachmentCleanupMigration string
 
+//go:embed 013_sprint_history.sql
+var sprintHistoryMigration string
+
 // migrations is the ordered native schema ladder. Index i upgrades a database
 // at version i+1 to version i+2, so schemaVersion stays derived rather than
 // duplicated across Migrate and Ready.
@@ -77,6 +80,7 @@ var migrations = []string{
 	attachmentsMigration,
 	itemProjectsMigration,
 	attachmentCleanupMigration,
+	sprintHistoryMigration,
 }
 
 // schemaVersion is the version serving requires; schema.sql creates version 1.
@@ -874,6 +878,11 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	if err = p.Apply(&b, c); err != nil {
 		return 0, err
 	}
+	var closure *p.SprintClosure
+	if c.Kind == "sprint.close" {
+		summary := p.SprintClosureFor(b, c.Target, c.Destination)
+		closure = &summary
+	}
 	switch c.Kind {
 	case "member.name":
 		if _, err = tx.Exec(ctx, "UPDATE memberships SET name=$3 WHERE workspace_id=$1 AND subject=$2", wid, c.Target, strings.TrimSpace(c.Name)); err != nil {
@@ -910,6 +919,14 @@ func (s *Store) Change(ctx context.Context, wid, subject, key string, c p.Comman
 	}
 	if err = save(ctx, tx, previous, b); err != nil {
 		return 0, err
+	}
+	if closure != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO sprint_closures(workspace_id,sprint_id,closed_at,scope_count,completed_count,carry_over_count)
+			VALUES($1,$2,now(),$3,$4,$5)
+			ON CONFLICT(workspace_id,sprint_id) DO UPDATE SET closed_at=excluded.closed_at,scope_count=excluded.scope_count,completed_count=excluded.completed_count,carry_over_count=excluded.carry_over_count`,
+			wid, closure.SprintID, closure.ScopeCount, closure.CompletedCount, closure.CarryOverCount); err != nil {
+			return 0, err
+		}
 	}
 	target := c.Target
 	if target == "" {

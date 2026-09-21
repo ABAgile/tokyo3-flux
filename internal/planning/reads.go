@@ -88,6 +88,9 @@ func ReadModel(b Board, view, target string, offset, limit int, revision int64, 
 		}
 	case "sprints":
 		for _, sp := range b.Sprints {
+			if sp.State == "archived" {
+				continue
+			}
 			r := SprintRead{Sprint: sp, Scope: []string{}}
 			for _, it := range b.Items {
 				in := slices.Contains(it.SprintIDs, sp.ID) && !it.Archived

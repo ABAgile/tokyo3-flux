@@ -49,8 +49,10 @@ func TestBrowserBoardKeepsDependencyTargetsTransitively(t *testing.T) {
 func TestBrowserBoardLeavesSourceUnchanged(t *testing.T) {
 	b := testBoard()
 	b.Items = append(b.Items, Item{ID: "old", Title: "Old", ColumnID: "ready", Revision: 1, Archived: true})
+	b.Sprints[0].State = "archived"
+	b.ClosedScope = []Scope{{SprintID: "s1", ItemID: "a"}}
 	BrowserBoard(b)
-	if len(b.Items) != 3 {
-		t.Errorf("source board items = %d, want 3; BrowserBoard must not mutate its input", len(b.Items))
+	if len(b.Items) != 3 || len(b.Sprints) != 2 || b.Sprints[0].State != "archived" || len(b.ClosedScope) != 1 {
+		t.Errorf("source board was mutated: %d items, %d sprints, %+v", len(b.Items), len(b.Sprints), b.Sprints)
 	}
 }

@@ -31,6 +31,7 @@ type fakeRepository struct {
 	err              error
 	attachment       Attachment
 	archived         []Item
+	sprintHistory    SprintHistoryPage
 }
 
 func (f *fakeRepository) Workspaces(_ context.Context, subject string) ([]Workspace, error) {
@@ -87,6 +88,27 @@ func (f *fakeRepository) ArchivedItems(_ context.Context, _, subject string, off
 		return []Item{}, nil
 	}
 	return f.archived[offset:min(offset+limit, len(f.archived))], nil
+}
+func (f *fakeRepository) ArchivedSprints(_ context.Context, _, subject string, offset, limit int) (SprintHistoryPage, error) {
+	f.subject = subject
+	if f.err != nil {
+		return SprintHistoryPage{}, f.err
+	}
+	page := f.sprintHistory
+	if offset >= len(page.Records) {
+		page.Records = []SprintHistory{}
+		page.NextOffset = nil
+		return page, nil
+	}
+	end := min(offset+limit, len(page.Records))
+	page.Records = page.Records[offset:end]
+	if end < len(f.sprintHistory.Records) {
+		next := end
+		page.NextOffset = &next
+	} else {
+		page.NextOffset = nil
+	}
+	return page, nil
 }
 func (f *fakeRepository) Item(_ context.Context, _, subject, item string) (ItemView, error) {
 	f.subject = subject
@@ -226,6 +248,9 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		{name: "archive zero limit", method: "GET", path: "/archive?limit=0", cookie: true, status: 400},
 		{name: "archive oversized limit", method: "GET", path: "/archive?limit=" + strconv.Itoa(ArchivePageLimit+1), cookie: true, status: 400},
 		{name: "archive unparsable page", method: "GET", path: "/archive?offset=x", cookie: true, status: 400},
+		{name: "sprint archive default page", method: "GET", path: "/sprints/archive", cookie: true, status: 200},
+		{name: "sprint archive negative offset", method: "GET", path: "/sprints/archive?offset=-1", cookie: true, status: 400},
+		{name: "sprint archive oversized limit", method: "GET", path: "/sprints/archive?limit=" + strconv.Itoa(SprintArchivePageLimit+1), cookie: true, status: 400},
 		{name: "shared card link", method: "GET", path: "/items/a", cookie: true, status: 200},
 		{name: "shared card link anonymous", method: "GET", path: "/items/a", status: 303},
 		{name: "shared card link unknown item", method: "GET", path: "/items/missing", cookie: true, status: 404},

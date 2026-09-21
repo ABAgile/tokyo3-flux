@@ -258,13 +258,17 @@ a validated HTTPS Gravatar avatar URL.
   completed metrics, a legend, and an accessible sprint-values table behind a native disclosure. It
   is derived live from preserved closed-sprint scope and each card's current column, so it states
   that completion is not the state recorded at closure. Planning toolbar Project and Assignee
-  filters apply to it. With no closed sprint it says so rather than plotting an empty chart.
-- Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close/re-open actions,
+  filters apply to it. With no closed sprint it says so rather than plotting an empty chart. Archived
+  sprints are excluded from this live trend; their immutable closure summaries appear in a paginated
+  history section below planning.
+- Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close/re-open/archive actions,
   and a read-only burn-down toggle. Re-opening a closed sprint restores its preserved scope as an
   active sprint while retaining any other open sprint assignments. The chart expands inside the same
   panel on the Kanban board and Sprint
-  planning displays; collapse state does not alter planning data. Selecting a closed sprint in the
-  board Scope filter shows its corresponding read-only panel. At constrained content widths, the goal
+  planning displays; collapse state does not alter planning data. Archiving is available only for a
+  closed sprint, removes it from working sprint selectors, never deletes its cards, and leaves its
+  closure snapshot and metadata read-only in sprint history. Selecting a closed sprint in the board
+  Scope filter shows its corresponding read-only panel. At constrained content widths, the goal
   spans the full panel width above metrics/actions, which stack without overlap; below 900px the compact panel spacing is used. Closing requires a rationale and an explicit
   additional carry-over choice (none, or another open sprint). Existing other sprint memberships are
   retained.

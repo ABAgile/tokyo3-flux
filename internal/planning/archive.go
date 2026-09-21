@@ -9,10 +9,27 @@ const ArchivePageLimit = 50
 // history.
 //
 // Archived items are still referenced by parts of the UI that read the board
-// directly: closed sprint scope lists them, and dependency edges decide whether
-// a live card renders as blocked. Those are retained; only inert archived items
-// are withheld, and they remain reachable through the paged archive endpoint.
+// directly: non-archived closed sprint scope lists them, and dependency edges
+// decide whether a live card renders as blocked. Those are retained; only inert
+// archived items are withheld, and they remain reachable through the paged archive endpoint.
 func BrowserBoard(b Board) Board {
+	archivedSprints := make(map[string]bool)
+	visibleSprints := make([]Sprint, 0, len(b.Sprints))
+	for _, sprint := range b.Sprints {
+		if sprint.State == "archived" {
+			archivedSprints[sprint.ID] = true
+			continue
+		}
+		visibleSprints = append(visibleSprints, sprint)
+	}
+	b.Sprints = visibleSprints
+	visibleScope := make([]Scope, 0, len(b.ClosedScope))
+	for _, scope := range b.ClosedScope {
+		if !archivedSprints[scope.SprintID] {
+			visibleScope = append(visibleScope, scope)
+		}
+	}
+	b.ClosedScope = visibleScope
 	retained := make(map[string]bool, len(b.ClosedScope))
 	for _, scope := range b.ClosedScope {
 		retained[scope.ItemID] = true

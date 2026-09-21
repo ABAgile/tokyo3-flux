@@ -27,6 +27,7 @@ let history = [], historyBefore = 0, historyMore = false, loadGeneration = 0;
 // Archived work is paged from its own endpoint; the board payload carries only
 // the live working set plus archived items still referenced by scope or dependencies.
 let archiveItems = [], archiveOffset = 0, archiveMore = false;
+let sprintHistory = [], sprintHistoryOffset = 0, sprintHistoryMore = false, sprintHistoryError = '';
 let bulkSelection = new Set(), undoOffer, undoTimer;
 let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
@@ -326,7 +327,7 @@ function enterWorkspaceGate(mode, message) {
  if (detailState) closeDetail({force:true, focus:false});
  if ($('editor').open && !busy) closeEditor();
  clearUndo(); bulkSelection.clear();
- board = undefined; root = undefined; boardETag = ''; boardETagRoot = ''; workspaceGate = mode; pendingPlanningURLState = undefined; persistWorkspaceURL('');
+ board = undefined; root = undefined; boardETag = ''; boardETagRoot = ''; resetSprintHistory(); workspaceGate = mode; pendingPlanningURLState = undefined; persistWorkspaceURL('');
  if (message) notice(message);
  render();
 }
@@ -366,8 +367,8 @@ async function refresh(preloaded) {
   // repeating it on every poll would re-announce an unchanged board.
   if (!response.modified) { clearPlanningChangeNotice(); clearError(); notice('Up to date.'); return true; }
   const next = response.data;
-  uiState = captureUIState(); board = mergeBoardData(board, next); searchIndexGeneration++; workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); clearError(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); observationDigest = ''; observationReadAt = 0;
-  if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); notice('Up to date.'); return true;
+  uiState = captureUIState(); board = mergeBoardData(board, next); searchIndexGeneration++; workspaceGate = ''; persistWorkspaceURL(board.workspace.id); clearPlanningChangeNotice(); clearError(); resetBurndown(); history = []; historyBefore = 0; resetArchive(); resetSprintHistory(); observationDigest = ''; observationReadAt = 0;
+  if (view === 'history') await loadHistory(true); if (view === 'archive') await loadArchive(true); if (view === 'sprints') await loadSprintHistory(true); notice('Up to date.'); return true;
  } catch (e) { if (generation === loadGeneration) notice(e.message, true); return false; }
  finally { if (generation === loadGeneration) { loading = false; render(); restoreUIState(uiState || captureUIState()); if (!burndownRequests.size) setContentBusy(false); } }
 }
@@ -872,7 +873,8 @@ function sprintPanel(s, items = scopeItems(s)) {
  if (s.state === 'planned') actions.append(writeIconButton('Start sprint', '▶', () => quick({ kind: 'sprint.start', target: s.id }), 'primary'));
  if (s.state === 'active') actions.append(writeIconButton('Close sprint', '■', () => closeSprint(s)));
  if (s.state === 'closed') actions.append(writeIconButton('Re-open sprint', '↶', () => quick({ kind: 'sprint.reopen', target: s.id })));
- if (s.state === 'closed') info.append(el('small', 'Scope preserved at closure. Card details reflect current work; historical state is retained in audit.', 'muted'));
+ if (s.state === 'closed') actions.append(writeIconButton('Archive sprint', '▣', () => archiveSprint(s), 'quiet'));
+ if (s.state === 'closed') info.append(el('small', 'Scope is preserved at closure. Archive this immutable sprint to keep it in paginated history; card details remain current.', 'muted'));
  card.append(info, actions, metrics); if (expanded) card.append(renderBurndown(s)); card.dataset.renderSignature = JSON.stringify({s, expanded, data:expanded ? burndownData.get(currentBurndownKey(s.id)) || null : null, error:expanded ? burndownErrors.get(currentBurndownKey(s.id)) || null : null}); return card;
 }
 function renderWorkspaceSelection(content) {
@@ -1299,6 +1301,35 @@ function renderSprintRows(list) {
  }
  matches.forEach(sprint => list.append(sprintPanel(sprint, sprintFilterItems(sprint))));
 }
+function sprintHistoryTime(value) {
+ const date = new Date(value);
+ return Number.isNaN(date.getTime()) ? 'Unknown closure time' : date.toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'});
+}
+function renderSprintHistory() {
+ const historyPanel = panel('sprint-history');
+ historyPanel.append(panelHead('Archived sprint history', {description:'Immutable snapshots captured when each sprint closed. Archived sprints are read-only and do not consume the planning limit.'}));
+ if (sprintHistoryError) historyPanel.append(emptyState(sprintHistoryError));
+ else if (!sprintHistory.length) historyPanel.append(emptyState('No archived sprints yet. Close and archive a sprint to preserve its closure summary.'));
+ else {
+  const list = maintenanceList('sprint-history-list');
+  sprintHistory.forEach(record => {
+   const sprint = record.sprint || {};
+   const closure = record.closure || {};
+   const row = maintenanceRow({content:[el('strong', sprint.name || 'Unnamed sprint'), el('span', `${closure.scope_count || 0} committed · ${closure.completed_count || 0} completed · ${closure.carry_over_count || 0} carried over`, 'help'), el('small', `Closed ${sprintHistoryTime(closure.closed_at)}`, 'muted')]});
+   row.dataset.sprintHistoryId = sprint.id || '';
+   list.append(row);
+  });
+  historyPanel.append(list);
+ }
+ if (!sprintHistoryError && sprintHistoryMore) {
+  const more = button('Load older archived sprints', async () => {
+   try { await loadSprintHistory(); render(); } catch (error) { sprintHistoryError = error.message; render(); }
+  });
+  more.dataset.sprintHistoryMore = 'true'; more.disabled = busy || loading; historyPanel.append(more);
+ }
+ historyPanel.dataset.renderSignature = JSON.stringify({records:sprintHistory, more:sprintHistoryMore, error:sprintHistoryError});
+ return historyPanel;
+}
 // Delivery trend is derived from preserved closed-sprint scope and the current
 // state of those cards. It is a live read of native planning records, not a
 // recorded historical metric, so it is labeled as such.
@@ -1361,16 +1392,18 @@ function renderSprintPage(content) {
  const velocity = sprintVelocityPanel();
  const head = sectionHead('Goals, scope, and deliberate carry-over', writeButton('＋ New sprint', () => editSprint(), 'primary')); head.dataset.renderSignature = 'sprint-page-head';
  const list = el('div', undefined, 'sprints'); list.dataset.contentView = 'sprint-page-list'; renderSprintRows(list);
+ const historyPanel = renderSprintHistory();
  const current = pageRoot('sprint-page');
  if (!current) {
   const sections = pageStack('sprint-page');
   const planning = el('section', undefined, 'sprint-planning');
-  planning.append(head, filterSlot('sprint-filter-slot'), list); sections.append(velocity, planning); content.append(sections);
+  planning.append(head, filterSlot('sprint-filter-slot'), list); sections.append(velocity, planning, historyPanel); content.append(sections);
  } else {
   patchNode(current.firstElementChild, velocity);
-  const planning = current.lastElementChild;
+  const planning = current.children[1];
   patchNode(planning.firstElementChild, head);
   reconcileKeyedChildren(planning.lastElementChild, [...list.children], keyedNodeKey);
+  patchNode(current.children[2], historyPanel);
  }
  placeFilters($('sprint-filter-slot'));
 }
@@ -1437,6 +1470,17 @@ async function loadArchive(reset = false) {
  const page = await api(`${root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`);
  if (!Array.isArray(page)) throw new Error('Archive response is invalid. Refresh to retry.');
  archiveItems = reset ? page : [...archiveItems, ...page]; archiveOffset = offset + page.length; archiveMore = page.length === ARCHIVE_PAGE;
+}
+const SPRINT_HISTORY_PAGE = 50;
+function resetSprintHistory() { sprintHistory = []; sprintHistoryOffset = 0; sprintHistoryMore = false; sprintHistoryError = ''; }
+function validSprintHistoryPage(page) {
+ return page && Array.isArray(page.records) && Number.isSafeInteger(page.total) && page.total >= 0 && page.records.every(record => record && record.sprint && typeof record.sprint.id === 'string' && record.closure && typeof record.closure.closed_at === 'string' && !Number.isNaN(Date.parse(record.closure.closed_at))) && (page.next_offset === undefined || (Number.isSafeInteger(page.next_offset) && page.next_offset >= 0));
+}
+async function loadSprintHistory(reset = false) {
+ const offset = reset ? 0 : sprintHistoryOffset;
+ const page = await api(`${root}/sprints/archive?offset=${offset}&limit=${SPRINT_HISTORY_PAGE}`);
+ if (!validSprintHistoryPage(page)) throw new Error('Sprint history response is invalid. Refresh to retry.');
+ sprintHistory = reset ? page.records : [...sprintHistory, ...page.records]; sprintHistoryOffset = offset + page.records.length; sprintHistoryMore = page.next_offset !== undefined; sprintHistoryError = '';
 }
 function showWorkspaceSelection() { if (busy || loading) return; workspaceGate = 'select'; render(); document.querySelector('[data-workspace-choice]')?.focus(); }
 function showWorkspaceCreate() { if (busy || loading || integrationFormOpen) return; workspaceCreateKey = ''; workspaceCreateName = ''; if (board) { enterWorkspaceGate('create', 'Create a workspace to add another planning space.'); return; } workspaceGate = 'create'; render(); }
@@ -1986,11 +2030,18 @@ function closeSprint(sprint) {
  const items = scopeItems(sprint); const unfinished = items.filter(i => !done(i));
  openEditor('Close sprint & decide carry-over', fields => {
   fields.append(el('p', `${sprint.name}: ${items.length} items in scope; ${unfinished.length} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`));
-  field(fields, 'destination', 'Also assign unfinished work to', '', 'text', [['', 'No additional sprint'], ...board.sprints.filter(s => s.state !== 'closed' && s.id !== sprint.id).map(s => [s.id, s.name])]);
+  field(fields, 'destination', 'Also assign unfinished work to', '', 'text', [['', 'No additional sprint'], ...board.sprints.filter(s => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id).map(s => [s.id, s.name])]);
   fields.append(helpText('No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.'));
   const reason = field(fields, 'reason', 'Closing decision / rationale', '', 'textarea'); reason.required = true; reason.maxLength = 4000;
  }, data => ({ kind: 'sprint.close', target: sprint.id, destination: data.get('destination'), reason: data.get('reason').trim() }));
  $('save').textContent = 'Close sprint';
+}
+function archiveSprint(sprint) {
+ openEditor('Archive sprint', fields => {
+  fields.append(el('p', `Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`));
+  fields.append(helpText('Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.'));
+ }, () => ({kind:'sprint.archive', target:sprint.id}));
+ $('save').textContent = 'Archive sprint';
 }
 function editColumn(column) {
  $('editor').close(); const existing = !!column; column ||= { name: '', category: 'todo', wip: 0 };
@@ -2425,7 +2476,7 @@ document.addEventListener('keydown', event => {
  if (key === 'r') { if (!$('refresh').disabled) { event.preventDefault(); void refresh(); } }
 });
 $('undo').onclick = async () => { const commands = undoOffer; clearUndo(); if (!commands?.length || !board || !writable()) return; if (commands.length === 1) { await quick(commands[0]); return; } await runSequence('Undo', commands); };
-document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; bulkSelection.clear(); if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } if (view === 'archive') { try { await loadArchive(true); } catch (e) { notice(e.message, true); } } render(); }; });
+document.querySelectorAll('[data-view]').forEach(b => { b.onclick = async () => { if (loading || busy || integrationFormOpen) return; if (view === 'board' && b.dataset.view !== 'board' && detailState && !closeDetail({focus:false})) return; view = b.dataset.view; bulkSelection.clear(); if (view === 'history') { try { await loadHistory(true); } catch (e) { notice(e.message, true); } } if (view === 'archive') { try { await loadArchive(true); } catch (e) { notice(e.message, true); } } if (view === 'sprints') { resetSprintHistory(); try { await loadSprintHistory(true); } catch (e) { sprintHistoryError = e.message; notice(e.message, true); } } render(); }; });
 async function chooseWorkspace(workspaceID = '') {
  if (busy || loading) return false;
  if (detailState && !closeDetail({focus:false})) { if (board?.workspace?.id) $('workspace').value = board.workspace.id; return false; }
@@ -2433,7 +2484,7 @@ async function chooseWorkspace(workspaceID = '') {
  if (!workspaces.some(workspace => workspace.id === selectedID)) return false;
  const urlState = pendingPlanningURLState; pendingPlanningURLState = undefined;
  integrationFormOpen = false; integrationCatalog = []; integrationCatalogLoaded = false; integrationCatalogError = ''; integrationCatalogLoading = false; integrationCatalogRequest++;
- clearPlanningChangeNotice(); clearUndo(); clearError(); bulkSelection.clear(); board = undefined; workspaceGate = 'loading'; updateWorkspaceOptions(selectedID); resetBurndown(); burndownExpanded.clear(); projectSearch = ''; clearFilterGroup(projectFilters); clearFilters(); $('scope').value = 'active'; resetSearch(); root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`; render();
+ clearPlanningChangeNotice(); clearUndo(); clearError(); bulkSelection.clear(); board = undefined; workspaceGate = 'loading'; updateWorkspaceOptions(selectedID); resetBurndown(); burndownExpanded.clear(); resetSprintHistory(); projectSearch = ''; clearFilterGroup(projectFilters); clearFilters(); $('scope').value = 'active'; resetSearch(); root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`; render();
  const refreshed = await refresh();
  if (!refreshed) { if (urlState && workspaceGate === 'loading') pendingPlanningURLState = urlState; return false; }
  workspaceGate = ''; persistWorkspaceURL(selectedID); if (urlState) applyPlanningURLState(urlState); else persistPlanningURL(); return true;

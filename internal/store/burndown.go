@@ -32,7 +32,7 @@ func (s *Store) Burndown(ctx context.Context, wid, subject, sprintID, project, a
 			break
 		}
 	}
-	if selected < 0 {
+	if selected < 0 || b.Sprints[selected].State == "archived" {
 		return p.Burndown{}, p.ErrNotFound
 	}
 	start, startErr := time.ParseInLocation("2006-01-02", b.Sprints[selected].Start, time.UTC)

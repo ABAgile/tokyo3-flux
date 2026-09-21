@@ -35,6 +35,7 @@ type Repository interface {
 	ProposalRepository
 	StateRepository
 	ArchiveRepository
+	SprintArchiveRepository
 	ItemRepository
 }
 
@@ -109,6 +110,12 @@ type StateRepository interface {
 // from the board payload, so this is the only way a browser reaches them.
 type ArchiveRepository interface {
 	ArchivedItems(context.Context, string, string, int, int) ([]Item, error)
+}
+
+// SprintArchiveRepository serves immutable sprint closure summaries separately
+// from the working board, so history remains bounded and paginated.
+type SprintArchiveRepository interface {
+	ArchivedSprints(context.Context, string, string, int, int) (SprintHistoryPage, error)
 }
 
 // ItemView answers one shared card link. The item is the current record, not a
@@ -287,6 +294,17 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 			return
 		}
 		v, err := h.repo.ArchivedItems(r.Context(), r.PathValue("workspace"), h.subject(r, machine), offset, limit)
+		h.result(w, r, v, err)
+	})
+	mux.HandleFunc("GET "+root+"/sprints/archive", func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+		offset, offsetErr := strconv.Atoi(defaultQuery(query.Get("offset"), "0"))
+		limit, limitErr := strconv.Atoi(defaultQuery(query.Get("limit"), strconv.Itoa(SprintArchivePageLimit)))
+		if offsetErr != nil || limitErr != nil || offset < 0 || limit <= 0 || limit > SprintArchivePageLimit {
+			h.failure(w, r, ErrInvalid)
+			return
+		}
+		v, err := h.repo.ArchivedSprints(r.Context(), r.PathValue("workspace"), h.subject(r, machine), offset, limit)
 		h.result(w, r, v, err)
 	})
 	mux.HandleFunc("GET "+root+"/items/{item}", func(w http.ResponseWriter, r *http.Request) {
