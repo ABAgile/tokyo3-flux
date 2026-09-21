@@ -436,8 +436,9 @@ mutations are denied even with a browser cookie.
 Command kinds and payloads:
 
 - `item.create` (`item`), `item.update` (`target`, complete `item`),
-  `item.archive`, `item.restore` (`target`), `item.move` (`target`, destination
-  column, optional `before`), `item.rank` (`target`, optional `before`).
+  `item.archive`, `item.restore` (`target`, optional `restore_sprint_ids` for an
+  exact archive undo), `item.move` (`target`, destination column, optional `before`),
+  `item.rank` (`target`, optional `before`).
 - `project.save` (`project`); `column.save` (`column`); `sprint.save` (`sprint`):
   optional existing `target` and entity revision where applicable.
 - `column.rank` (`target`, optional `before`), `column.delete` (`target`,

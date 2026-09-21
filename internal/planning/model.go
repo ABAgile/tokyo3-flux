@@ -184,22 +184,23 @@ type Event struct {
 // Command is a bounded, typed mutation. Revision protects the entire board,
 // including ordering, sprint scope, and WIP decisions across multiple cards.
 type Command struct {
-	Proposal    *ProposalDocument `json:"proposal,omitempty"`
-	Integration *Integration      `json:"integration,omitempty"`
-	Link        *LinkTarget       `json:"link,omitempty"`
-	Member      *Member           `json:"member,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	Color       string            `json:"color,omitempty"`
-	Kind        string            `json:"kind"`
-	Revision    int64             `json:"revision"`
-	Target      string            `json:"target"`
-	Item        *Item             `json:"item,omitempty"`
-	Column      *Column           `json:"column,omitempty"`
-	Sprint      *Sprint           `json:"sprint,omitempty"`
-	Project     *Project          `json:"project,omitempty"`
-	Before      string            `json:"before,omitempty"`
-	Destination string            `json:"destination,omitempty"`
-	Reason      string            `json:"reason,omitempty"`
+	Proposal         *ProposalDocument `json:"proposal,omitempty"`
+	Integration      *Integration      `json:"integration,omitempty"`
+	Link             *LinkTarget       `json:"link,omitempty"`
+	Member           *Member           `json:"member,omitempty"`
+	Name             string            `json:"name,omitempty"`
+	Color            string            `json:"color,omitempty"`
+	Kind             string            `json:"kind"`
+	Revision         int64             `json:"revision"`
+	Target           string            `json:"target"`
+	Item             *Item             `json:"item,omitempty"`
+	Column           *Column           `json:"column,omitempty"`
+	Sprint           *Sprint           `json:"sprint,omitempty"`
+	Project          *Project          `json:"project,omitempty"`
+	Before           string            `json:"before,omitempty"`
+	Destination      string            `json:"destination,omitempty"`
+	RestoreSprintIDs []string          `json:"restore_sprint_ids,omitempty"`
+	Reason           string            `json:"reason,omitempty"`
 }
 
 func NewID() string { return rand.Text() }
@@ -432,6 +433,8 @@ func Apply(b *Board, c Command) error {
 		b.Items[i].Revision++
 		if b.Items[i].Archived {
 			b.Items[i].SprintIDs = []string{}
+		} else if c.RestoreSprintIDs != nil {
+			b.Items[i].SprintIDs = slices.Clone(c.RestoreSprintIDs)
 		}
 	case "item.move":
 		i := itemIndex(b, c.Target)

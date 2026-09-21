@@ -435,7 +435,10 @@ function itemTitle(id) { return findItem(id)?.title || 'work item'; }
 // is expressed as the anchor the card currently sits in front of.
 function undoableInverse(command) {
  switch (command.kind) {
-  case 'item.archive': return {text: `Archived “${itemTitle(command.target)}”`, commands: [{kind: 'item.restore', target: command.target}]};
+  case 'item.archive': {
+   const item = findItem(command.target);
+   return {text: `Archived “${itemTitle(command.target)}”`, commands: [{kind: 'item.restore', target: command.target, restore_sprint_ids: [...(item?.sprint_ids || [])]}]};
+  }
   case 'item.restore': return {text: `Restored “${itemTitle(command.target)}”`, commands: [{kind: 'item.archive', target: command.target}]};
   case 'item.move': case 'item.rank': {
    const index = board.items.findIndex(value => value.id === command.target); if (index < 0) return undefined;
@@ -536,7 +539,7 @@ function bulkArchive() {
   fields.append(el('p', `Archive ${count} selected work item${count === 1 ? '' : 's'} and remove them from all open sprints? History is retained and each item can be restored.`));
   field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
  }, data => { const reason = String(data.get('reason') || ''); return item => ({kind: 'item.archive', target: item.id, reason}); }, 'Archive',
- targets => ({text: `Archived ${targets.length} work item${targets.length === 1 ? '' : 's'}`, commands: targets.map(item => ({kind: 'item.restore', target: item.id}))}));
+ targets => ({text: `Archived ${targets.length} work item${targets.length === 1 ? '' : 's'}`, commands: targets.map(item => ({kind: 'item.restore', target: item.id, restore_sprint_ids: [...(item.sprint_ids || [])]}))}));
 }
 function bulkSelectableIDs(items) { return items.filter(item => !item.archived).map(item => item.id); }
 function pruneBulkSelection(items) {
@@ -1951,7 +1954,7 @@ function archiveItem(item, context) {
  openEditor('Archive work item', fields => {
   fields.append(el('p', `Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`));
   field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
- }, data => ({kind:'item.archive', target:item.id, reason:data.get('reason')}), false, () => { offerUndo(`Archived “${item.title}” · undo is available for ${UNDO_TTL / 1000} seconds`, {kind:'item.restore', target:item.id}); if (context?.mode === 'detail') closeDetail({force:true, focus:true}); });
+ }, data => ({kind:'item.archive', target:item.id, reason:data.get('reason')}), false, () => { offerUndo(`Archived “${item.title}” · undo is available for ${UNDO_TTL / 1000} seconds`, {kind:'item.restore', target:item.id, restore_sprint_ids:[...(item.sprint_ids || [])]}); if (context?.mode === 'detail') closeDetail({force:true, focus:true}); });
  $('save').textContent = 'Archive item';
 }
 function editSprint(sprint) {

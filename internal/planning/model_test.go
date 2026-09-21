@@ -128,7 +128,10 @@ func TestNativeLifecycleAndOrdering(t *testing.T) {
 	if !b.Items[i].Archived || len(b.Items[i].SprintIDs) != 0 {
 		t.Fatal("archive did not clear open scope")
 	}
-	mustApply(t, &b, Command{Kind: "item.restore", Target: id})
+	mustApply(t, &b, Command{Kind: "item.restore", Target: id, RestoreSprintIDs: []string{"s1", "s2"}})
+	if !slices.Equal(b.Items[itemIndex(&b, id)].SprintIDs, []string{"s1", "s2"}) {
+		t.Fatalf("restore did not recover sprint memberships: %+v", b.Items[itemIndex(&b, id)])
+	}
 	mustApply(t, &b, Command{Kind: "column.save", Column: &Column{Name: "Review", Category: "doing", WIP: 2}})
 	col := b.Columns[len(b.Columns)-1].ID
 	mustApply(t, &b, Command{Kind: "column.rank", Target: col, Before: "done"})
