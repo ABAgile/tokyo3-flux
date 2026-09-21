@@ -59,6 +59,9 @@ var attachmentsMigration string
 //go:embed 011_item_projects.sql
 var itemProjectsMigration string
 
+//go:embed 012_attachment_cleanup.sql
+var attachmentCleanupMigration string
+
 // migrations is the ordered native schema ladder. Index i upgrades a database
 // at version i+1 to version i+2, so schemaVersion stays derived rather than
 // duplicated across Migrate and Ready.
@@ -73,6 +76,7 @@ var migrations = []string{
 	commentsMigration,
 	attachmentsMigration,
 	itemProjectsMigration,
+	attachmentCleanupMigration,
 }
 
 // schemaVersion is the version serving requires; schema.sql creates version 1.

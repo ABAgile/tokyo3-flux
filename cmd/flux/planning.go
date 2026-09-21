@@ -321,7 +321,9 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	// its own, tighter request deadline.
 	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 2 * time.Minute, WriteTimeout: 2 * time.Minute, IdleTimeout: 60 * time.Second}
 	rt.Log.Info("native Flux planning started", "addr", addr, "demo", demo)
-	components := []baserun.Component{baserun.HTTPServer(server, 10*time.Second, false)}
+	components := []baserun.Component{baserun.HTTPServer(server, 10*time.Second, false),
+		func(ctx context.Context) error { return runBlobCleanup(ctx, db, attachments, rt.Log) },
+	}
 	if connectorSettings.Interval > 0 {
 		components = append(components, func(ctx context.Context) error { return db.RunRefresh(ctx, rt.Log) })
 	}

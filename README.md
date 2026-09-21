@@ -183,11 +183,12 @@ window in bounded batches. It uses admin credentials because the runtime role ha
 `audit_events`, and the minimum keeps a full-length sprint's burn-down history intact. Schedule
 it periodically: every planning change records a board snapshot, so the table grows with
 activity and never shrinks on its own.
-Serving requires schema 11 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 12 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
 comments; migration 010 adds attachment metadata; migration 011 adds normalized multi-project
-item associations. Back up and restore-test
+item associations; migration 012 adds the durable attachment-cleanup queue used to retry
+failed blob deletions. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -209,13 +210,16 @@ GRANT INSERT, DELETE ON approved_gitlab_projects, item_external_links,
 GRANT INSERT, UPDATE, DELETE ON external_links TO flux_runtime;
 GRANT INSERT ON imported_items, item_comments, item_attachments TO flux_runtime;
 GRANT DELETE ON item_attachments TO flux_runtime;
+GRANT INSERT, UPDATE, DELETE ON attachment_cleanup TO flux_runtime;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
 ```
 
 Do not grant runtime schema ownership/CREATE, or
 history/audit UPDATE/DELETE. Check PUBLIC privileges too. Audit and refresh-run
 records have no automatic purge from the serving process; schedule `flux prune`
-with admin credentials and plan backup policies alongside it.
+with admin credentials and plan backup policies alongside it. Failed attachment deletions are
+queued and retried by `flux serve`; monitor its logs and keep the runtime role grants for
+`attachment_cleanup` in place.
 
 ## GitLab observations
 
