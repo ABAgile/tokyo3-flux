@@ -22,7 +22,7 @@ func commentDigest(itemID, body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Comments retains the original oldest-first read for internal callers. New
+// Comments provides a bounded compatibility read for internal callers. New
 // HTTP clients should use CommentPage so long-lived discussions remain browsable.
 func (s *Store) Comments(ctx context.Context, wid, subject, itemID string) ([]p.Comment, error) {
 	page, err := s.CommentPage(ctx, wid, subject, itemID, 0, p.CommentPageLimit)

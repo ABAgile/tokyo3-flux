@@ -20,7 +20,8 @@ planning evidence and draft suggestions for a human to review and approve.
   work is backlog.
 - Multiple sprints may be active. Closing one freezes its scope, preserves other
   memberships and optionally assigns unfinished work to another open sprint. Closed sprints can
-  be re-opened, restoring their preserved scope while retaining other memberships.
+  be re-opened, restoring their preserved scope while retaining other memberships; closing a
+  reopened sprint replaces that preserved scope with its current memberships.
   Closed-scope metrics describe current cards, not historical completion.
 - Item comments are a separate flat, append-only stream. Each comment retains its
   author and creation time; members and admins can add comments, viewers can read
