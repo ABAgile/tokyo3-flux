@@ -292,7 +292,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 			imageSources = append(imageSources, source)
 		}
 	}
-	contentSecurityPolicy := "default-src 'self'; script-src 'self'; style-src 'self'; img-src " + strings.Join(imageSources, " ") + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+	contentSecurityPolicy := "default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src " + strings.Join(imageSources, " ") + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 	limited := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if demo {
 			host := r.Host
