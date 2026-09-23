@@ -1,6 +1,6 @@
 # Multi-stage image for Flux.
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 ARG TARGETOS=linux
 ARG TARGETARCH=arm64
@@ -17,7 +17,7 @@ COPY internal/ internal/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /out/flux ./cmd/flux
 
-FROM alpine:3.21 AS server
+FROM alpine:3.24 AS server
 
 RUN apk add --no-cache ca-certificates tini tzdata \
     && addgroup -S flux \

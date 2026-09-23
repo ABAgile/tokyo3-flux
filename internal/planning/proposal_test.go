@@ -66,7 +66,7 @@ func TestNativeReadPaginationAndSignals(t *testing.T) {
 	b.Items[0].SprintIDs = []string{"s1", "s2"}
 	now := time.Now().UTC()
 	old := now.Add(-6 * time.Minute)
-	b.Links = []ExternalLink{{ID: "missing", LinkTarget: LinkTarget{Kind: "mr"}, Outcome: "unobserved"}, {ID: "failure", Items: []string{"a"}, LinkTarget: LinkTarget{Kind: "mr"}, Outcome: "ok", LastSuccess: &old, Observation: &Observation{MRState: "opened", Pipeline: &Pipeline{State: "failed", CurrentHead: true}}}, {ID: "nil-pipeline", LinkTarget: LinkTarget{Kind: "mr"}, Observation: &Observation{MRState: "opened"}}}
+	b.Links = []ExternalLink{{ID: "missing", Kind: "mr", Outcome: "unobserved"}, {ID: "failure", Items: []string{"a"}, Kind: "mr", Outcome: "ok", LastSuccess: &old, Observation: &Observation{MRState: "opened", Pipeline: &Pipeline{State: "failed", CurrentHead: true}}}, {ID: "nil-pipeline", Kind: "mr", Observation: &Observation{MRState: "opened"}}}
 	page, err := ReadModel(b, "board", "", 0, 1, 0, now)
 	if err != nil || page.Total != 2 || page.NextOffset == nil || *page.NextOffset != 1 {
 		t.Fatal(page, err)

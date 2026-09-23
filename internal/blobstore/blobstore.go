@@ -309,8 +309,9 @@ func (s *localStore) Open(ctx context.Context, key string) (Object, error) {
 		return out, ErrTooLarge
 	}
 	return Object{
-		ObjectInfo: ObjectInfo{Key: key, Size: info.Size()},
-		Reader:     file,
+		Key:    key,
+		Size:   info.Size(),
+		Reader: file,
 	}, nil
 }
 
@@ -469,13 +470,11 @@ func (s *natsStore) Open(ctx context.Context, key string) (Object, error) {
 		return out, ErrTooLarge
 	}
 	return Object{
-		ObjectInfo: ObjectInfo{
-			Key:         key,
-			Size:        int64(info.Size),
-			ContentType: info.Headers.Get("Content-Type"),
-		},
-		Reader: result,
-		Verify: result.Error,
+		Key:         key,
+		Size:        int64(info.Size),
+		ContentType: info.Headers.Get("Content-Type"),
+		Reader:      result,
+		Verify:      result.Error,
 	}, nil
 }
 
