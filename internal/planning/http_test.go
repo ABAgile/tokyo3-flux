@@ -22,6 +22,14 @@ import (
 	"github.com/abagile/tokyo3-base/session"
 )
 
+type failingDeleteBlobStore struct {
+	blobstore.Store
+}
+
+func (failingDeleteBlobStore) Delete(context.Context, string) error {
+	return errors.New("storage unavailable")
+}
+
 type fakeRepository struct {
 	changes          int
 	boardReads       int
@@ -487,6 +495,24 @@ func TestHTTPAttachments(t *testing.T) {
 	if corruptResponse.Code != http.StatusServiceUnavailable {
 		t.Fatalf("corrupt download status %d: %s", corruptResponse.Code, corruptResponse.Body.String())
 	}
+	// Metadata removal has already committed a durable cleanup reservation. A
+	// storage outage must therefore acknowledge the delete rather than report
+	// a false failure after losing the metadata.
+	repo.attachment.CleanupQueued = true
+	h.blobs = failingDeleteBlobStore{Store: blobs}
+	queuedRemove := httptest.NewRequest("DELETE", root+"/1", nil)
+	queuedRemove.AddCookie(cookies[0])
+	queuedRemove.Header.Set("X-CSRF-Token", csrf)
+	queuedResponse := httptest.NewRecorder()
+	browser.ServeHTTP(queuedResponse, queuedRemove)
+	if queuedResponse.Code != http.StatusNoContent {
+		t.Fatalf("queued remove status %d: %s", queuedResponse.Code, queuedResponse.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(storageRoot, filepath.FromSlash(key))); err != nil {
+		t.Fatalf("queued remove unexpectedly deleted blob: %v", err)
+	}
+	repo.attachment = Attachment{ID: 1, ItemID: "a", StorageKey: key}
+	h.blobs = blobs
 	remove := httptest.NewRequest("DELETE", root+"/1", nil)
 	remove.AddCookie(cookies[0])
 	remove.Header.Set("X-CSRF-Token", csrf)

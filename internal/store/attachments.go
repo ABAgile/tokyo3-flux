@@ -263,6 +263,11 @@ func (s *Store) AddAttachment(ctx context.Context, wid, subject, itemID, key,
 		attachment.Size, attachment.Digest, subject, idempotencyKey), &attachment); err != nil {
 		return p.Attachment{}, err
 	}
+	// The metadata commit and upload reservation removal are one transaction.
+	// A crash cannot leave a referenced object looking like an orphan.
+	if _, err = tx.Exec(ctx, "DELETE FROM attachment_cleanup WHERE storage_key=$1", key); err != nil {
+		return p.Attachment{}, err
+	}
 	after, err := json.Marshal(attachment)
 	if err != nil {
 		return p.Attachment{}, err
@@ -324,6 +329,14 @@ func (s *Store) RemoveAttachment(ctx context.Context, wid, subject, itemID strin
 	if _, err = tx.Exec(ctx, "DELETE FROM item_attachments WHERE workspace_id=$1 AND id=$2", wid, id); err != nil {
 		return p.Attachment{}, err
 	}
+	// Queue the blob before committing metadata removal. If the process dies
+	// before the storage delete, the serving worker still has the key.
+	if _, err = tx.Exec(ctx, `INSERT INTO attachment_cleanup(storage_key,state,next_attempt)
+ VALUES($1,'cleanup',clock_timestamp())
+ ON CONFLICT(storage_key) DO UPDATE SET state='cleanup',next_attempt=clock_timestamp()`, attachment.StorageKey); err != nil {
+		return p.Attachment{}, err
+	}
+	attachment.CleanupQueued = true
 	after, err := json.Marshal(attachment)
 	if err != nil {
 		return p.Attachment{}, err

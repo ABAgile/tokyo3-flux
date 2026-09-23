@@ -25,7 +25,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	switch args[0] {
-	case "serve", "migrate", "bootstrap", "member", "seed", "prune":
+	case "serve", "migrate", "bootstrap", "member", "seed", "prune", "cleanup":
 		return runPlan(args, stdout, stderr)
 	case "read":
 		return runRead(args[1:], stdout, stderr)
@@ -50,6 +50,7 @@ flux bootstrap --subject ID [--name NAME] [--project NAME]
 flux member --workspace ID --subject ID [--role viewer|member|admin]
 flux seed --workspace ID --subject ID [--project ID]
 flux prune [--days N]
+flux cleanup
 flux read --workspace ID --view board|item|triage|sprints|review|failures|links|catalog|imports|history [--target ID --offset N --revision N --limit N]
 flux import --workspace ID --input snapshot.json --mapping mapping.json (dry run only)
 flux version

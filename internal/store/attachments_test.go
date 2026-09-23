@@ -71,6 +71,43 @@ func TestPostgresBoardReportsAttachmentCountsOnly(t *testing.T) {
 	}
 }
 
+func TestPostgresAttachmentLifecycleQueue(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	b := bootstrap(t, s)
+	item := newItem(b, "Attachment lifecycle")
+	apply(t, s, &b, p.Command{Kind: "item.create", Item: &item})
+	item = b.Items[0]
+	key := p.NewID()
+	if err := s.BeginBlobUpload(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	attachment, err := s.AddAttachment(ctx, b.Workspace.ID, "alice", item.ID, key, p.NewID(), p.Attachment{
+		Name: "lifecycle.txt", ContentType: "text/plain", Size: 3, Digest: "sha256:" + strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.BlobCleanupStatus(ctx)
+	if err != nil || status.Uploading != 0 || status.Cleanup != 0 {
+		t.Fatalf("committed upload remained in lifecycle queue: %+v: %v", status, err)
+	}
+	removed, err := s.RemoveAttachment(ctx, b.Workspace.ID, "alice", item.ID, attachment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed.CleanupQueued || removed.StorageKey != key {
+		t.Fatalf("removed attachment lifecycle signal = %+v", removed)
+	}
+	status, err = s.BlobCleanupStatus(ctx)
+	if err != nil || status.Uploading != 0 || status.Cleanup != 1 || status.Due != 1 {
+		t.Fatalf("removed attachment was not queued: %+v: %v", status, err)
+	}
+	if err = s.CompleteBlobCleanupKey(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // Every reader shares one integrity gate, so a row that could not have been
 // written through AddAttachment is refused on the way out regardless of which
 // path reaches it. Without this, an archived card could advertise a download

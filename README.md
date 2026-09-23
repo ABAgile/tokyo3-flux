@@ -170,9 +170,10 @@ even when the configured subject has an administrator role.
 flux member --workspace WORKSPACE_ID --subject GITLAB_NUMERIC_USER_ID --role member
 flux member --workspace WORKSPACE_ID --subject pi-reader --role viewer
 flux prune --days 400
+flux cleanup
 ```
 
-`flux migrate`, `bootstrap`, `member`, `seed`, `prune`, `serve`, `read`, `import` and
+`flux migrate`, `bootstrap`, `member`, `seed`, `prune`, `cleanup`, `serve`, `read`, `import` and
 `version` are the CLI commands.
 Normal setup needs only `migrate` followed by `serve`; browser onboarding creates the first
 workspace. `bootstrap` remains for non-interactive provisioning, recovery and machine/bootstrap
@@ -182,17 +183,20 @@ migration. Command flags are scoped to their command: `serve` accepts `--addr` a
 `bootstrap` accepts `--name`, `--project` and `--subject`, `member` accepts `--workspace`,
 `--subject` and `--role`, and `seed` accepts `--workspace`, `--project` and `--subject`.
 `prune` accepts `--days` (default 400, minimum 366) and deletes audit events older than that
-window in bounded batches. It uses admin credentials because the runtime role has no DELETE on
-`audit_events`, and the minimum keeps a full-length sprint's burn-down history intact. Schedule
+window in bounded batches. `cleanup` reports active upload reservations and pending attachment
+cleanup work, including how many deletions are due now. Both operator commands use admin
+credentials; the runtime role has no DELETE on `audit_events`, and the minimum keeps a
+full-length sprint's burn-down history intact. Schedule
 it periodically: every planning change records a board snapshot, so the table grows with
 activity and never shrinks on its own.
-Serving requires schema 13 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 14 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
 comments; migration 010 adds attachment metadata; migration 011 adds normalized multi-project
 item associations; migration 012 adds the durable attachment-cleanup queue used to retry
 failed blob deletions; migration 013 adds immutable sprint-closure summaries and the archived
-sprint history projection. Back up and restore-test
+sprint history projection; migration 014 adds upload reservations so crashes during
+attachment writes remain discoverable. Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -222,9 +226,9 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO flux_runtime;
 Do not grant runtime schema ownership/CREATE, or
 history/audit UPDATE/DELETE. Check PUBLIC privileges too. Audit and refresh-run
 records have no automatic purge from the serving process; schedule `flux prune`
-with admin credentials and plan backup policies alongside it. Failed attachment deletions are
-queued and retried by `flux serve`; monitor its logs and keep the runtime role grants for
-`attachment_cleanup` in place.
+with admin credentials and plan backup policies alongside it. Attachment upload reservations
+and failed deletions are reconciled and retried by `flux serve`; use `flux cleanup` for operator
+visibility and keep the runtime role grants for `attachment_cleanup` in place.
 
 ## GitLab observations
 

@@ -81,7 +81,7 @@ func rateLimitSettings() (api, auth ratelimit.Config, err error) {
 
 func runPlan(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: flux migrate|bootstrap|member|seed|prune|serve")
+		return errors.New("usage: flux migrate|bootstrap|member|seed|prune|cleanup|serve")
 	}
 	cmd := args[0]
 	flags := flag.NewFlagSet("flux "+cmd, flag.ContinueOnError)
@@ -107,7 +107,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		flags.StringVar(&subject, "subject", "", "member subject used for seeded records")
 	case "prune":
 		flags.IntVar(&retentionDays, "days", store.DefaultAuditRetentionDays, "delete audit events older than this many days")
-	case "migrate":
+	case "cleanup", "migrate":
 	default:
 		return fmt.Errorf("unknown planning command %q", cmd)
 	}
@@ -144,7 +144,7 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 	material := app.DB()
 	// Pruning audit history is an admin-credential operation; the runtime role
 	// has no DELETE on audit_events.
-	if cmd == "migrate" || cmd == "bootstrap" || cmd == "member" || cmd == "prune" {
+	if cmd == "migrate" || cmd == "bootstrap" || cmd == "member" || cmd == "prune" || cmd == "cleanup" {
 		material = app.AdminDB()
 	}
 	// Validate auth before opening databases or starting workers.
@@ -245,6 +245,13 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 			return e
 		}
 		_, e = fmt.Fprintf(stdout, "pruned %d audit events older than %d days\n", removed, retentionDays)
+		return e
+	case "cleanup":
+		status, e := db.BlobCleanupStatus(ctx)
+		if e != nil {
+			return e
+		}
+		_, e = fmt.Fprintf(stdout, "attachment cleanup: %d uploading, %d cleanup (%d due)\n", status.Uploading, status.Cleanup, status.Due)
 		return e
 	}
 	rt := app.Setup(context.Background())

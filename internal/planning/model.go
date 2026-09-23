@@ -127,6 +127,9 @@ type Attachment struct {
 	Uploader    string    `json:"uploader"`
 	CreatedAt   time.Time `json:"created_at"`
 	StorageKey  string    `json:"-"`
+	// CleanupQueued is an internal signal that metadata deletion committed with
+	// a durable blob-cleanup reservation. It is never accepted or returned.
+	CleanupQueued bool `json:"-"`
 }
 type Comment struct {
 	ID        int64     `json:"id"`

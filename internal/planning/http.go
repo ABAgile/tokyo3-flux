@@ -84,6 +84,18 @@ type BlobCleanupRepository interface {
 	QueueBlobCleanup(context.Context, string) error
 }
 
+// BlobUploadRepository reserves generated object keys before bytes are written.
+// Store implementations remove the reservation atomically with metadata commit.
+type BlobUploadRepository interface {
+	BeginBlobUpload(context.Context, string) error
+}
+
+// BlobCleanupCompletionRepository removes a reservation after an immediate
+// object delete succeeds. Queued failures intentionally retain their record.
+type BlobCleanupCompletionRepository interface {
+	CompleteBlobCleanupKey(context.Context, string) error
+}
+
 // AttachmentStore supplies bounded attachment bytes; lifecycle closing is
 // owned by the application that constructs it.
 type AttachmentStore interface {
@@ -611,6 +623,12 @@ func (h *HTTP) uploadAttachment(w http.ResponseWriter, r *http.Request, machine 
 	// The filesystem root already is the attachment namespace; keep the
 	// generated key flat so FLUX_BLOBSTORE_PATH is not duplicated as a folder.
 	key := NewID()
+	if uploads, ok := h.repo.(BlobUploadRepository); ok {
+		if err = uploads.BeginBlobUpload(r.Context(), key); err != nil {
+			h.failure(w, r, ErrAttachmentUnavailable)
+			return
+		}
+	}
 	info, err := h.blobs.Put(r.Context(), key,
 		io.MultiReader(bytes.NewReader(sample[:sampleSize]), file), contentType)
 	if err != nil {
@@ -759,9 +777,27 @@ func (h *HTTP) deleteAttachment(w http.ResponseWriter, r *http.Request, machine 
 		h.failure(w, r, err)
 		return
 	}
-	if err = h.deleteBlobOrQueue(attachment.StorageKey); err != nil {
+	if attachment.CleanupQueued {
+		// RemoveAttachment committed a durable cleanup row in the same
+		// transaction as metadata deletion. Do not turn a successful metadata
+		// delete into a client-visible failure if storage is unavailable now.
+		if err = h.deleteBlob(attachment.StorageKey); err != nil {
+			if h.log != nil {
+				h.log.Warn("attachment cleanup deferred", "key", attachment.StorageKey, "error", err)
+			}
+		} else {
+			h.completeBlobCleanup(attachment.StorageKey)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	deleted, err := h.deleteBlobOrQueue(attachment.StorageKey)
+	if err != nil {
 		h.failure(w, r, ErrAttachmentUnavailable)
 		return
+	}
+	if deleted {
+		h.completeBlobCleanup(attachment.StorageKey)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -786,25 +822,39 @@ func (h *HTTP) attachmentWritePreflight(ctx context.Context, workspaceID, subjec
 	return ErrNotFound
 }
 
+func (h *HTTP) deleteBlob(key string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return h.blobs.Delete(cleanupCtx, key)
+}
+
 // deleteBlobOrQueue removes an object immediately and persists a retry when
 // storage is temporarily unavailable. A detached context keeps this useful
 // after a request has been cancelled.
-func (h *HTTP) deleteBlobOrQueue(key string) error {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := h.blobs.Delete(cleanupCtx, key); err == nil {
-		return nil
+func (h *HTTP) deleteBlobOrQueue(key string) (bool, error) {
+	if err := h.deleteBlob(key); err == nil {
+		return true, nil
 	} else if queue, ok := h.repo.(BlobCleanupRepository); ok {
 		if queueErr := queue.QueueBlobCleanup(context.Background(), key); queueErr == nil {
 			if h.log != nil {
 				h.log.Warn("attachment cleanup queued", "key", key, "error", err)
 			}
-			return nil
+			return false, nil
 		} else {
-			return errors.Join(err, queueErr)
+			return false, errors.Join(err, queueErr)
 		}
 	} else {
-		return err
+		return false, err
+	}
+}
+
+func (h *HTTP) completeBlobCleanup(key string) {
+	completion, ok := h.repo.(BlobCleanupCompletionRepository)
+	if !ok {
+		return
+	}
+	if err := completion.CompleteBlobCleanupKey(context.Background(), key); err != nil && h.log != nil {
+		h.log.Warn("attachment cleanup completion failed", "key", key, "error", err)
 	}
 }
 
@@ -812,8 +862,15 @@ func (h *HTTP) deleteBlobOrQueue(key string) error {
 // runs when the request context is already cancelled. id ties the warning back
 // to the request that created the orphan.
 func (h *HTTP) removeBlob(id, key string) {
-	if err := h.deleteBlobOrQueue(key); err != nil && h.log != nil {
-		h.log.Warn("attachment cleanup failed", "request_id", id, "error", err)
+	deleted, err := h.deleteBlobOrQueue(key)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("attachment cleanup failed", "request_id", id, "error", err)
+		}
+		return
+	}
+	if deleted {
+		h.completeBlobCleanup(key)
 	}
 }
 

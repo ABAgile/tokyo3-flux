@@ -16,6 +16,14 @@ const blobCleanupInterval = time.Minute
 // safely share the work.
 func runBlobCleanup(ctx context.Context, db *store.Store, blobs blobstore.Store, log *slog.Logger) error {
 	clean := func() {
+		stale, err := db.ReconcileBlobUploads(ctx, store.BlobCleanupBatchLimit)
+		if err != nil {
+			log.Warn("attachment upload manifest unavailable", "error", err)
+			return
+		}
+		if stale > 0 {
+			log.Info("expired attachment upload reservations queued", "count", stale)
+		}
 		entries, err := db.ClaimBlobCleanup(ctx, store.BlobCleanupBatchLimit)
 		if err != nil {
 			log.Warn("attachment cleanup queue unavailable", "error", err)

@@ -96,6 +96,22 @@ func TestPlanningSeed(t *testing.T) {
 	}
 }
 
+func TestBlobCleanupCommand(t *testing.T) {
+	dsn := os.Getenv("FLUX_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set FLUX_TEST_DATABASE_URL for PostgreSQL cleanup integration")
+	}
+	t.Setenv("FLUX_DATABASE_URL", dsn)
+	t.Setenv("FLUX_ADMIN_DATABASE_URL", dsn)
+	var out bytes.Buffer
+	if err := runPlan([]string{"cleanup"}, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "attachment cleanup:") {
+		t.Fatalf("unexpected cleanup output: %q", out.String())
+	}
+}
+
 func TestRateLimitSettings(t *testing.T) {
 	api, auth, err := rateLimitSettings()
 	if err != nil {
