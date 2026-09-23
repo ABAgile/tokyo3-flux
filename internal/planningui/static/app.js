@@ -562,6 +562,7 @@ function renderBulkBar(bar, items) {
 function refreshBulkBar() { const bar = document.querySelector('[data-bulk-bar]'); if (bar) renderBulkBar(bar, filteredItems()); }
 function renderControls() { document.querySelectorAll('[data-write]').forEach(b => { b.disabled = !writable() || integrationFormOpen; }); document.querySelectorAll('[data-admin-write]').forEach(b => { b.disabled = !adminWritable() || integrationFormOpen; }); document.querySelectorAll('[data-gitlab-write]').forEach(b => { b.disabled = !gitLabWritable(); }); document.querySelectorAll('[data-comment-write]').forEach(b => { b.disabled = !canComment(); }); document.querySelectorAll('[data-drag-type]').forEach(e => { const item = e.dataset.dragType === 'card' ? findItem(e.dataset.item) : undefined; e.draggable = writable() && !item?.archived; }); document.querySelectorAll('[data-view]').forEach(b => { b.disabled = busy || loading || integrationFormOpen; }); $('presentation-toggle').hidden = !board || view !== 'board'; $('presentation-board').disabled = !board || busy || loading || integrationFormOpen; $('presentation-list').disabled = !board || busy || loading || integrationFormOpen; $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board')); $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list')); $('refresh').disabled = busy || loading || integrationFormOpen; $('planning-refresh').disabled = busy || loading || integrationFormOpen; $('new-workspace').disabled = !session || busy || loading || integrationFormOpen; $('workspace-field').hidden = !board && workspaceGate !== 'loading'; $('workspace').disabled = !board || busy || loading || integrationFormOpen; document.querySelector('nav').hidden = !board; document.querySelector('.heading .actions').hidden = !board; $('planning-filters').hidden = !board; $('project').disabled = !board || busy || loading; $('assignee').disabled = !board || busy || loading; $('label').disabled = !board || busy || loading; $('undo').disabled = !writable(); document.querySelectorAll('.list-row-select').forEach(input => { input.disabled = busy || loading; }); }
 let drag;
+let dragPreview;
 function isFileTransfer(dataTransfer) { return Array.from(dataTransfer?.types || []).includes('Files'); }
 document.addEventListener('dragover', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
 document.addEventListener('drop', e => { if (isFileTransfer(e.dataTransfer)) e.preventDefault(); });
@@ -570,9 +571,14 @@ function makeDraggable(node, type, id, name) {
  node.dataset.dragType = type; node.draggable = writable() && !(type === 'card' && findItem(id)?.archived); node.setAttribute('aria-label', `Drag ${type} ${name}`);
  node.addEventListener('dragstart', e => {
   if (!writable() || (type === 'card' && findItem(id)?.archived) || (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))) { e.preventDefault(); return; }
-  e.stopPropagation(); drag = {type, id, revision: board.workspace.revision, root}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
+  e.stopPropagation(); node.classList.add('drag-source'); observationTooltipTarget = undefined; hideAttachmentTooltip();
+  drag = {type, id, revision: board.workspace.revision, root}; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id);
+  const bounds = node.getBoundingClientRect(); dragPreview?.remove(); dragPreview = node.cloneNode(true); dragPreview.classList.add('drag-preview'); dragPreview.dataset.dragPreview = 'true'; dragPreview.removeAttribute('draggable'); dragPreview.removeAttribute('data-drag-type'); dragPreview.setAttribute('aria-hidden', 'true'); dragPreview.inert = true;
+  Object.assign(dragPreview.style, {position:'fixed', left:'-10000px', top:'0', width:`${bounds.width}px`, height:`${bounds.height}px`, margin:'0', pointerEvents:'none', zIndex:'-1'}); document.body.append(dragPreview);
+  const x = e.clientX >= bounds.left && e.clientX < bounds.right ? e.clientX - bounds.left : bounds.width / 2; const y = e.clientY >= bounds.top && e.clientY < bounds.bottom ? e.clientY - bounds.top : bounds.height / 2;
+  e.dataTransfer.setDragImage(dragPreview, x, y);
  });
- node.addEventListener('dragend', () => { drag = undefined; clearDropMarks(); });
+ node.addEventListener('dragend', () => { node.classList.remove('drag-source'); dragPreview?.remove(); dragPreview = undefined; drag = undefined; clearDropMarks(); });
  return node;
 }
 function dropZone(node, type, command, axis = 'y') {
