@@ -25,7 +25,13 @@ RUN apk add --no-cache ca-certificates tini tzdata \
     && mkdir -p /var/lib/flux/attachments \
     && chown -R flux:flux /var/lib/flux
 
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="Flux" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 COPY --from=builder /out/flux /usr/local/bin/flux
+COPY LICENSE /licenses/flux/LICENSE
 
 USER flux
 WORKDIR /var/lib/flux

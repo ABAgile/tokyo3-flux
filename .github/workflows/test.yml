@@ -1,0 +1,52 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        id: setup-go
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-${{ hashFiles('go.mod') }}-${{ steps.setup-go.outputs.go-version }}
+
+      - name: Install Go analysis tools
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install golang.org/x/tools/gopls@latest
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/tools/cmd/deadcode@latest
+
+      - name: Check Go formatting
+        run: |
+          files=$(find . -type f -name '*.go' -print0 | xargs -0 gofmt -s -l)
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+
+      - run: go mod tidy -diff
+      - run: go test ./... -count=1
+      - run: go vet ./...
+      - run: staticcheck ./...
+      - run: find . -type f -name '*.go' -print0 | xargs -0 -n 100 gopls check -severity=hint
+      - run: govulncheck ./...
+      - name: deadcode
+        run: |
+          out=$(deadcode -test ./...)
+          if [ -n "$out" ]; then echo "$out"; echo "deadcode: unreachable functions found (above)"; exit 1; fi
