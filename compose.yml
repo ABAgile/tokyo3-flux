@@ -59,6 +59,8 @@ services:
     environment:
       # The same URL is used for migration, operator commands, and serving.
       FLUX_DATABASE_URL: &database-url "postgres://flux:flux@db:5432/flux?sslmode=disable"
+    tmpfs:
+      - /var/lib/flux
 
   flux:
     build: *flux-build
