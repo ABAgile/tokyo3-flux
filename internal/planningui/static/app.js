@@ -1607,7 +1607,7 @@ function multiSelect(parent, name, title, entries, selected = [], decorate, help
  function selectValue(value) {
   if (!single) return false;
   const choice = choices.find(candidate => candidate.value === String(value)); if (!choice) return false;
-  choices.forEach(candidate => { candidate.input.checked = candidate === choice; }); render(); if (onChange) onChange(currentValues()); return true;
+  choices.forEach(candidate => { candidate.input.checked = candidate === choice; }); render(); if (onChange) onChange(currentValues()); root.dispatchEvent(new Event('change', {bubbles:true})); return true;
  }
  function setStatus(text) { setStatusText(status, text); render(); }
  function invoke(handler, query) {
@@ -2036,7 +2036,12 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
  const titleLabel = el('span', 'Title', 'item-title-label'); title.parentElement.firstChild.replaceWith(titleLabel);
  if (context?.form && itemDateStatus(item)?.overdue) { const overdueBadge = dueDateBadge(item); if (overdueBadge) { overdueBadge.id = uid('item-title-overdue'); title.setAttribute('aria-describedby', overdueBadge.id); appendEditorDueBadge(context.form, overdueBadge); } }
  markdownEditor(primary, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
- multiSelect(controls, 'assignee', 'Assignee', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], [draft?.assignee ?? item.assignee], undefined, undefined, {single:true});
+ const selfSubject = board.members.find(member => member.subject === session?.subject)?.subject;
+ const assigneePicker = multiSelect(controls, 'assignee', 'Assignee', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], [draft?.assignee ?? item.assignee], undefined, undefined, {single:true});
+ if (!readOnly && selfSubject) {
+  const assignMe = button('Assign me', () => assigneePicker.select(selfSubject), 'multi-select-edit'); assignMe.setAttribute('aria-label', 'Assign me');
+  assigneePicker.header.querySelector('.multi-select-heading').append(assignMe);
+ }
  multiSelect(controls, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), draft?.labels ?? item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.');
  const selectedProjects = draft?.project_ids ?? itemProjectIDs(item); multiSelect(controls, 'project_id', 'Project', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])], selectedProjects.length ? selectedProjects : [''], undefined, 'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.', {emptyValue:''});
  itemDatesField(controls, item, draft);

@@ -80,7 +80,7 @@ async (page) => {
  }
  await nav('Kanban board');
  await page.getByRole('button',{name:'＋ New item',exact:true}).click();
- const itemDialog = page.getByRole('dialog'); const projectField = itemDialog.getByRole('group',{name:'Project',exact:true}); const assigneeField = itemDialog.getByRole('group',{name:'Assignee',exact:true});
+ const itemDialog = page.getByRole('dialog'); const projectField = itemDialog.locator('.multi-select-field:has(.multi-select[aria-label="Project"])'); const assigneeField = itemDialog.locator('.multi-select-field:has(.multi-select[aria-label="Assignee"])');
  check(await itemDialog.getByRole('combobox',{name:'Move to',exact:true}).isVisible(), 'Move to select is missing');
  check(await projectField.locator('input[name="project_id"]:checked').inputValue() === '', 'new item required a project');
  for (const field of [projectField, assigneeField]) {
@@ -88,6 +88,9 @@ async (page) => {
   check(await field.locator('.multi-select-menu').isHidden(),'selection menu is not initially hidden');
   check(await field.locator('input[type="checkbox"]:checked').count()===1,'single selection field has multiple values');
  }
+ const currentSubject = await page.evaluate(async () => (await (await fetch('/api/v2/session')).json()).subject); const assignMe = assigneeField.getByRole('button',{name:'Assign me',exact:true}); const editAssignee = assigneeField.getByRole('button',{name:'Edit Assignee',exact:true});
+ check(await assignMe.count()===1 && await assignMe.isEnabled(),'Assign me is missing for a workspace member'); check(await assigneeField.locator('.multi-select-heading').evaluate(heading => heading.querySelector('.multi-select-label')?.nextElementSibling?.getAttribute('aria-label')==='Assign me') && await assignMe.getAttribute('class')===await editAssignee.getAttribute('class'),'Assign me is not styled like Edit or directly after its label');
+ await assignMe.click(); check(await assigneeField.locator('input[name="assignee"]:checked').inputValue()===currentSubject && await assigneeField.evaluate(field => { const assign=field.querySelector('[aria-label="Assign me"]'), edit=field.querySelector('[aria-label="Edit Assignee"]'), a=getComputedStyle(assign), e=getComputedStyle(edit); return !assign.disabled && a.color===e.color && a.textDecorationLine===e.textDecorationLine && a.opacity===e.opacity && a.fontSize===e.fontSize && a.fontWeight===e.fontWeight; }),'Assign me did not select me with Edit-matching styling');
  await projectField.getByRole('button',{name:'Edit Project',exact:true}).click();
  check(await projectField.locator('.multi-select-menu').isVisible(),'Edit Project did not reveal its selection box');
  await page.keyboard.press('Escape');

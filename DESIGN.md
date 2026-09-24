@@ -139,8 +139,9 @@ a validated HTTPS Gravatar avatar URL.
   right; it stacks below that width.
   Wide layouts place comments below the description in the left pane; stacked layouts place them
   after the controls. Assignee uses the same filterable single-selection dropdown as the other
-  selection fields; Project uses a filterable multi-selection dropdown and supports No project as its
-  mutually exclusive
+  selection fields and offers an `Assign me` link beside Edit when the signed-in identity is a
+  workspace member; the link sits immediately after the Assignee label, with Edit right-aligned.
+  Project uses a filterable multi-selection dropdown and supports No project as its mutually exclusive
   empty choice. The control pane orders Assignee, Labels, Project, Dates, Open sprints,
   Depends on and GitLab links, followed by a divider and the native `Move to` select.
   Selection fields start in display mode; their Edit link reveals the native select or checkbox

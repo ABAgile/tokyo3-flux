@@ -51,7 +51,8 @@ planning evidence and draft suggestions for a human to review and approve.
   stacked layouts put controls, attachments and comments in that order. The control pane orders
   Assignee, Labels, Project, Dates, Open sprints, Depends on and GitLab links, then separates the
   native Move to select with a divider. Dates use optional native date inputs behind a display/Edit
-  control. Assignee uses a single-selection dropdown; Project supports multiple selections,
+  control. Assignee uses a single-selection dropdown with an `Assign me` action for the signed-in
+  workspace member, immediately after the Assignee label. Project supports multiple selections,
   including a mutually exclusive No project choice. Start and end dates share a `·`-separated badge with dashes
   for unset values; due date has its own badge. While editing, each populated date has a clear action,
   and start/end inputs share a line when space allows, with due at the same width below. Selection
