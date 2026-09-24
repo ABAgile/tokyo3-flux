@@ -34,7 +34,7 @@ func (s *Store) Item(ctx context.Context, wid, subject, itemID string) (p.ItemVi
 	var v p.Item
 	err = tx.QueryRow(ctx, "SELECT "+itemColumns+" FROM work_items i WHERE i.workspace_id=$1 AND i.id=$2", wid, itemID).
 		Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee,
-			&v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs)
+			&v.Rank, &v.Revision, &v.Archived, &v.StartDate, &v.EndDate, &v.DueDate, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return p.ItemView{}, p.ErrNotFound
 	} else if err != nil {

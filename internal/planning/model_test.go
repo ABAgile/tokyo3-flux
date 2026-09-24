@@ -76,6 +76,33 @@ func TestWorkspaceValidation(t *testing.T) {
 		})
 	}
 }
+func TestItemDateValidation(t *testing.T) {
+	tests := []struct {
+		name            string
+		start, end, due string
+		invalid         bool
+	}{
+		{name: "empty dates"},
+		{name: "start only", start: "2026-03-01"},
+		{name: "end only", end: "2026-03-01"},
+		{name: "due is independent", start: "2026-03-10", end: "2026-03-20", due: "2026-03-01"},
+		{name: "invalid start", start: "2026-02-30", invalid: true},
+		{name: "invalid end", end: "2026-3-01", invalid: true},
+		{name: "invalid due", due: "not-a-date", invalid: true},
+		{name: "start after end", start: "2026-03-21", end: "2026-03-20", invalid: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			b := testBoard()
+			b.Items[0].StartDate, b.Items[0].EndDate, b.Items[0].DueDate = test.start, test.end, test.due
+			err := Validate(&b)
+			if errors.Is(err, ErrInvalid) != test.invalid {
+				t.Fatalf("Validate() error = %v, want invalid = %t", err, test.invalid)
+			}
+		})
+	}
+}
+
 func TestMemberManagement(t *testing.T) {
 	b := testBoard()
 	b.Role, b.Workspace.Role, b.Members[0].Role = "admin", "admin", "admin"

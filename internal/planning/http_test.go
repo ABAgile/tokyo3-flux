@@ -38,6 +38,7 @@ type fakeRepository struct {
 	subject          string
 	err              error
 	attachment       Attachment
+	board            *Board
 	archived         []Item
 	sprintHistory    SprintHistoryPage
 }
@@ -81,6 +82,9 @@ func (f *fakeRepository) GitLabMergeRequestsFor(ctx context.Context, workspace, 
 func (f *fakeRepository) Board(_ context.Context, _, subject string) (Board, error) {
 	f.boardReads++
 	f.subject = subject
+	if f.board != nil {
+		return *f.board, f.err
+	}
 	return testBoard(), f.err
 }
 func (f *fakeRepository) WorkspaceState(_ context.Context, _, subject string) (WorkspaceState, error) {
@@ -200,6 +204,9 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 		t.Fatal("no session")
 	}
 	repo := &fakeRepository{}
+	board := testBoard()
+	board.Items[0].StartDate, board.Items[0].EndDate, board.Items[0].DueDate = "2026-03-01", "2026-03-20", "2026-03-04"
+	repo.board = &board
 	h := NewHTTP(repo, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	browser := manager.Gate(h.Handler(false))
 	var csrf string
@@ -289,6 +296,17 @@ func TestHTTPAuthenticationAndCSRF(t *testing.T) {
 				t.Fatalf("got %d: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+	datedBoardRequest := httptest.NewRequest("GET", root+"/board", nil)
+	datedBoardRequest.AddCookie(cookies[0])
+	datedBoardResponse := httptest.NewRecorder()
+	browser.ServeHTTP(datedBoardResponse, datedBoardRequest)
+	var datedBoard Board
+	if datedBoardResponse.Code != http.StatusOK || json.Unmarshal(datedBoardResponse.Body.Bytes(), &datedBoard) != nil || len(datedBoard.Items) == 0 {
+		t.Fatalf("dated board response: %d %s", datedBoardResponse.Code, datedBoardResponse.Body.String())
+	}
+	if item := datedBoard.Items[0]; item.StartDate != "2026-03-01" || item.EndDate != "2026-03-20" || item.DueDate != "2026-03-04" {
+		t.Fatalf("board JSON omitted item dates: %+v", item)
 	}
 	missingKey := httptest.NewRequest("POST", "http://localhost/api/v2/workspaces", strings.NewReader(`{"name":"Missing key"}`))
 	missingKey.AddCookie(cookies[0])

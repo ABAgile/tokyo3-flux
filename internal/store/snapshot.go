@@ -9,8 +9,8 @@ import p "abagile.com/tokyo3/flux/internal/planning"
 // field on the board (16000 bytes per item, 1000 items per workspace), so
 // keeping it would make every audit row scale with the whole workspace's prose
 // rather than with the change. Everything auditors and the burn-down reader
-// need — identity, column, sprint scope, project, assignee, labels, archived
-// state — is retained, and work_item_events still records the actor, action,
+// need — identity, column, dates, sprint scope, project, assignee, labels,
+// archived state — is retained, and work_item_events still records the actor, action,
 // target and rationale of every change.
 func planningSnapshot(board p.Board) p.Board {
 	board.Items = append([]p.Item(nil), board.Items...)

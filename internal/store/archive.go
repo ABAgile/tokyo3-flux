@@ -11,6 +11,7 @@ import (
 // and the single-card read, so a shared link renders exactly what the archive
 // list would render.
 const itemColumns = `i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.rank,i.revision,i.archived,
+ coalesce(to_char(i.start_date,'YYYY-MM-DD'),''),coalesce(to_char(i.end_date,'YYYY-MM-DD'),''),coalesce(to_char(i.due_date,'YYYY-MM-DD'),''),
  ARRAY(SELECT p.project_id FROM item_projects p WHERE p.workspace_id=i.workspace_id AND p.item_id=i.id ORDER BY (p.project_id=i.project_id) DESC, p.project_id),
  ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
  ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
@@ -37,7 +38,7 @@ func (s *Store) ArchivedItems(ctx context.Context, wid, subject string, offset, 
 	for rows.Next() {
 		var v p.Item
 		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee,
-			&v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
+			&v.Rank, &v.Revision, &v.Archived, &v.StartDate, &v.EndDate, &v.DueDate, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs); err != nil {
 			return nil, err
 		}
 		p.NormalizeItemProjects(&v)

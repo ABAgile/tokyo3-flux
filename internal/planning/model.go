@@ -99,6 +99,9 @@ type Item struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
+	StartDate   string `json:"start_date"`
+	EndDate     string `json:"end_date"`
+	DueDate     string `json:"due_date"`
 	ColumnID    string `json:"column_id"`
 	// ProjectID is retained as the first-project compatibility field for older
 	// clients. ProjectIDs is the authoritative association list.
@@ -233,6 +236,14 @@ type Command struct {
 func NewID() string { return rand.Text() }
 
 func invalid(s string) error { return fmt.Errorf("%w: %s", ErrInvalid, s) }
+
+func validDateOnly(value string) bool {
+	if value == "" {
+		return true
+	}
+	date, err := time.Parse("2006-01-02", value)
+	return err == nil && date.Year() > 0 && date.Format("2006-01-02") == value
+}
 
 func validLabelName(name string) bool {
 	if strings.TrimSpace(name) == "" || len(name) > 60 || strings.ContainsAny(name, "\r\n") {
@@ -849,6 +860,9 @@ func Validate(b *Board) error {
 		}
 	}
 	for _, item := range b.Items {
+		if !validDateOnly(item.StartDate) || !validDateOnly(item.EndDate) || !validDateOnly(item.DueDate) || item.StartDate != "" && item.EndDate != "" && item.StartDate > item.EndDate {
+			return invalid("item dates must be valid YYYY-MM-DD values with start on or before end")
+		}
 		if strings.TrimSpace(item.Title) == "" || len(item.Title) > 240 || len(item.Description) > 16000 || !hasColumn(b, item.ColumnID) {
 			return invalid("item requires title and valid column; content may exceed limits")
 		}

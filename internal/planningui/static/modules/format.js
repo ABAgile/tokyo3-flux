@@ -28,8 +28,22 @@ function labelForeground(color) {
  return luminance > .21 ? 'var(--label-ink)' : 'var(--label-contrast)';
 }
 function burndownDateLabel(date) { const value = new Date(`${date}T00:00:00Z`); return Number.isNaN(value.getTime()) ? date : value.toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'}); }
+function parseDateOnly(value) {
+ const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '')); if (!match) return undefined;
+ const [year, month, day] = match.slice(1).map(Number); if (year < 1) return undefined;
+ const date = new Date(0); date.setUTCHours(12, 0, 0, 0); date.setUTCFullYear(year, month - 1, day);
+ return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : undefined;
+}
+function formatDateOnly(value) { const date = parseDateOnly(value); return date ? date.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric', timeZone:'UTC'}) : ''; }
+function dueDatePresentation(value, category, archived, now = new Date()) {
+ const date = parseDateOnly(value); if (!date) return undefined;
+ const today = `${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+ const overdue = !archived && category !== 'done' && value < today;
+ const label = date.toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'});
+ return {label:overdue ? `⚠ Overdue · ${label}` : `Due · ${label}`, overdue};
+}
 function workspaceLabel(workspace) { return workspace.name; }
 function workspaceHistoryLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
 function columnWIPLabel(column, total) { return column.wip ? `${total}/${column.wip} WIP` : 'No limit'; }
 
-export {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, workspaceLabel, workspaceHistoryLabel, columnWIPLabel};
+export {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, formatDateOnly, dueDatePresentation, workspaceLabel, workspaceHistoryLabel, columnWIPLabel};

@@ -68,6 +68,9 @@ var sprintHistoryMigration string
 //go:embed 014_attachment_lifecycle.sql
 var attachmentLifecycleMigration string
 
+//go:embed 015_item_dates.sql
+var itemDatesMigration string
+
 // migrations is the ordered native schema ladder. Index i upgrades a database
 // at version i+1 to version i+2, so schemaVersion stays derived rather than
 // duplicated across Migrate and Ready.
@@ -85,6 +88,7 @@ var migrations = []string{
 	attachmentCleanupMigration,
 	sprintHistoryMigration,
 	attachmentLifecycleMigration,
+	itemDatesMigration,
 }
 
 // schemaVersion is the version serving requires; schema.sql creates version 1.
@@ -655,6 +659,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 		return b, err
 	}
 	rows, err = tx.Query(ctx, `SELECT i.id,i.title,i.description,i.column_id,coalesce(i.project_id,''),coalesce(i.assignee,''),i.rank,i.revision,i.archived,
+ coalesce(to_char(i.start_date,'YYYY-MM-DD'),''),coalesce(to_char(i.end_date,'YYYY-MM-DD'),''),coalesce(to_char(i.due_date,'YYYY-MM-DD'),''),
  ARRAY(SELECT p.project_id FROM item_projects p WHERE p.workspace_id=i.workspace_id AND p.item_id=i.id ORDER BY (p.project_id=i.project_id) DESC, p.project_id),
  ARRAY(SELECT label FROM item_labels l WHERE l.workspace_id=i.workspace_id AND l.item_id=i.id ORDER BY label),
  ARRAY(SELECT depends_on FROM dependencies d WHERE d.workspace_id=i.workspace_id AND d.item_id=i.id ORDER BY depends_on),
@@ -666,7 +671,7 @@ func load(ctx context.Context, tx pgx.Tx, wid, subject string) (p.Board, error) 
 	}
 	for rows.Next() {
 		var v p.Item
-		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs, &v.AttachmentCount); err != nil {
+		if err = rows.Scan(&v.ID, &v.Title, &v.Description, &v.ColumnID, &v.ProjectID, &v.Assignee, &v.Rank, &v.Revision, &v.Archived, &v.StartDate, &v.EndDate, &v.DueDate, &v.ProjectIDs, &v.Labels, &v.Dependencies, &v.SprintIDs, &v.AttachmentCount); err != nil {
 			rows.Close()
 			return b, err
 		}
@@ -999,7 +1004,8 @@ func sameItemRow(old, next p.Item) bool {
 	return old.Title == next.Title && old.Description == next.Description &&
 		old.ColumnID == next.ColumnID && old.Assignee == next.Assignee &&
 		old.Rank == next.Rank && old.Revision == next.Revision &&
-		old.Archived == next.Archived && p.ItemLegacyProjectID(old) == p.ItemLegacyProjectID(next)
+		old.Archived == next.Archived && p.ItemLegacyProjectID(old) == p.ItemLegacyProjectID(next) &&
+		old.StartDate == next.StartDate && old.EndDate == next.EndDate && old.DueDate == next.DueDate
 }
 
 func indexByID[T any](values []T, key func(T) string) map[string]T {
@@ -1098,7 +1104,7 @@ func save(ctx context.Context, tx pgx.Tx, before, b p.Board) error {
 		if old, ok := previousItems[it.ID]; ok && sameItemRow(old, it) {
 			continue
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived`, wid, p.ItemLegacyProjectID(it), it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO work_items(workspace_id,project_id,id,title,description,column_id,assignee,rank,revision,archived,start_date,end_date,due_date) VALUES($1,NULLIF($2,''),$3,$4,$5,$6,NULLIF($7,''),$8,$9,$10,NULLIF($11,'')::date,NULLIF($12,'')::date,NULLIF($13,'')::date) ON CONFLICT(workspace_id,id) DO UPDATE SET title=excluded.title,description=excluded.description,column_id=excluded.column_id,project_id=excluded.project_id,assignee=excluded.assignee,rank=excluded.rank,revision=excluded.revision,archived=excluded.archived,start_date=excluded.start_date,end_date=excluded.end_date,due_date=excluded.due_date`, wid, p.ItemLegacyProjectID(it), it.ID, it.Title, it.Description, it.ColumnID, it.Assignee, it.Rank, it.Revision, it.Archived, it.StartDate, it.EndDate, it.DueDate); err != nil {
 			return err
 		}
 	}

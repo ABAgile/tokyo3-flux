@@ -23,6 +23,7 @@ func TestPlanningSnapshotOmitsDescriptionsAndKeepsPlanningState(t *testing.T) {
 	board := p.Board{Items: []p.Item{{
 		ID: "item", Title: "Ship the board", Description: "very long prose",
 		ColumnID: "col", Assignee: "7", SprintIDs: []string{"sprint"},
+		StartDate: "2026-03-01", EndDate: "2026-03-20", DueDate: "2026-03-04",
 	}}}
 	snapshot := planningSnapshot(board)
 	raw, err := json.Marshal(snapshot)
@@ -32,7 +33,7 @@ func TestPlanningSnapshotOmitsDescriptionsAndKeepsPlanningState(t *testing.T) {
 	if strings.Contains(string(raw), "very long prose") {
 		t.Fatalf("description entered planning snapshot: %s", raw)
 	}
-	for _, want := range []string{"Ship the board", "col", "sprint"} {
+	for _, want := range []string{"Ship the board", "col", "sprint", "2026-03-01", "2026-03-20", "2026-03-04"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("planning snapshot dropped %q: %s", want, raw)
 		}

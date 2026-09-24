@@ -6,12 +6,12 @@ import {itemPayloadFromForm} from './modules/item-command.js';
 // that finds nothing new transfers no payload. The ETag is scoped to the root
 // it was issued for and discarded whenever the workspace changes.
 let boardETag = '', boardETagRoot = '';
-import {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, workspaceLabel, workspaceHistoryLabel, columnWIPLabel} from './modules/format.js';
+import {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, dueDatePresentation, workspaceLabel, workspaceHistoryLabel, columnWIPLabel} from './modules/format.js';
 import {renderMarkdown, markdownEditor} from './modules/markdown.js';
 import {contentRoot, pageStack, panel, sectionHead, panelHead, helpText, statusLine, setStatusText, errorLine, setErrorText, emptyState, metricList,
  filterBar, filterSelect, filterSearch, filterChipRow, filterSlot, maintenanceList, maintenanceRow} from './modules/layout.js';
 
-let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false;
+let session, workspaces = [], board, root, view = 'board', presentation = 'board', busy = false, loading = false, planningChangeNotice = false, overdueTimer;
 let workspaceGate = 'loading', workspaceCreating = false, workspaceCreateKey = '', workspaceCreateName = '', membershipPoll = false;
 let pendingPlanningURLState;
 let projectSearch = '';
@@ -978,9 +978,57 @@ function applyFilterChange(name) {
  render(); if (name !== 'label' && !burndownRequests.size) setContentBusy(false);
  persistPlanningURL();
 }
+function itemDateStatus(item, now = new Date()) {
+ const category = board?.columns.find(column => column.id === item.column_id)?.category || '';
+ return dueDatePresentation(item.due_date, category, !!item.archived, now);
+}
+function dueDateBadge(item) {
+ const status = itemDateStatus(item); if (!status) return undefined;
+ const badge = el('span', status.label, `badge badge-due${status.overdue ? ' is-overdue' : ''}`);
+ badge.dataset.dueDateBadge = item.id; badge.dataset.dueDate = item.due_date; badge.dataset.dueCategory = board?.columns.find(column => column.id === item.column_id)?.category || ''; badge.dataset.dueArchived = String(!!item.archived);
+ return badge;
+}
+function positionCardDueBadge(badge, overdue) {
+ const card = badge.closest('.card'); if (!card) return;
+ const top = card.querySelector('.card-top');
+ if (overdue && top) { badge.classList.add('card-title-due'); top.classList.add('card-top-overdue'); if (!top.contains(badge)) top.append(badge); }
+ else if (!overdue && badge.classList.contains('card-title-due')) { badge.classList.remove('card-title-due'); top?.classList.remove('card-top-overdue'); card.querySelector('[data-card-section="labels"]')?.append(badge); }
+}
+function positionListDueBadge(badge, overdue) {
+ const row = badge.closest('.list-row'); if (!row) return;
+ const title = row.querySelector('.list-row-title-details');
+ if (overdue && title) { badge.classList.add('list-title-due'); if (!title.contains(badge)) title.append(badge); }
+ else if (!overdue && badge.classList.contains('list-title-due')) { badge.classList.remove('list-title-due'); row.querySelector('.list-row-status-badges')?.append(badge); }
+}
+function editorDueBadgeHost(form) {
+ return form.classList.contains('item-editor-form') ? form.querySelector('.dialog-head') : form.querySelector('.item-title-label');
+}
+function appendEditorDueBadge(form, badge) {
+ const host = editorDueBadgeHost(form);
+ const close = form.classList.contains('item-editor-form') ? host?.querySelector('#dismiss') : undefined;
+ if (close) close.before(badge); else host?.append(badge);
+}
+function positionEditorDueBadge(badge, overdue) {
+ const form = badge.closest('.item-editor-form,.item-detail-form'); if (!form) return;
+ const title = form.querySelector('[name="title"]');
+ if (overdue) { badge.id ||= uid('item-title-overdue'); title?.setAttribute('aria-describedby', badge.id); appendEditorDueBadge(form, badge); }
+ else { const destination = form.querySelector('.item-status-badges'); if (destination && !destination.contains(badge)) destination.append(badge); if (title?.getAttribute('aria-describedby') === badge.id) title.removeAttribute('aria-describedby'); }
+}
+function refreshDueDateBadges(now = new Date()) {
+ document.querySelectorAll('.badge-due[data-due-date-badge]').forEach(badge => {
+  const status = dueDatePresentation(badge.dataset.dueDate, badge.dataset.dueCategory, badge.dataset.dueArchived === 'true', now);
+  if (!status) { const card = badge.closest('.card'); badge.closest('.card,.list-row')?.classList.remove('is-overdue'); card?.querySelector('.card-top')?.classList.remove('card-top-overdue'); badge.remove(); return; }
+  badge.textContent = status.label; badge.classList.toggle('is-overdue', status.overdue); badge.closest('.card,.list-row')?.classList.toggle('is-overdue', status.overdue); positionCardDueBadge(badge, status.overdue); positionListDueBadge(badge, status.overdue); positionEditorDueBadge(badge, status.overdue);
+ });
+}
+function scheduleOverdueRefresh() {
+ clearTimeout(overdueTimer); const now = new Date(); const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+ overdueTimer = setTimeout(() => { if (!document.hidden) refreshDueDateBadges(); scheduleOverdueRefresh(); }, Math.max(1, midnight.getTime() - now.getTime() + 10));
+}
 function cardRenderSignature(item, links) {
  const linkIdentity = links.map(link => ({id:link.id, project:link.project, kind:link.kind, number:link.number, items:link.items}));
- const itemView = {id:item.id, title:item.title, column_id:item.column_id, project_id:item.project_id, project_ids:itemProjectIDs(item), assignee:item.assignee, labels:item.labels, sprint_ids:item.sprint_ids, archived:item.archived, attachments:attachmentsLoaded(item) ? item.attachments : null, attachment_count:attachmentCount(item)};
+ const due = itemDateStatus(item);
+ const itemView = {id:item.id, title:item.title, column_id:item.column_id, project_id:item.project_id, project_ids:itemProjectIDs(item), assignee:item.assignee, labels:item.labels, sprint_ids:item.sprint_ids, archived:item.archived, due_date:item.due_date, overdue:due?.overdue || false, attachments:attachmentsLoaded(item) ? item.attachments : null, attachment_count:attachmentCount(item)};
  return JSON.stringify({item:itemView, links:linkIdentity, projects:itemProjectIDs(item).map(projectName), assignee:memberInfo(item.assignee), participants:itemParticipants(item).map(participant => [participant.subject, participant.roles, participantInfo(participant).name, participantInfo(participant).avatarURL]), sprints:item.sprint_ids.map(id => board.sprints.find(s => s.id === id)?.name || id), labels:item.labels.map(labelInfo), blocked:blocked(item)});
 }
 function observationOutcomeText(link) {
@@ -1024,13 +1072,13 @@ function cardObservationIcon(link, focusKey) {
 }
 function card(item, peers) {
  const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); const title = button(item.title, () => editItem(item), 'card-title'); title.dataset.focusKey = `item:${item.id}:title`; top.append(title);
- c.dataset.item = item.id;
+ c.dataset.item = item.id; const due = itemDateStatus(item); c.classList.toggle('is-overdue', !!due?.overdue);
  makeDraggable(c, 'card', item.id, item.title); itemFileDropZone(c, item);
  dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
  const meta = el('div', undefined, 'card-meta'); const projects = el('div', undefined, 'card-projects'); projects.append(...projectBadges(item)); meta.append(projects, participantStack(item));
  c.append(top, meta);
  const sprintTags = el('div', undefined, 'tags'); sprintTags.dataset.cardSection = 'sprints'; item.sprint_ids.forEach(id => { const tag = el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge badge-sprint'); tag.dataset.sprintId = id; sprintTags.append(tag); }); c.append(sprintTags);
- const tags = el('div', undefined, 'tags'); tags.dataset.cardSection = 'labels'; item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags);
+ const tags = el('div', undefined, 'tags'); tags.dataset.cardSection = 'labels'; item.labels.forEach(l => tags.append(labelBadge(l))); if (blocked(item)) tags.append(el('span', 'Blocked by dependency', 'badge warning')); const dueBadge = dueDateBadge(item); if (dueBadge) tags.append(dueBadge); if (item.archived) tags.append(el('span', 'Archived', 'badge')); c.append(tags); if (due?.overdue && dueBadge) positionCardDueBadge(dueBadge, true);
  if (item.archived) {
   const controls = el('div', undefined, 'card-controls');
   controls.append(writeButton('Restore item', () => quick({ kind: 'item.restore', target: item.id })));
@@ -1231,22 +1279,22 @@ function renderCardListContent(content, items) {
 function listCell(label, className) { const cell = el('div', undefined, `list-cell ${className || ''}`.trim()); cell.dataset.label = label; cell.append(el('span', label, 'list-cell-label')); return cell; }
 function listTableHeader() { const header = el('div', undefined, 'list-table-head'); ['Title', 'Project', 'Assignee', 'Labels', 'Sprints', 'Links / Status'].forEach(label => header.append(el('span', label, 'list-table-heading'))); return header; }
 function listRow(item) {
- const row = el('article', undefined, 'list-row'); row.dataset.item = item.id; row.dataset.focusKey = `item:${item.id}:list-row`; row.tabIndex = 0; row.setAttribute('aria-label', `Open work item ${item.title}`);
+ const row = el('article', undefined, 'list-row'); row.dataset.item = item.id; row.dataset.focusKey = `item:${item.id}:list-row`; row.tabIndex = 0; row.setAttribute('aria-label', `Open work item ${item.title}`); const due = itemDateStatus(item); row.classList.toggle('is-overdue', !!due?.overdue);
  row.addEventListener('click', event => { if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary')) return; selectItem(item.id, row); });
  row.addEventListener('keydown', event => { if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return; event.preventDefault(); selectItem(item.id, row); });
  makeDraggable(row, 'card', item.id, item.title); itemFileDropZone(row, item); row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
  dropZone(row, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
- const title = listCell('Title', 'list-cell-title'); const bulkSelected = bulkSelection.has(item.id);
+ const title = listCell('Title', 'list-cell-title'); const titleDetails = el('div', undefined, 'list-row-title-details'); const titleLine = el('div', undefined, 'list-row-title-line'); const bulkSelected = bulkSelection.has(item.id);
  if (board.role !== 'viewer' && !item.archived) {
   const toggle = el('input'); toggle.id = `bulk-select-${item.id}`; toggle.type = 'checkbox'; toggle.className = 'list-row-select'; toggle.checked = bulkSelected; toggle.disabled = busy || loading;
   toggle.dataset.focusKey = `item:${item.id}:bulk-select`; toggle.setAttribute('aria-label', `Select ${item.title} for bulk actions`);
   toggle.addEventListener('click', event => event.stopPropagation());
   toggle.addEventListener('change', () => { if (toggle.checked) bulkSelection.add(item.id); else bulkSelection.delete(item.id); row.classList.toggle('is-bulk-selected', toggle.checked); refreshBulkBar(); });
-  title.append(toggle);
+  titleLine.append(toggle);
  }
- const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title'); titleButton.dataset.focusKey = `item:${item.id}:list-title`; title.append(titleButton);
+ const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title'); titleButton.dataset.focusKey = `item:${item.id}:list-title`; titleLine.append(titleButton); titleDetails.append(titleLine); if (due?.overdue) titleDetails.append(dueDateBadge(item)); title.append(titleDetails);
  const project = listCell('Project', 'list-cell-project'); const projectValue = el('span', undefined, 'list-row-project'); projectValue.append(...projectBadges(item)); project.append(projectValue);
- const status = listCell('Links / Status', 'list-cell-status'); const statusContent = el('div', undefined, 'list-row-status-content'); const state = el('div', undefined, 'list-row-status-badges'); if (blocked(item)) state.append(el('span', 'Blocked', 'badge warning')); if (item.archived) state.append(el('span', 'Archived', 'badge')); if (state.childElementCount) statusContent.append(state);
+ const status = listCell('Links / Status', 'list-cell-status'); const statusContent = el('div', undefined, 'list-row-status-content'); const state = el('div', undefined, 'list-row-status-badges'); if (blocked(item)) state.append(el('span', 'Blocked', 'badge warning')); if (due && !due.overdue) { const dueBadge = dueDateBadge(item); if (dueBadge) state.append(dueBadge); } if (item.archived) state.append(el('span', 'Archived', 'badge')); if (state.childElementCount || due?.overdue) statusContent.append(state);
  const links = board.links.filter(link => link.items.includes(item.id)); if (links.length) { const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links'); linkIndicator.setAttribute('aria-label', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`); const linkHead = el('div', undefined, 'card-links-head'); const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label'); const observationLink = button('View observations', () => showLinks(item), 'card-link-details list-row-observation-link'); observationLink.dataset.focusKey = `item:${item.id}:list-observations`; observationLink.setAttribute('aria-label', `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`); observationLink.title = 'Show linked GitLab observations'; linkHead.append(linkLabel, observationLink); linkIndicator.append(linkHead); links.forEach(link => { const line = el('span', undefined, 'list-row-link-line'); if (link.kind === 'mr') line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`)); line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`)); linkIndicator.append(line); }); statusContent.append(linkIndicator); }
  const attachmentTotal = attachmentCount(item); if (attachmentTotal) { const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments'); attachmentIndicator.setAttribute('aria-label', `${attachmentTotal} attachment${attachmentTotal === 1 ? '' : 's'}`); attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachmentTotal))); statusContent.append(attachmentIndicator); }
  if (statusContent.childElementCount) status.append(statusContent); else status.append(el('span', '—', 'list-cell-empty'));
@@ -1257,7 +1305,7 @@ function listRow(item) {
  people.append(peopleContent);
  const labels = listCell('Labels', 'list-cell-labels'); item.labels.forEach(label => labels.append(labelBadge(label))); if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
  const sprints = listCell('Sprints', 'list-cell-sprints'); item.sprint_ids.forEach(id => sprints.append(el('span', board.sprints.find(s => s.id === id)?.name || id, 'badge badge-sprint'))); if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
- row.append(title, project, people, labels, sprints, status);
+ row.append(title, project, people, labels, sprints, status); if (due?.overdue) positionListDueBadge(row.querySelector('.badge-due'), true);
  row.classList.toggle('is-selected', selectedItemID === item.id); row.classList.toggle('is-bulk-selected', bulkSelected); row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}|bulk:${bulkSelected}`; return row;
 }
 function listSection(column, items) {
@@ -1678,7 +1726,7 @@ async function rejectProposal(id) {
 }
 function itemEditorDraft(form = $('editor-form')) {
  const data = new FormData(form);
- return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), column_id:String(data.get('column_id') || ''), project_ids:data.getAll('project_id').filter(Boolean), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids')};
+ return {title:String(data.get('title') || ''), description:String(data.get('description') || ''), start_date:String(data.get('start_date') || ''), end_date:String(data.get('end_date') || ''), due_date:String(data.get('due_date') || ''), column_id:String(data.get('column_id') || ''), project_ids:data.getAll('project_id').filter(Boolean), assignee:String(data.get('assignee') || ''), sprint_ids:data.getAll('sprint_ids'), labels:data.getAll('labels'), dependencies:data.getAll('dependencies'), link_ids:data.getAll('link_ids')};
 }
 function resolveGitLabMRURL(value, currentBoard, projects) {
  const raw = String(value || '').trim(); if (!raw) throw new Error('Paste a GitLab merge-request URL first.');
@@ -1885,9 +1933,44 @@ function renderItemAttachments(fields, item, readOnly) {
  } else heading.append(headingTitle);
  section.append(heading, status, list); fields.append(section); renderList();
 }
+function itemDatesField(parent, item, draft) {
+ const group = el('div', undefined, 'multi-select-field date-field'); const heading = el('span', undefined, 'multi-select-heading'); heading.append(el('span', 'Dates', 'multi-select-label'));
+ const values = el('div', undefined, 'multi-select-values date-field-values'); const root = el('div', undefined, 'multi-select date-field-content'); root.setAttribute('role', 'group'); root.setAttribute('aria-label', 'Dates');
+ const inputs = el('div', undefined, 'date-field-inputs'); inputs.id = uid('item-dates'); inputs.hidden = true; let editing = false;
+ const fields = [['start_date', 'Start date'], ['end_date', 'End date'], ['due_date', 'Due date']].map(([name, title]) => {
+  const input = field(inputs, name, title, String(draft?.[name] ?? item[name] ?? ''), 'date'); input.addEventListener('input', renderValues); input.addEventListener('change', renderValues); return {input, title};
+ });
+ function clearButton({input, title}) {
+  const clear = button('\u00d7', () => { input.value = ''; input.dispatchEvent(new Event('input', {bubbles:true})); input.focus(); }, 'multi-select-remove'); clear.setAttribute('aria-label', `Clear ${title.toLowerCase()}`); return clear;
+ }
+ function renderValues() {
+  values.replaceChildren(); const [start, end, due] = fields; const range = el('span', undefined, 'multi-select-chip date-range-chip'); range.setAttribute('role', 'group'); range.setAttribute('aria-label', `Start date ${start.input.value || 'not set'}; End date ${end.input.value || 'not set'}`);
+  [[start, '-'], [end, '-']].forEach(([date, empty], index) => {
+   const part = el('span', undefined, 'date-range-part'); part.append(el('span', date.input.value || empty)); if (editing && date.input.value) part.append(clearButton(date)); range.append(part); if (!index) range.append(el('span', '\u00b7', 'date-range-separator'));
+  }); values.append(range);
+  if (due.input.value) { const chip = el('span', undefined, 'multi-select-chip date-due-chip'); chip.setAttribute('role', 'group'); chip.setAttribute('aria-label', `Due date ${due.input.value}`); chip.append(el('span', `Due \u00b7 ${due.input.value}`)); if (editing) chip.append(clearButton(due)); values.append(chip); }
+ }
+ const edit = button('Edit', toggle, 'multi-select-edit'); edit.dataset.multiEdit = 'true'; edit.setAttribute('aria-label', 'Edit Dates'); edit.setAttribute('aria-expanded', 'false'); edit.setAttribute('aria-controls', inputs.id);
+ function toggle() {
+  editing = !editing; inputs.hidden = !editing; edit.textContent = editing ? 'Done' : 'Edit'; edit.setAttribute('aria-label', editing ? 'Done editing dates' : 'Edit Dates'); edit.setAttribute('aria-expanded', String(editing)); renderValues();
+  if (editing) fields[0].input.focus();
+ }
+ root.addEventListener('keydown', event => { if (event.key !== 'Escape') return; event.preventDefault(); event.stopPropagation(); if (editing) { toggle(); edit.focus(); } });
+ const header = el('div', undefined, 'multi-select-header'); header.append(heading, edit); root.append(values, inputs); group.append(header, root); parent.append(group); renderValues();
+}
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled
 // as cached provider observations, never as authoritative planning state.
+function refreshItemStatusSummary(form, item) {
+ const current = form.querySelector('.item-status'); if (!current) return;
+ const next = itemStatusSummary(item); next.open = current.open; current.replaceWith(next);
+}
+function refreshEditorDueBadge(form, item) {
+ const host = editorDueBadgeHost(form); if (!host) return;
+ const input = form.querySelector('[name="title"]'), previous = host.querySelector('.badge-due[data-due-date-badge]');
+ if (input?.getAttribute('aria-describedby') === previous?.id) input.removeAttribute('aria-describedby'); previous?.remove();
+ if (itemDateStatus(item)?.overdue) { const badge = dueDateBadge(item); if (badge) { badge.id = uid('item-title-overdue'); input?.setAttribute('aria-describedby', badge.id); appendEditorDueBadge(form, badge); } }
+}
 function itemStatusSummary(item) {
  const section = el('details', undefined, 'item-status'); section.dataset.stateKey = `item:${item.id}:status`; section.setAttribute('aria-label', 'Current card status');
  const column = board.columns.find(value => value.id === item.column_id);
@@ -1914,6 +1997,7 @@ function itemStatusSummary(item) {
  presence.title = item.archived ? 'Archived: removed from the board and from open sprints; history is retained and it can be restored.' : 'Live: on the board and not archived. Completion is the column category, and sprint scope is the sprint badge.';
  badges.append(presence);
  if (blocked(item)) badges.append(el('span', 'Blocked by dependency', 'badge warning'));
+ const due = itemDateStatus(item); if (due && !due.overdue) { const dueBadge = dueDateBadge(item); if (dueBadge) badges.append(dueBadge); }
  badges.append(el('span', openSprints.length ? `${openSprints.length} open sprint${openSprints.length === 1 ? '' : 's'}` : 'Backlog', 'badge'));
  if (links.length) badges.append(el('span', `${links.length} GitLab link${links.length === 1 ? '' : 's'}`, 'badge'));
  const toggle = el('span', undefined, 'item-status-toggle'); toggle.setAttribute('aria-hidden', 'true');
@@ -1948,11 +2032,14 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
  }
  if (item.id) fields.append(itemStatusSummary(item));
  const layout = el('div', undefined, 'item-editor-layout'); const primary = el('div', undefined, 'item-editor-primary'); const controls = el('div', undefined, 'item-editor-controls'); layout.append(primary, controls); fields.append(layout);
- const title = field(primary, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240;
+ const title = field(primary, 'title', 'Title', draft?.title ?? item.title); title.required = true; title.maxLength = 240; title.setAttribute('aria-label', 'Title');
+ const titleLabel = el('span', 'Title', 'item-title-label'); title.parentElement.firstChild.replaceWith(titleLabel);
+ if (context?.form && itemDateStatus(item)?.overdue) { const overdueBadge = dueDateBadge(item); if (overdueBadge) { overdueBadge.id = uid('item-title-overdue'); title.setAttribute('aria-describedby', overdueBadge.id); appendEditorDueBadge(context.form, overdueBadge); } }
  markdownEditor(primary, 'description', 'Description', draft?.description ?? item.description, 16000, readOnly, true);
  multiSelect(controls, 'assignee', 'Assignee', [['', 'Unassigned'], ...board.members.map(m => [m.subject, memberName(m.subject)])], [draft?.assignee ?? item.assignee], undefined, undefined, {single:true});
  multiSelect(controls, 'labels', 'Labels', board.labels.map(label => [label.name, label.name]), draft?.labels ?? item.labels, (chip, value) => { const label = labelInfo(value); chip.style.backgroundColor = label.color; chip.style.color = labelForeground(label.color); chip.classList.add('label-badge'); }, 'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.');
  const selectedProjects = draft?.project_ids ?? itemProjectIDs(item); multiSelect(controls, 'project_id', 'Project', [['', 'No project'], ...board.projects.map(p => [p.id, p.name])], selectedProjects.length ? selectedProjects : [''], undefined, 'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.', {emptyValue:''});
+ itemDatesField(controls, item, draft);
  multiSelect(controls, 'sprint_ids', 'Open sprints', board.sprints.filter(s => s.state !== 'closed').map(s => [s.id, `${s.name} (${s.state})`]), draft?.sprint_ids ?? item.sprint_ids, undefined, 'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.');
  const closed = board.closed_scope.filter(s => s.item_id === item.id).map(scope => board.sprints.find(s => s.id === scope.sprint_id)?.name || scope.sprint_id);
  if (closed.length) controls.append(helpText('Closed sprint history (read-only): ' + closed.join(', ')));
@@ -2002,7 +2089,7 @@ function openItemDetail(item, draft, origin) {
  let revision = board.workspace.revision; let pending, key; const state = detailState = {itemID:item.id, item, itemRevision:item.revision, form, pane:detailPane, origin, dirty:false, initialDraft:null}; setSharedItem(item.id); const updateDirty = () => { if (detailState === state) state.dirty = detailDraftIsDirty(state); }; form.addEventListener('input', updateDirty); form.addEventListener('change', updateDirty); state.initialDraft = itemEditorDraft(form); updateDetailPaneVisibility();
  form.addEventListener('submit', async event => {
   event.preventDefault(); if (readOnly || busy || detailState !== state) return; setErrorText(error, ''); save.disabled = true; cancel.disabled = true; close.disabled = true; revision = board.workspace.revision; const data = new FormData(form); const desired = data.getAll('link_ids'); state.desiredLinkIDs = desired; const command = {revision, kind:'item.update', target:item.id, item:{...itemPayloadFromForm(data, state.item), revision:state.itemRevision}}; const serialized = JSON.stringify(command); if (pending !== serialized) { key = requestKey(); pending = serialized; }
-  try { const result = await change(command, key); if (!result.refreshed) throw new Error('Changes were saved, but the board could not be refreshed. Refresh before continuing.'); revision = receiptRevision(result.receipt, revision + 1); await reconcileItemLinks(item.id, state.desiredLinkIDs || []); if (detailState !== state || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) { closeDetail({force:true}); return; } state.item = latest; state.itemRevision = latest.revision; revision = board.workspace.revision; state.initialDraft = itemEditorDraft(form); state.dirty = false; updateDetailHeader(latest); notice('Changes saved.'); }
+  try { const result = await change(command, key); if (!result.refreshed) throw new Error('Changes were saved, but the board could not be refreshed. Refresh before continuing.'); revision = receiptRevision(result.receipt, revision + 1); await reconcileItemLinks(item.id, state.desiredLinkIDs || []); if (detailState !== state || !board) return; const latest = board.items.find(value => value.id === item.id); if (!latest) { closeDetail({force:true}); return; } state.item = latest; state.itemRevision = latest.revision; revision = board.workspace.revision; state.initialDraft = itemEditorDraft(form); state.dirty = false; updateDetailHeader(latest); refreshItemStatusSummary(form, latest); refreshEditorDueBadge(form, latest); notice('Changes saved.'); }
   catch (err) { if (detailState === state) { state.dirty = true; setErrorText(error, `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`); } }
   finally { if (detailState === state && form.isConnected) { save.disabled = false; cancel.disabled = false; close.disabled = false; renderControls(); } }
  });
@@ -2010,7 +2097,7 @@ function openItemDetail(item, draft, origin) {
 }
 function reopenItemEditor(item, draft, mode, origin) { if (mode === 'detail') openItemDetail(item, draft, origin); else editItemModal(item, draft); }
 function editItemModal(item, draft) {
- const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs; const project = singleFilterValue('project'); const projectIDs = ['all', 'none'].includes(project) ? [] : [project]; item ||= {title:'', description:'', column_id:board.columns[0].id, project_id:projectIDs[0] || '', project_ids:projectIDs, sprint_ids:[], assignee:'', labels:[], dependencies:[]}; const context = {mode:'modal', form:$('editor-form')};
+ const existing = !!item; const readOnly = board.role === 'viewer' || item?.archived; let desiredLinkIDs; const project = singleFilterValue('project'); const projectIDs = ['all', 'none'].includes(project) ? [] : [project]; item ||= {title:'', description:'', start_date:'', end_date:'', due_date:'', column_id:board.columns[0].id, project_id:projectIDs[0] || '', project_ids:projectIDs, sprint_ids:[], assignee:'', labels:[], dependencies:[]}; const context = {mode:'modal', form:$('editor-form')};
  editorItemID = existing ? item.id : ''; if (existing) setSharedItem(item.id);
  openEditor(existing ? 'Work item' : 'Create work item', fields => { context.form = $('editor-form'); buildItemEditor(fields, item, draft, readOnly, context, $('editor-title')); }, data => { if (existing) desiredLinkIDs = data.getAll('link_ids'); return {kind:existing ? 'item.update' : 'item.create', target:item.id || '', item:itemPayloadFromForm(data, item)}; }, readOnly, existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined);
 }
@@ -2540,6 +2627,8 @@ setInterval(() => {
  if (!board) return;
  document.querySelectorAll('[data-refresh-link]').forEach(node => { const link = board.links.find(l => l.id === node.dataset.refreshLink); patchRefreshControl(node, link); });
 }, 10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshDueDateBadges(); });
+scheduleOverdueRefresh();
 renderControls();
 (async () => { try {
  session = await api('/api/v2/session'); $('identity').textContent = session.name || session.subject; const next = await loadWorkspaces(''); const preferred = workspacePreference();

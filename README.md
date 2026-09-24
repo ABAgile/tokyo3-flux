@@ -48,10 +48,14 @@ planning evidence and draft suggestions for a human to review and approve.
   Drag cards from their body and columns from their headers. On wide screens, item editing keeps
   title and description on the left, with selection controls on the right. Wide layouts put
   the Asana-like attachments section and then comments below the description in the left pane;
-  stacked layouts put controls, attachments and comments in that order. The control pane orders Assignee, Labels, Project, Open sprints, Depends on and GitLab links,
-  then separates the native Move to select with a divider. Assignee uses a single-selection
-  dropdown; Project supports multiple selections, including a mutually exclusive No project
-  choice. Selection fields start in display mode and Edit
+  stacked layouts put controls, attachments and comments in that order. The control pane orders
+  Assignee, Labels, Project, Dates, Open sprints, Depends on and GitLab links, then separates the
+  native Move to select with a divider. Dates use optional native date inputs behind a display/Edit
+  control. Assignee uses a single-selection dropdown; Project supports multiple selections,
+  including a mutually exclusive No project choice. Start and end dates share a `·`-separated badge with dashes
+  for unset values; due date has its own badge. While editing, each populated date has a clear action,
+  and start/end inputs share a line when space allows, with due at the same width below. Selection
+  fields start in display mode and Edit
   reveals the control. GitLab links accept a pasted MR URL below the picker; Enter or Get appends
   the resolved link, while Add link provides the search fallback. The footer keeps Save, Archive
   and Cancel visible while fields
@@ -189,14 +193,15 @@ credentials; the runtime role has no DELETE on `audit_events`, and the minimum k
 full-length sprint's burn-down history intact. Schedule
 it periodically: every planning change records a board snapshot, so the table grows with
 activity and never shrinks on its own.
-Serving requires schema 14 and never runs DDL. Migration 007 preserves legacy priorities as
+Serving requires schema 15 and never runs DDL. Migration 007 preserves legacy priorities as
 `priority::<value>` labels before removing the priority field; migration 008 adds the
 historical audit index used by burn-down reads; migration 009 adds immutable item
 comments; migration 010 adds attachment metadata; migration 011 adds normalized multi-project
 item associations; migration 012 adds the durable attachment-cleanup queue used to retry
 failed blob deletions; migration 013 adds immutable sprint-closure summaries and the archived
 sprint history projection; migration 014 adds upload reservations so crashes during
-attachment writes remain discoverable. Back up and restore-test
+attachment writes remain discoverable; migration 015 adds optional item start, end and due dates.
+Back up and restore-test
 databases; stop servers before applying schema changes and retain compatible binaries.
 
 Use a dedicated database/schema. Migration and membership administration use its
@@ -329,7 +334,7 @@ Agents return JSON to a human; they cannot persist drafts. Example:
 
 Use freshly read IDs and revisions. Allowed operations are existing-item
 `item.move`, `item.rank` and `item.update` (complete desired item, including its ID,
-revision and unchanged fields). Each needs target and expected_revision; one per
+revision, dates and unchanged fields). Each needs target and expected_revision; one per
 target. Item updates express assignment, labels, dependencies and open sprint scope.
 No administrative operations, SQL, executable commands or tool calls are accepted.
 
@@ -482,11 +487,17 @@ planning history, audit snapshots or burn-down snapshots. The item editor uses c
 instead of a decision-note field.
 
 Items carry title, Markdown description, column_id, `project_ids` (zero or more project
-associations; legacy `project_id` mirrors the first), assignee, labels, dependencies, sprint_ids
-and attachment metadata. Attachment bytes never enter planning
+associations; legacy `project_id` mirrors the first), assignee, labels, dependencies, sprint_ids,
+attachment metadata, and optional `start_date`, `end_date`, and `due_date` date-only values
+(`YYYY-MM-DD`). Start may not follow end; due is independent. Empty strings mean unset. Cards and
+List rows show the due date, with a browser-local overdue badge and static danger accent for live,
+non-Done work whose due date precedes the viewer's local today. The overdue badge is centered
+below the card title, centered within the title grid cell in List, and centered between the title
+and close button in the editor dialog header.
+Attachment bytes never enter planning
 commands or revision snapshots; planning commands retain `reason` only for their explicit
 rationale fields. Audit snapshots record planning structure — identity, title, column, project,
-assignee, labels, sprint scope and archived state — but not attachment metadata or the item
+assignee, labels, dates, sprint scope and archived state — but not attachment metadata or the item
 description, which is the only unbounded field on a board. Who changed what, when and why
 remains fully recorded in planning history.
 
@@ -525,6 +536,7 @@ make build
 node --check internal/planningui/static/app.js
 for m in internal/planningui/static/modules/*.js; do node --check "$m"; done
 node tests/extension.test.mjs
+node tests/date-format.test.mjs
 docker compose config -q
 ```
 

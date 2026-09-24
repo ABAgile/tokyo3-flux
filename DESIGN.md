@@ -110,7 +110,7 @@ a validated HTTPS Gravatar avatar URL.
   project badge (`badge-project`) is `▤` on the inset surface with a 1px border-toned hairline, a sprint badge
   (`badge-sprint`) is `◷` on the same inset surface with no outline and body ink, and a label badge (`badge-label`) is `▥`
   on its own palette swatch with a faint hairline of its contrasting ink. Hairlines are inset shadows, so all badges keep
-  one height, and the glyphs carry empty alternative text so screen readers read only the name. Participants are a read-only aggregate of
+  one height, and the glyphs carry empty alternative text so screen readers read only the name. Work items may carry optional `start_date`, `end_date` and `due_date` values in `YYYY-MM-DD` form; start may not follow end, and due is independent. Cards and List rows show only the due date. A date earlier than the viewer's local today gets a visible `⚠ Overdue · date` danger badge and a static danger border while the card is live and outside a Done-category column; the browser recalculates this at local midnight. On cards the overdue badge sits centered beneath the title; other card due dates remain in the tag row. In List it sits below the title and is centered within its grid cell; in the modal editor, the overdue badge is centered in the dialog header between the title and close button, while a non-overdue due date remains in the status summary. There is no due-soon state or date filter. Start and end dates appear in the editor only. Participants are a read-only aggregate of
   who is involved with a card: the assignee, the reviewers of its cached merge-request observations, and its comment
   authors. The same person appears once with every role merged, ordered assignee, reviewers, then most recent
   commenters, and at most twelve are carried per card so a long thread never turns a board read into a roster dump.
@@ -139,11 +139,16 @@ a validated HTTPS Gravatar avatar URL.
   right; it stacks below that width.
   Wide layouts place comments below the description in the left pane; stacked layouts place them
   after the controls. Assignee uses the same filterable single-selection dropdown as the other
-  selection fields; Project uses a filterable multi-selection dropdown and supports No project as
-  its mutually exclusive empty choice. The control pane orders Assignee, Labels, Project, Open sprints,
+  selection fields; Project uses a filterable multi-selection dropdown and supports No project as its
+  mutually exclusive
+  empty choice. The control pane orders Assignee, Labels, Project, Dates, Open sprints,
   Depends on and GitLab links, followed by a divider and the native `Move to` select.
   Selection fields start in display mode; their Edit link reveals the native select or checkbox
-  menu.
+  menu. The Dates group uses native date inputs behind the same display/Edit pattern, with all
+  three fields optional. Start and end dates share a `·`-separated badge and use a dash for either
+  unset value; the due date has its own badge. Editing shows a clear action beside each populated date,
+  and places start and end inputs on one line whenever the control pane is wide enough; due has the
+  same width below them.
   Multi-select values remain removable chips while editing, with a token-based shadow. GitLab links
   have a paste-URL field below the picker; Enter or Get resolves and appends an approved MR link.
   Add link opens the quick-scope and search fallback. Static field guidance uses an opaque ? popover
