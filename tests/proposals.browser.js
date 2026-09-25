@@ -50,7 +50,7 @@ async function run(page) {
       .getByLabel('Import rationale', { exact: true })
       .fill('Review a suggested native change');
     await page.getByRole('button', { name: 'Save draft only', exact: true }).click();
-    await page.locator('dialog').waitFor({ state: 'hidden' });
+    await page.locator('dialog#editor').waitFor({ state: 'hidden' });
   };
   const review = async (title) => {
     await openList();
@@ -77,7 +77,7 @@ async function run(page) {
     .getByLabel('Approval rationale', { exact: true })
     .fill('Reviewed the exact field changes');
   await page.getByRole('button', { name: 'Accept exact diff', exact: true }).click();
-  check(await page.locator('dialog').isVisible(), 'acceptance lacked explicit consent');
+  check(await page.locator('dialog#editor').isVisible(), 'acceptance lacked explicit consent');
   await page.getByLabel('Approval rationale', { exact: true }).focus();
   for (const theme of ['light', 'dark']) {
     await page.evaluate((t) => (document.documentElement.dataset.theme = t), theme);
@@ -88,17 +88,17 @@ async function run(page) {
         'page overflow',
       );
       check(
-        await page.locator('dialog').evaluate((d) => d.scrollWidth <= d.clientWidth),
+        await page.locator('dialog#editor').evaluate((d) => d.scrollWidth <= d.clientWidth),
         'proposal overflow',
       );
-      await page.locator('dialog').evaluate((d) => (d.scrollTop = 0));
+      await page.locator('dialog#editor').evaluate((d) => (d.scrollTop = 0));
       await page.screenshot({ path: `/tmp/flux-cutover/proposal-${theme}-${width}.png` });
     }
   }
   await page.getByLabel('I reviewed and approve this exact diff', { exact: true }).check();
   await page.getByRole('button', { name: 'Accept exact diff', exact: true }).focus();
   await page.keyboard.press('Enter');
-  await page.locator('dialog').waitFor({ state: 'hidden' });
+  await page.locator('dialog#editor').waitFor({ state: 'hidden' });
   b = await board();
   check(
     b.items.find((i) => i.id === item.id).title === 'Human-approved native change',
@@ -146,7 +146,7 @@ async function run(page) {
     .getByLabel('Rejection rationale', { exact: true })
     .fill('Planning changed; do not automatically rebase');
   await page.getByRole('button', { name: 'Reject proposal', exact: true }).click();
-  await page.locator('dialog').waitFor({ state: 'hidden' });
+  await page.locator('dialog#editor').waitFor({ state: 'hidden' });
   // Explicit mapped import and repeat: stable native IDs, no duplicates.
   b = await board();
   const source = 'https://gitlab.example/projects/42/issues/700/';
@@ -180,7 +180,7 @@ async function run(page) {
     await page.getByLabel('Approval rationale', { exact: true }).fill('Approved explicit mapping');
     await page.getByLabel('I reviewed and approve this exact diff', { exact: true }).check();
     await page.getByRole('button', { name: 'Accept exact diff', exact: true }).click();
-    await page.locator('dialog').waitFor({ state: 'hidden' });
+    await page.locator('dialog#editor').waitFor({ state: 'hidden' });
   };
   await importDoc(imported);
   await accept(imported.title);
