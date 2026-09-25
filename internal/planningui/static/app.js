@@ -1,4 +1,3 @@
-// Flux planning shell. Loaded as an ES module, so strict mode is implicit.
 import {
   $,
   el,
@@ -47,7 +46,23 @@ import {
   maintenanceRow,
 } from './modules/layout.js';
 import { state } from './modules/state.js';
-
+import {
+  actionIconButton,
+  writeIconButton,
+  adminIconButton,
+  writable,
+  adminWritable,
+  gitLabWritable,
+  canComment,
+  writeButton,
+  adminButton,
+} from './modules/permissions.js';
+import {
+  notice,
+  clearError,
+  showPlanningChangeNotice,
+  clearPlanningChangeNotice,
+} from './modules/notices.js';
 // The Projects bar uses the same multi-value filter rules as the planning bar.
 const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
 const projectFilters = { assignee: new Set(), label: new Set() };
@@ -152,59 +167,6 @@ $('theme').onclick = () => {
   updateThemeControl();
 };
 updateThemeControl();
-function actionIconButton(label, icon, fn, className) {
-  const b = button('', fn, `action-icon${className ? ` ${className}` : ''}`);
-  b.dataset.icon = icon;
-  b.dataset.actionLabel = label;
-  b.setAttribute('aria-label', label);
-  b.title = label;
-  return b;
-}
-function writeIconButton(label, icon, fn, className) {
-  const b = actionIconButton(label, icon, fn, className);
-  b.dataset.write = 'true';
-  b.disabled = !writable() || state.integrationFormOpen;
-  return b;
-}
-function adminIconButton(label, icon, fn, className) {
-  const b = actionIconButton(label, icon, fn, className);
-  b.dataset.adminWrite = 'true';
-  b.disabled = !adminWritable() || state.integrationFormOpen;
-  return b;
-}
-function writable() {
-  return state.board && state.board.role !== 'viewer' && !state.busy && !state.loading;
-}
-function adminWritable() {
-  return state.board && state.board.role === 'admin' && !state.busy && !state.loading;
-}
-function gitLabWritable() {
-  return (
-    writable() &&
-    !!state.board.connector_instance &&
-    state.board.connector_instance === state.board.integration.instance &&
-    !!state.board.integration.projects.length
-  );
-}
-function canComment() {
-  return (
-    state.board &&
-    (state.board.role === 'member' || state.board.role === 'admin') &&
-    !state.busy &&
-    !state.loading
-  );
-}
-function writeButton(text, fn, className) {
-  const b = button(text, fn, className);
-  b.disabled = !writable() || state.integrationFormOpen;
-  return b;
-}
-function adminButton(text, fn, className) {
-  const b = button(text, fn, className);
-  b.dataset.adminWrite = 'true';
-  b.disabled = !adminWritable() || state.integrationFormOpen;
-  return b;
-}
 // `#content` has exactly two mounts: the persistent planning frame — project
 // lens, sprint summaries, the planning filter slot and the board/list body — and
 // `#page-root`, where every other view renders one page root. Keeping the frame
@@ -239,33 +201,6 @@ function setContentBusy(value) {
   const region = $('planning-frame').hidden ? $('page-root') : $('planning-body');
   ($('page-root') === region ? $('planning-body') : $('page-root')).removeAttribute('aria-busy');
   region.setAttribute('aria-busy', String(state.contentBusy));
-}
-// Transient progress and errors are separate surfaces. `#notice` is a polite
-// status line that is only written when its text actually changes, so screen
-// readers are not re-announced on every render pass. Errors persist in their
-// own assertive bar until dismissed or until a later success clears them.
-function notice(text, error = false) {
-  if (error) showError(text);
-  else setStatus(text);
-}
-function setStatus(text) {
-  const value = String(text || '');
-  if (value === state.noticeText) return;
-  state.noticeText = value;
-  $('notice').textContent = value;
-}
-function showError(text) {
-  const value = String(text || '');
-  if (value === state.errorText && !$('error-bar').hidden) return;
-  state.errorText = value;
-  $('error-text').textContent = value;
-  $('error-bar').hidden = !value;
-}
-function clearError() {
-  if (!state.errorText && $('error-bar').hidden) return;
-  state.errorText = '';
-  $('error-text').textContent = '';
-  $('error-bar').hidden = true;
 }
 // Filter state. An empty set accepts everything; `none` is exclusive and means
 // "no association", so it can never be combined with concrete values. Every
@@ -375,22 +310,6 @@ function filterSummaryText(name) {
   if (!values.length)
     return { project: 'All projects', assignee: 'All assignees', label: 'All labels' }[name];
   return values.map((value) => filterOptionText(name, value)).join(', ');
-}
-function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') {
-  const banner = $('planning-change');
-  if (
-    state.planningChangeNotice &&
-    !banner.hidden &&
-    $('planning-change-text').textContent === text
-  )
-    return;
-  state.planningChangeNotice = true;
-  $('planning-change-text').textContent = text;
-  banner.hidden = false;
-}
-function clearPlanningChangeNotice() {
-  state.planningChangeNotice = false;
-  $('planning-change').hidden = true;
 }
 function workspaceURLState() {
   return new URL(window.location.href).searchParams.get('workspace') || '';
