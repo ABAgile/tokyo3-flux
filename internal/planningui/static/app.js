@@ -6197,7 +6197,7 @@ function openItemDetail(item, draft, origin) {
   save.hidden = readOnly;
   let revision = board.workspace.revision;
   let pending, key;
-  const state = (detailState = {
+  detailState = {
     itemID: item.id,
     item,
     itemRevision: item.revision,
@@ -6206,7 +6206,8 @@ function openItemDetail(item, draft, origin) {
     origin,
     dirty: false,
     initialDraft: null,
-  });
+  };
+  const state = detailState;
   setSharedItem(item.id);
   const updateDirty = () => {
     if (detailState === state) state.dirty = detailDraftIsDirty(state);
