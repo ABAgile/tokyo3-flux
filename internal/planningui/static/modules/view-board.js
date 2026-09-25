@@ -12,6 +12,7 @@ import {
   labelBadge,
   done,
   blocked,
+  findItem,
 } from './items.js';
 import { memberInfo, itemParticipants, participantInfo, participantStack } from './people.js';
 import { patchNode, keyedNodeKey, reconcileKeyedChildren } from './reconcile.js';
@@ -241,8 +242,10 @@ function card(item, peers) {
         attachmentOptions.append(link);
       });
     else attachmentOptions.append(emptyState('Loading attachments…'));
+    // Patching keeps this node across board refreshes, so read the current item
+    // rather than the one this card was first built from.
     attachmentList.addEventListener('toggle', () => {
-      if (attachmentList.open) void ensureAttachments(item);
+      if (attachmentList.open) void ensureAttachments(findItem(item.id) || item);
     });
     attachmentList.append(attachmentHead, attachmentOptions);
     c.append(attachmentList);
@@ -351,7 +354,10 @@ function patchCardLinks(target, next) {
   return target;
 }
 function patchCardAttachments(target, next) {
+  // A rebuilt card starts collapsed; keep the dropdown the user opened.
+  const open = target.open;
   syncAttributes(target, next);
+  target.open = open;
   const currentHead = target.firstElementChild;
   const nextHead = next.firstElementChild;
   if (currentHead && nextHead) patchNode(currentHead, nextHead);
