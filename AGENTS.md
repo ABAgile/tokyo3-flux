@@ -11,7 +11,8 @@ There is no build step and there are no npm runtime dependencies.
 - Keep `modules/format.js` at that path and free of imports; `tests/date-format.test.mjs` loads it as a data URL.
 - During refactors, move code as-is.
   Rewrites, behavior-changing renames and "while I'm here" fixes go in separate follow-ups.
-- UI work follows `DESIGN.md`.
+- For UI work, read `DESIGN.md` (tokens and global rules), then only the `docs/design/` area files for the modules you change; its area table maps each area to its modules and CSS files.
+  Move design text as-is when reorganizing it; rule changes are separate edits.
 
 ## Module map
 
