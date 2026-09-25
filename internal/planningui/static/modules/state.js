@@ -77,6 +77,8 @@ export const state = {
   // cannot race each other onto the same item.
   uploadBusy: false,
   editorReturn: undefined,
+  // The control that opened the editor dialog, for focus return after a rebuild.
+  editorOpener: undefined,
   observationPoll: false,
   observationDigest: '',
   observationReadAt: 0,

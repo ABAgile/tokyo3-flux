@@ -27,7 +27,7 @@ import {
 import { resetBurndown } from './modules/view-burndown.js';
 import { clearUndo, quick, runSequence } from './modules/commands.js';
 import { isFileTransfer, initAttachmentTooltips } from './modules/item-attachments.js';
-import { closeEditor } from './modules/dialog.js';
+import { closeEditor, restoreEditorFocus } from './modules/dialog.js';
 import { initObservationTooltips } from './modules/gitlab.js';
 import {
   workspacePreference,
@@ -323,6 +323,16 @@ $('dismiss').onclick = $('cancel').onclick = () => {
 // A closed item editor is no longer a view of that card. The check is deferred
 // because closing one dialog to open another — archive, observations, restore —
 // happens within the same task and must not drop the card from the URL.
+$('editor').addEventListener('close', restoreEditorFocus);
+$('editor').addEventListener('close', () => {
+  const opener = state.editorOpener;
+  state.editorOpener = undefined;
+  const key = opener?.isConnected === false ? opener.dataset?.focusKey : '';
+  // Focus is still on the closed dialog's control, or already on the body.
+  const active = document.activeElement;
+  if (key && (active === document.body || $('editor').contains(active)))
+    document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
+});
 $('editor').addEventListener('close', () => {
   setTimeout(() => {
     if ($('editor').open || state.detailState) return;

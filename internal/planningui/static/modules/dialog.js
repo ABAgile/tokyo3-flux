@@ -11,10 +11,25 @@ export function closeEditor() {
   state.editorReturn = undefined;
   hideAttachmentTooltip();
   $('editor').close();
+  restoreEditorFocus();
   if (returnTo) returnTo();
+}
+// The dialog returns focus to its opener, but a board update while it was open
+// can rebuild that control; focus the rebuilt control with the same focus key.
+// closeEditor calls this at once, and the dialog's close event covers the paths
+// that close it directly.
+export function restoreEditorFocus() {
+  const opener = state.editorOpener;
+  state.editorOpener = undefined;
+  const key = opener?.isConnected === false ? opener.dataset?.focusKey : '';
+  // Focus is still on the closed dialog's control, or already on the body.
+  const active = document.activeElement;
+  if (key && (active === document.body || $('editor').contains(active)))
+    document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
 }
 export function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
   state.editorReturn = afterClose;
+  state.editorOpener = document.activeElement;
   $('editor-title').textContent = title;
   $('editor-form')
     .querySelectorAll('.dialog-head .badge-due[data-due-date-badge]')
