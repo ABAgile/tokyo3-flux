@@ -1,4 +1,5 @@
-// Execute with playwright-browser run-code against a fresh seeded TEST workspace.
+// Execute with playwright-browser run-code against a fresh seeded TEST workspace
+// with the GitLab fixture and automatic refresh, which drives the idle poll.
 // This mutates test data, including sprint closure. Never use a team workspace.
 // biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
 async function run(page) {
@@ -9,6 +10,17 @@ async function run(page) {
   // run-code has no URL global, so the address is parsed in the page.
   const urlParam = (name) =>
     page.evaluate((key) => new URL(location.href).searchParams.get(key), name);
+  // Closing a card drops `item` from the URL in a later task; reloading or
+  // copying the URL before that would reopen the card.
+  const cardClosedInURL = () =>
+    page
+      .waitForFunction(() => new URL(location.href).searchParams.get('item') === null, undefined, {
+        timeout: 2000,
+      })
+      .then(
+        () => true,
+        () => false,
+      );
   // run-code has no Node Buffer, so text files are built in the page and set
   // on the input the way setInputFiles would.
   const chooseTextFile = (input, name, text) =>
@@ -286,12 +298,14 @@ async function run(page) {
     const panelBox = panel.getBoundingClientRect();
     const burndown = panel.querySelector(':scope > .burndown-panel')?.getBoundingClientRect();
     const style = getComputedStyle(panel);
-    const horizontalPadding =
-      (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0);
+    // The chart fills the panel's content box: inside its border and padding.
+    const px = (value) => Number.parseFloat(value) || 0;
+    const insetLeft = px(style.borderLeftWidth) + px(style.paddingLeft);
+    const insetRight = px(style.borderRightWidth) + px(style.paddingRight);
     return (
       !!burndown &&
-      Math.abs(burndown.left - panelBox.left - (Number.parseFloat(style.paddingLeft) || 0)) < 1 &&
-      Math.abs(burndown.width - panelBox.width + horizontalPadding) < 1
+      Math.abs(burndown.left - panelBox.left - insetLeft) < 1 &&
+      Math.abs(burndown.width - panelBox.width + insetLeft + insetRight) < 1
     );
   });
   check(fullWidthBurndown, 'burn down panel does not use the sprint panel width');
@@ -370,7 +384,16 @@ async function run(page) {
       )),
     'project filters are not in a horizontal bar below the title',
   );
-  const projectFilterLabels = await projectFilterBar.locator('label').allTextContents();
+  // Each label wraps its control, so read only the label's own text.
+  const projectFilterLabels = await projectFilterBar.locator('label').evaluateAll((labels) =>
+    labels.map((label) =>
+      [...label.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent)
+        .join('')
+        .trim(),
+    ),
+  );
   check(
     projectFilterLabels.join('|') === 'Assignee|Label|Search',
     'project filters are in the wrong order',
@@ -595,6 +618,8 @@ async function run(page) {
     'Assign me is not styled like Edit or directly after its label',
   );
   await assignMe.click();
+  // Compare resting styles: both actions share a hover color.
+  await page.mouse.move(0, 0);
   check(
     (await assigneeField.locator('input[name="assignee"]:checked').inputValue()) ===
       currentSubject &&
@@ -622,7 +647,7 @@ async function run(page) {
   await page.keyboard.press('Escape');
   const datesField = itemDialog.locator('.date-field');
   check(
-    (await datesField.locator('.date-range-chip').textContent()) === '-.-' &&
+    (await datesField.locator('.date-range-chip').textContent()) === '-·-' &&
       (await datesField.locator('.date-due-chip').count()) === 0,
     'unset dates are not shown with dash placeholders',
   );
@@ -728,13 +753,13 @@ async function run(page) {
     'Markdown tool groups are not separated',
   );
   check(
-    await descriptionEditor
-      .locator('.markdown-editor')
-      .evaluate(
-        (editor) =>
-          editor.firstElementChild?.classList.contains('markdown-toolbar') &&
-          editor.children[1]?.tagName === 'TEXTAREA',
-      ),
+    // The description's parent is the editor itself: toolbar, then textarea.
+    await descriptionEditor.evaluate(
+      (editor) =>
+        editor.classList.contains('markdown-editor') &&
+        editor.firstElementChild?.classList.contains('markdown-toolbar') &&
+        editor.children[1]?.tagName === 'TEXTAREA',
+    ),
     'toolbar is not fused to the input',
   );
   check(
@@ -796,9 +821,10 @@ async function run(page) {
   await saved();
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('none');
+  // The new item has no project yet, so No project shows it.
   check(
-    (await page.getByRole('button', { name: title, exact: true }).count()) === 0,
-    'project filter should exclude multi-project cards from No project',
+    (await page.getByRole('button', { name: title, exact: true }).count()) === 1,
+    'No project filter should show a card without projects',
   );
   check(
     (await page.getByRole('heading', { name: /No project ·/ }).count()) === 0,
@@ -1034,7 +1060,7 @@ async function run(page) {
     'title is not in the primary editor pane',
   );
   check(
-    (await itemLayout.locator('.item-editor-primary .markdown-field').count()) === 1,
+    (await itemLayout.locator('.item-editor-primary > .markdown-field').count()) === 1,
     'description is not in the primary editor pane',
   );
   check(
@@ -1049,7 +1075,15 @@ async function run(page) {
     [...controls.children].flatMap((child) => {
       if (child.classList.contains('multi-select-field'))
         return [child.querySelector('.multi-select-label')?.textContent.trim()];
-      if (child.matches('label')) return [child.textContent.trim()];
+      // A label wraps its select, so only its own text names it.
+      if (child.matches('label'))
+        return [
+          [...child.childNodes]
+            .filter((node) => node.nodeType === Node.TEXT_NODE)
+            .map((node) => node.textContent)
+            .join('')
+            .trim(),
+        ];
       return [];
     }),
   );
@@ -1171,7 +1205,21 @@ async function run(page) {
     (await attachments.getByLabel('Attachment file', { exact: true }).count()) === 1,
     'attachment picker is missing',
   );
+  // playwright-cli run-code stops at a native file chooser, so the input's
+  // click is recorded instead of opening one; cancel is then dispatched as the
+  // browser would when the chooser is dismissed.
+  await attachments.getByLabel('Attachment file', { exact: true }).evaluate((input) => {
+    input.click = () => {
+      input.dataset.pickerOpened = 'true';
+    };
+  });
   await attachments.getByRole('button', { name: 'Add attachment', exact: true }).click();
+  check(
+    (await attachments
+      .getByLabel('Attachment file', { exact: true })
+      .getAttribute('data-picker-opened')) === 'true',
+    'Add attachment did not open the file picker',
+  );
   await attachments
     .getByLabel('Attachment file', { exact: true })
     .evaluate((input) =>
@@ -1399,10 +1447,7 @@ async function run(page) {
   await cardStatus.locator('.item-status-head').click();
   await page.getByRole('dialog').click({ position: { x: 10, y: 10 }, force: true });
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
-  check(
-    (await page.evaluate(() => new URL(location.href).searchParams.get('item'))) === null,
-    'closing a card left it in the URL',
-  );
+  check(await cardClosedInURL(), 'closing a card left it in the URL');
   await page.goBack();
   await page.getByRole('dialog').waitFor();
   check(
@@ -1434,6 +1479,7 @@ async function run(page) {
     .getByRole('combobox', { name: 'Move to', exact: true })
     .selectOption({ label: 'In progress' });
   await save();
+  await cardClosedInURL();
   await page.reload();
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   await page.getByRole('button', { name: title, exact: true }).waitFor();
@@ -1537,6 +1583,14 @@ async function run(page) {
         .count()) === 1,
     'multiple project badges are missing',
   );
+  await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('none');
+  check(
+    (await page.getByRole('button', { name: title, exact: true }).count()) === 0,
+    'project filter should exclude multi-project cards from No project',
+  );
+  await page
+    .getByRole('combobox', { name: 'Project', exact: true })
+    .selectOption({ label: 'Cross-project stream' });
   const cardAttachments = page.locator('.card-attachments');
   check(
     (await cardAttachments.count()) === 1 &&
@@ -1669,7 +1723,14 @@ async function run(page) {
   await page.getByLabel('Title', { exact: true }).fill('Retained stale draft');
   const other = await page.context().newPage();
   other.setDefaultTimeout(10000);
-  await other.goto(page.url());
+  // Open the board, not this tab's open-card link, and pick the card there.
+  await other.goto(
+    await page.evaluate(() => {
+      const url = new URL(location.href);
+      url.searchParams.delete('item');
+      return url.href;
+    }),
+  );
   await other.getByRole('button', { name: title, exact: true }).click();
   await other.getByLabel('Title', { exact: true }).fill('Concurrent accepted edit');
   await other.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -1691,13 +1752,15 @@ async function run(page) {
   await explicitCard.evaluate((node) => {
     window.__fluxManualCard = node;
   });
-  const injectedBoard = await page.evaluate(async () => {
+  // The idle poll reads the revision endpoint first and reports a newer
+  // revision without reloading the board.
+  const injectedRevision = await page.evaluate(async () => {
     const workspace = document.querySelector('#workspace').value;
-    return (await fetch(`/api/v2/workspaces/${encodeURIComponent(workspace)}/board`)).json();
+    return (await fetch(`/api/v2/workspaces/${encodeURIComponent(workspace)}/revision`)).json();
   });
-  injectedBoard.workspace.revision++;
+  injectedRevision.revision++;
   let injectPlanningRevision = true;
-  await page.route('**/board', async (route) => {
+  await page.route('**/revision', async (route) => {
     if (!injectPlanningRevision) {
       await route.continue();
       return;
@@ -1706,11 +1769,11 @@ async function run(page) {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(injectedBoard),
+      body: JSON.stringify(injectedRevision),
     });
   });
   await page.waitForTimeout(16000);
-  await page.unroute('**/board');
+  await page.unroute('**/revision');
   await page.getByText('Planning changed elsewhere · Refresh to review', { exact: true }).waitFor();
   check(
     await explicitCard.evaluate((node) => node === window.__fluxManualCard),
@@ -1786,13 +1849,18 @@ async function run(page) {
     (await sprintPanels.locator('h2').allTextContents()).length === allSprintNames.length,
     'clearing the project filter did not restore the sprint list',
   );
-  const sprintFilterLabels = await sprintToolbar
-    .locator('.actions > label')
-    .evaluateAll((labels) =>
-      labels
-        .filter((label) => !label.hidden && getComputedStyle(label).display !== 'none')
-        .map((label) => label.textContent.trim()),
-    );
+  const sprintFilterLabels = await sprintToolbar.locator('.actions > label').evaluateAll((labels) =>
+    labels
+      .filter((label) => !label.hidden && getComputedStyle(label).display !== 'none')
+      // Each label wraps its control, so read only the label's own text.
+      .map((label) =>
+        [...label.childNodes]
+          .filter((node) => node.nodeType === Node.TEXT_NODE)
+          .map((node) => node.textContent)
+          .join('')
+          .trim(),
+      ),
+  );
   check(
     (await sprintToolbar.isVisible()) &&
       (await sprintSearch.count()) === 1 &&
@@ -1800,7 +1868,12 @@ async function run(page) {
     'sprint filters are not in a horizontal line in the expected order',
   );
   await sprintSearch.fill('PLANNING FOUNDATIONS');
-  await page.locator('.sprint-panel').waitFor();
+  // Search is debounced, so wait for the list to narrow.
+  await page
+    .waitForFunction(() => document.querySelectorAll('.sprint-panel').length === 1, undefined, {
+      timeout: 2000,
+    })
+    .catch(() => {});
   check(
     (await page.locator('.sprint-panel').count()) === 1 &&
       (await sprintCount.textContent()) === '1 sprint',
@@ -1917,6 +1990,9 @@ ${'unbrokencode'.repeat(12)}
   );
   await page.getByRole('button', { name: 'Start sprint', exact: true }).click();
   await saved();
+  // Sprint summaries live on the board, so check the goal there and come back.
+  await nav('Kanban board');
+  await page.getByRole('heading', { name: 'Kanban board', exact: true }).waitFor();
   const boardGoalPanel = page.locator('#sprint-summary .sprint-panel').filter({
     has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
   });
@@ -1927,6 +2003,8 @@ ${'unbrokencode'.repeat(12)}
       (await boardGoalPanel.locator('.sprint-goal-content script').count()) === 0,
     'board sprint summary did not use the safe Markdown goal renderer',
   );
+  await nav('Sprints');
+  await page.getByRole('heading', { name: 'Sprints', exact: true }).waitFor();
   check(
     (await page.getByText('ACTIVE SPRINT', { exact: true }).count()) === 2,
     'concurrent active sprints rejected',
@@ -2075,6 +2153,8 @@ ${'unbrokencode'.repeat(12)}
   // optimistic result showing state the server never accepted.
   await nav('Kanban board');
   await page.getByRole('heading', { name: 'Kanban board', exact: true }).waitFor();
+  // Active sprints no longer hold seeded cards here, so move all open work.
+  await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   const placement = async () =>
     page.locator('.column').first().locator('.card .card-title').allTextContents();
   const beforeDrop = await placement();
@@ -2089,7 +2169,10 @@ ${'unbrokencode'.repeat(12)}
     });
   });
   const [source, target] = await page.locator('.column').first().locator('.card').all();
-  await source.dragTo(target);
+  // Drop on the lower half of the neighbour so the card moves below it; the
+  // upper half would place it where it already is and issue nothing.
+  const targetBox = await target.boundingBox();
+  await source.dragTo(target, { targetPosition: { x: 16, y: targetBox.height - 4 } });
   // A drag that produced no command cannot exercise the rollback; fail loudly
   // rather than silently passing on an unchanged board.
   await page.waitForFunction(
@@ -2124,7 +2207,8 @@ ${'unbrokencode'.repeat(12)}
   await nav('History');
   await page.getByRole('heading', { name: 'History', exact: true }).waitFor();
   await page.getByText('item · restore', { exact: true }).waitFor();
-  const historyText = await page.locator('.history-row').first().textContent();
+  // The row's metadata line starts with the actor; its heading names the change.
+  const historyText = await page.locator('.history-row').first().locator('p').textContent();
   const historyActor = historyText.split(' · ')[0];
   check(
     /\S+ \([^)]+\)$/.test(historyActor),
