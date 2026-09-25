@@ -1169,13 +1169,11 @@ async function run(page) {
       input.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true })),
     );
   check(await itemLayout.isVisible(), 'canceling the attachment picker closed the card');
-  await attachments
-    .getByLabel('Attachment file', { exact: true })
-    .setInputFiles({
-      name: 'plan.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('attachment body'),
-    });
+  await attachments.getByLabel('Attachment file', { exact: true }).setInputFiles({
+    name: 'plan.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('attachment body'),
+  });
   await page.getByRole('status').filter({ hasText: 'Attachment uploaded.' }).waitFor();
   check(
     (await attachments.getByRole('link', { name: 'plan.txt', exact: true }).count()) === 1,
@@ -1647,6 +1645,7 @@ async function run(page) {
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('all');
   await page.getByRole('button', { name: title, exact: true }).click();
+  const editedItemID = await page.evaluate(() => new URL(location.href).searchParams.get('item'));
   check(
     (await page
       .getByRole('group', { name: 'Open sprints', exact: true })
@@ -1674,7 +1673,7 @@ async function run(page) {
     'draft lost',
   );
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  const explicitCard = page.locator(`[data-item="${item.id}"]`);
+  const explicitCard = page.locator(`[data-item="${editedItemID}"]`);
   await explicitCard.waitFor();
   const scopeBefore = await page.getByRole('combobox', { name: 'Scope', exact: true }).inputValue();
   const projectBefore = await page
@@ -1806,11 +1805,9 @@ async function run(page) {
     'sprint search did not filter empty results',
   );
   await sprintSearch.fill('');
-  const markdownSprint = page
-    .getByRole('article')
-    .filter({
-      has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
-    });
+  const markdownSprint = page.getByRole('article').filter({
+    has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
+  });
   await markdownSprint.getByRole('button', { name: 'Edit sprint', exact: true }).click();
   const sprintDialog = page.getByRole('dialog');
   const goalInput = sprintDialog.getByLabel('Sprint goal · what outcome matters?', { exact: true });
@@ -1882,11 +1879,9 @@ ${'unbrokencode'.repeat(12)}
   );
   await sprintDialog.getByRole('button', { name: 'Save changes', exact: true }).click();
   await saved();
-  const renderedSprint = page
-    .locator('.sprint-planning .sprint-panel')
-    .filter({
-      has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
-    });
+  const renderedSprint = page.locator('.sprint-planning .sprint-panel').filter({
+    has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
+  });
   const renderedGoal = renderedSprint.locator('.sprint-goal-content');
   const showMore = renderedSprint.getByRole('button', { name: 'Show more', exact: true });
   await showMore.waitFor();
@@ -1913,11 +1908,9 @@ ${'unbrokencode'.repeat(12)}
   );
   await page.getByRole('button', { name: 'Start sprint', exact: true }).click();
   await saved();
-  const boardGoalPanel = page
-    .locator('#sprint-summary .sprint-panel')
-    .filter({
-      has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
-    });
+  const boardGoalPanel = page.locator('#sprint-summary .sprint-panel').filter({
+    has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
+  });
   await boardGoalPanel.locator('.sprint-goal-content h2').waitFor();
   check(
     (await boardGoalPanel.locator('.sprint-goal-content table').count()) === 1 &&
@@ -1929,11 +1922,9 @@ ${'unbrokencode'.repeat(12)}
     (await page.getByText('ACTIVE SPRINT', { exact: true }).count()) === 2,
     'concurrent active sprints rejected',
   );
-  const first = page
-    .getByRole('article')
-    .filter({
-      has: page.getByRole('heading', { name: 'Sprint 1 · Planning foundations', exact: true }),
-    });
+  const first = page.getByRole('article').filter({
+    has: page.getByRole('heading', { name: 'Sprint 1 · Planning foundations', exact: true }),
+  });
   await first.getByRole('button', { name: 'Close sprint', exact: true }).click();
   await page
     .getByRole('combobox', { name: 'Also assign unfinished work to', exact: true })
@@ -1994,20 +1985,16 @@ ${'unbrokencode'.repeat(12)}
   // A closed sprint can be archived after its preserved scope has been
   // checked. Its immutable closure summary remains visible in sprint history.
   await nav('Sprints');
-  const closeAgain = page
-    .getByRole('article')
-    .filter({
-      has: page.getByRole('heading', { name: 'Sprint 1 · Planning foundations', exact: true }),
-    });
+  const closeAgain = page.getByRole('article').filter({
+    has: page.getByRole('heading', { name: 'Sprint 1 · Planning foundations', exact: true }),
+  });
   await closeAgain.getByRole('button', { name: 'Close sprint', exact: true }).click();
   await page.getByLabel('Closing decision / rationale').fill('Archive first sprint after review');
   await page.getByRole('dialog').getByRole('button', { name: 'Close sprint', exact: true }).click();
   await saved();
-  const archiveAgain = page
-    .getByRole('article')
-    .filter({
-      has: page.getByRole('heading', { name: 'Sprint 1 · Planning foundations', exact: true }),
-    });
+  const archiveAgain = page.getByRole('article').filter({
+    has: page.getByRole('heading', { name: 'Sprint 1 · Planning foundations', exact: true }),
+  });
   await archiveAgain.getByRole('button', { name: 'Archive sprint', exact: true }).click();
   await page
     .getByRole('dialog')

@@ -134,13 +134,11 @@ async function run(page) {
   await close();
   // Drag previews must isolate the card and preserve its current expanded/collapsed layout.
   await openEditor(a);
-  await page
-    .getByLabel('Attachment file', { exact: true })
-    .setInputFiles({
-      name: 'drag-preview.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('drag preview'),
-    });
+  await page.getByLabel('Attachment file', { exact: true }).setInputFiles({
+    name: 'drag-preview.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('drag preview'),
+  });
   await page.getByRole('status').filter({ hasText: 'Attachment uploaded.' }).waitFor();
   await close();
   const cardAttachments = card(a).locator('.card-attachments');
