@@ -38,7 +38,8 @@
         "noDescendingSpecificity": "warn"
       },
       "suspicious": {
-        "useIterableCallbackReturn": "warn"
+        "useIterableCallbackReturn": "warn",
+        "noImportCycles": "error"
       },
       "complexity": {
         "noImportantStyles": "warn",
