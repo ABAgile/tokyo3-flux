@@ -1,6 +1,7 @@
 // Execute with playwright-browser run-code against a fresh seeded TEST workspace.
 // This mutates test data, including sprint closure. Never use a team workspace.
-async (page) => {
+// biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
+async function run(page) {
  page.setDefaultTimeout(10000);
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = async () => { await page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor(); };

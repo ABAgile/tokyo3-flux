@@ -1,7 +1,8 @@
 // Disposable seeded workspace, automatic refresh enabled (30s), mock GitLab:
 // project 42 / MR7: first fetch current head success, subsequent fetch newer MR
 // with an old-head pipeline. MR8 always returns a valid observation.
-async page => {
+// biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
+async function run(page) {
  const check=(ok,message)=>{if(!ok)throw new Error(message);};
  const saved=()=>page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor({timeout:15000});
  const save=async()=>{await page.getByRole('button',{name:'Save changes',exact:true}).click();await saved();};

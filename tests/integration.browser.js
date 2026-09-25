@@ -1,7 +1,8 @@
 // Run on a disposable seeded workspace with a loopback GitLab fixture:
 // approved project 42; MR 7 = current-head success, MR 8 = old-head success,
 // MR 9 = 503. Never run against team planning data.
-async page => {
+// biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
+async function run(page) {
  const check = (ok, message) => { if (!ok) throw new Error(message); };
  const saved = () => page.getByRole('status').filter({hasText:'Changes saved.'}).waitFor({timeout:15000});
  const save = async () => {await page.getByRole('button',{name:'Save changes',exact:true}).click();await saved();};

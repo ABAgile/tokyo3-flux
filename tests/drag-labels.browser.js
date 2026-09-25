@@ -1,5 +1,6 @@
 // Execute with playwright-browser run-code on an EMPTY disposable workspace.
-async (page) => {
+// biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
+async function run(page) {
  page.setDefaultTimeout(10000);
  // Keep both drop targets visible; avoid testing browser auto-scroll geometry.
  await page.setViewportSize({width:1440,height:1800});

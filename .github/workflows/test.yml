@@ -50,3 +50,19 @@ jobs:
         run: |
           out=$(deadcode -test ./...)
           if [ -n "$out" ]; then echo "$out"; echo "deadcode: unreachable functions found (above)"; exit 1; fi
+
+      # Frontend tool versions match BIOME_VERSION and RUMDL_VERSION in the Makefile.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - uses: biomejs/setup-biome@v2
+        with:
+          version: 2.5.14
+
+      - name: Install rumdl and Pi
+        run: |
+          pip install rumdl==0.2.77
+          npm install -g @earendil-works/pi-coding-agent@0.87.1
+
+      - run: make check-web test-web BIOME=biome RUMDL=rumdl

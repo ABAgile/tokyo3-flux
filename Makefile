@@ -18,11 +18,18 @@ LDFLAGS := -s -w -X main.Version=$(VERSION)
 GO      := go
 GOFLAGS :=
 
+# Frontend tools are pinned; override BIOME/RUMDL to use installed binaries.
+BIOME_VERSION := 2.5.14
+RUMDL_VERSION := 0.2.77
+BIOME ?= npx --yes @biomejs/biome@$(BIOME_VERSION)
+RUMDL ?= uvx rumdl@$(RUMDL_VERSION)
+WEB_JS = internal/planningui/static/app.js $(wildcard internal/planningui/static/modules/*.js)
+
 IMAGE_NAME ?= abagile/tokyo3-flux
 IMAGE_TAG  ?= $(VERSION)
 
 .PHONY: all build build-linux build-linux-amd64 build-darwin \
-        test tidy vet lint check \
+        test tidy vet lint check fmt-web lint-web fmt-md check-web test-web \
         docker-build docker-build-amd64 docker-push \
         docker-up docker-down install clean help
 
@@ -71,7 +78,30 @@ vet:
 lint:
 	staticcheck ./...
 
-## check: Full Go verification sequence
+## fmt-web: Format frontend JS/CSS, tests and the Pi extension with Biome
+fmt-web:
+	$(BIOME) format --write .
+
+## lint-web: Lint frontend JS/CSS, tests and the Pi extension with Biome
+lint-web:
+	$(BIOME) lint .
+
+## fmt-md: Reflow Markdown docs to one sentence per line
+fmt-md:
+	$(RUMDL) check --fix .
+
+## check-web: Verify frontend and Markdown formatting and lint without changes
+check-web:
+	$(BIOME) ci .
+	$(RUMDL) check .
+
+## test-web: Syntax-check browser modules and run the Node tests
+test-web:
+	@for f in $(WEB_JS); do node --check $$f || exit 1; done
+	node tests/extension.test.mjs
+	node tests/date-format.test.mjs
+
+## check: Full Go verification sequence, then the frontend checks
 check:
 	gofmt -s -w .
 	$(GO) mod tidy
@@ -81,6 +111,7 @@ check:
 	find . -type f -name "*.go" -print0 | xargs -0 -n 100 gopls check -severity=hint
 	govulncheck ./...
 	@out=$$(deadcode -test ./...); if [ -n "$$out" ]; then echo "$$out"; echo "deadcode: unreachable functions found (above)"; exit 1; fi
+	$(MAKE) check-web test-web
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 

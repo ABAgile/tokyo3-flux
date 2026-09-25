@@ -1,6 +1,7 @@
 // Disposable seeded native workspace. Connector disabled; configured machine
 // fixture token/subject is a viewer. No production credentials or data.
-async page => {
+// biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
+async function run(page) {
  const check=(ok,message)=>{if(!ok)throw new Error(message);};
  await page.setViewportSize({width:1440,height:1000});await page.reload();
  await page.getByRole('button',{name:'Proposals',exact:true}).waitFor();

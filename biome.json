@@ -1,0 +1,49 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": [
+      "internal/planningui/static/**/*.js",
+      "internal/planningui/static/**/*.css",
+      "tests/**/*.js",
+      "tests/**/*.mjs",
+      ".pi/extensions/*.ts"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": { "quoteStyle": "single", "semicolons": "always" }
+  },
+  "css": {
+    "formatter": { "enabled": true },
+    "linter": { "enabled": true }
+  },
+  "html": { "formatter": { "enabled": false } },
+  "assist": { "actions": { "source": { "organizeImports": "off" } } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUndeclaredVariables": "error",
+        "noUnusedVariables": "error"
+      },
+      "style": {
+        "useTemplate": "warn",
+        "noDescendingSpecificity": "warn"
+      },
+      "suspicious": {
+        "useIterableCallbackReturn": "warn"
+      },
+      "complexity": {
+        "noImportantStyles": "warn",
+        "useOptionalChain": "warn"
+      }
+    }
+  }
+}
