@@ -1,4 +1,5 @@
-// Disposable seeded workspace, automatic refresh enabled (30s), mock GitLab:
+// Disposable seeded workspace, automatic refresh enabled (30s), webhook secret
+// fixture-webhook-secret-0000000000000000, mock GitLab (gitlab_fixture.py --evolving):
 // project 42 / MR7: first fetch current head success, subsequent fetch newer MR
 // with an old-head pipeline. MR8 always returns a valid observation.
 // biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
@@ -47,19 +48,17 @@ async function run(page) {
       .locator(`[data-item="${item.id}"]`)
       .getByRole('button', { name: item.title, exact: true })
       .click();
-    await page.getByRole('button', { name: '＋ Add GitLab link', exact: true }).click();
+    await page.getByRole('button', { name: 'Add link', exact: true }).click();
     const projectPicker = page.getByRole('group', { name: 'Approved GitLab project', exact: true });
-    await projectPicker
-      .getByRole('button', { name: 'Edit Approved GitLab project', exact: true })
-      .click();
+    await page.getByRole('button', { name: 'Edit Approved GitLab project', exact: true }).click();
     await projectPicker
       .getByRole('checkbox', { name: 'Flux · team/flux (#42)', exact: true })
       .check();
     await page.keyboard.press('Escape');
     const mrPicker = page.getByRole('group', { name: 'Merge request', exact: true });
-    await mrPicker.getByRole('button', { name: 'Edit Merge request', exact: true }).click();
+    await page.getByRole('button', { name: 'Edit Merge request', exact: true }).click();
     await mrPicker
-      .getByRole('searchbox', { name: 'Filter merge request', exact: true })
+      .getByRole('searchbox', { name: 'Filter Merge request', exact: true })
       .fill(String(number));
     await mrPicker.getByRole('checkbox', { name: new RegExp(`^MR !${number} ·`) }).check();
     await page.keyboard.press('Escape');
@@ -141,7 +140,10 @@ async function run(page) {
       (await linkSection.getByRole('button', { name: /^View GitLab details/ }).count()) === 1,
     'GitLab links are not grouped with one observations action',
   );
-  const observationIcon = page.locator(`[data-item="${item.id}"] [data-observation="status-icon"]`);
+  // Each linked MR has its own status icon; inspect MR 7's.
+  const observationIcon = page.locator(
+    `[data-item="${item.id}"] [data-observation="status-icon"][data-link-id="${first.id}"]`,
+  );
   await observationIcon.waitFor();
   const observationTitle = await observationIcon.getAttribute('title');
   const observationLabel = await observationIcon.getAttribute('aria-label');
@@ -257,7 +259,7 @@ async function run(page) {
         .getByText(/Background refresh: about every 30 seconds/)
         .waitFor({ timeout: 10000 });
       check(
-        await page.locator('dialog').evaluate((d) => d.scrollWidth <= d.clientWidth),
+        await page.locator('dialog#editor').evaluate((d) => d.scrollWidth <= d.clientWidth),
         'dialog overflow',
       );
       await page.keyboard.press('Escape');

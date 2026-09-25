@@ -107,6 +107,8 @@ run_one() {
     if [ $gitlab = evolving ]; then evolving=--evolving; fi
     python3 tests/gitlab_fixture.py --port $GITLAB_PORT $evolving >"$OUT/$name.gitlab.log" 2>&1 &
     PIDS="$PIDS $!"
+    # Fails if another process already holds the fixture port.
+    wait_http "http://127.0.0.1:$GITLAB_PORT/uploads/avatar/7.png"
   fi
   (
     export FLUX_DATABASE_URL="$db_url" FLUX_BLOBSTORE=filesystem FLUX_BLOBSTORE_PATH="$OUT/$name.blobs"
@@ -118,6 +120,7 @@ run_one() {
     fi
     # The idle poll (planning notices, observations) runs only with automatic refresh.
     case $name in background | planning) export FLUX_GITLAB_REFRESH_INTERVAL=30s ;; esac
+    if [ $name = background ]; then export FLUX_GITLAB_WEBHOOK_SECRET=fixture-webhook-secret-0000000000000000; fi
     if [ $name = proposals ]; then
       export FLUX_API_TOKEN=fixture-native-machine-token-0000000000 FLUX_API_SUBJECT=pi-reader
     fi
