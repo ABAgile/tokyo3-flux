@@ -6,6 +6,19 @@ async function run(page) {
   const check = (ok, message) => {
     if (!ok) throw new Error(message);
   };
+  // run-code has no Node Buffer, so text files are built in the page and set
+  // on the input the way setInputFiles would.
+  const chooseTextFile = (input, name, text) =>
+    input.evaluate(
+      (node, [fileName, body]) => {
+        const files = new DataTransfer();
+        files.items.add(new File([body], fileName, { type: 'text/plain' }));
+        node.files = files.files;
+        node.dispatchEvent(new Event('input', { bubbles: true }));
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      [name, text],
+    );
   const saved = () =>
     page.getByRole('status').filter({ hasText: 'Changes saved.' }).waitFor({ timeout: 15000 });
   const save = async () => {
@@ -134,11 +147,11 @@ async function run(page) {
   await close();
   // Drag previews must isolate the card and preserve its current expanded/collapsed layout.
   await openEditor(a);
-  await page.getByLabel('Attachment file', { exact: true }).setInputFiles({
-    name: 'drag-preview.txt',
-    mimeType: 'text/plain',
-    buffer: Buffer.from('drag preview'),
-  });
+  await chooseTextFile(
+    page.getByLabel('Attachment file', { exact: true }),
+    'drag-preview.txt',
+    'drag preview',
+  );
   await page.getByRole('status').filter({ hasText: 'Attachment uploaded.' }).waitFor();
   await close();
   const cardAttachments = card(a).locator('.card-attachments');

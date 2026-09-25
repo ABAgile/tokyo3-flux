@@ -6,6 +6,22 @@ async function run(page) {
   const check = (ok, message) => {
     if (!ok) throw new Error(message);
   };
+  // run-code has no URL global, so the address is parsed in the page.
+  const urlParam = (name) =>
+    page.evaluate((key) => new URL(location.href).searchParams.get(key), name);
+  // run-code has no Node Buffer, so text files are built in the page and set
+  // on the input the way setInputFiles would.
+  const chooseTextFile = (input, name, text) =>
+    input.evaluate(
+      (node, [fileName, body]) => {
+        const files = new DataTransfer();
+        files.items.add(new File([body], fileName, { type: 'text/plain' }));
+        node.files = files.files;
+        node.dispatchEvent(new Event('input', { bubbles: true }));
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      [name, text],
+    );
   const saved = async () => {
     await page.getByRole('status').filter({ hasText: 'Changes saved.' }).waitFor();
   };
@@ -436,7 +452,7 @@ async function run(page) {
   await projectRow.getByRole('button', { name: 'View scope', exact: true }).click();
   await page.getByRole('heading', { name: 'Planning list', exact: true }).waitFor();
   const projectFilter = page.getByRole('combobox', { name: 'Project', exact: true });
-  const projectID = new URL(page.url()).searchParams.get('project');
+  const projectID = await urlParam('project');
   check(
     (await projectFilter.inputValue()) === 'all',
     'the project select should reset to All after adding a filter',
@@ -451,11 +467,10 @@ async function run(page) {
     (await scopeFilter.inputValue()) === 'all',
     'project lens did not default to All open work',
   );
-  const projectURL = new URL(page.url());
   check(
-    projectURL.searchParams.get('mode') === 'list' &&
-      projectURL.searchParams.get('project') === projectID &&
-      projectURL.searchParams.get('scope') === 'all',
+    (await urlParam('mode')) === 'list' &&
+      (await urlParam('project')) === projectID &&
+      (await urlParam('scope')) === 'all',
     'project view state is not shareable in the URL',
   );
   const projectSummary = page.locator('#project-summary');
@@ -485,10 +500,7 @@ async function run(page) {
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await page.getByRole('heading', { name: 'Kanban board', exact: true }).waitFor();
-  check(
-    new URL(page.url()).searchParams.get('mode') === 'board',
-    'Board presentation was not persisted',
-  );
+  check((await urlParam('mode')) === 'board', 'Board presentation was not persisted');
   await projectFilter.selectOption('all');
   await projectFilter.selectOption(projectID);
   check(
@@ -497,14 +509,11 @@ async function run(page) {
   );
   await page.getByRole('button', { name: 'List', exact: true }).click();
   await page.getByRole('heading', { name: 'Planning list', exact: true }).waitFor();
-  check(
-    new URL(page.url()).searchParams.get('mode') === 'list',
-    'List presentation was not persisted',
-  );
+  check((await urlParam('mode')) === 'list', 'List presentation was not persisted');
   await page.reload();
   await page.getByRole('heading', { name: 'Planning list', exact: true }).waitFor();
   check(
-    new URL(page.url()).searchParams.get('project') === projectID &&
+    (await urlParam('project')) === projectID &&
       (await page.locator('#filter-chips .filter-chip').count()) === 1 &&
       (await scopeFilter.inputValue()) === 'all',
     'reloading the project URL lost its filters',
@@ -1169,11 +1178,11 @@ async function run(page) {
       input.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true })),
     );
   check(await itemLayout.isVisible(), 'canceling the attachment picker closed the card');
-  await attachments.getByLabel('Attachment file', { exact: true }).setInputFiles({
-    name: 'plan.txt',
-    mimeType: 'text/plain',
-    buffer: Buffer.from('attachment body'),
-  });
+  await chooseTextFile(
+    attachments.getByLabel('Attachment file', { exact: true }),
+    'plan.txt',
+    'attachment body',
+  );
   await page.getByRole('status').filter({ hasText: 'Attachment uploaded.' }).waitFor();
   check(
     (await attachments.getByRole('link', { name: 'plan.txt', exact: true }).count()) === 1,
