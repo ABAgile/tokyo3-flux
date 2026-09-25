@@ -42,6 +42,10 @@ export async function change(command, key = requestKey()) {
   let receipt;
   try {
     receipt = await postChange(command, key);
+  } catch (error) {
+    // The save is over; callers report the failure in the error bar.
+    notice('');
+    throw error;
   } finally {
     state.busy = false;
     renderControls();
