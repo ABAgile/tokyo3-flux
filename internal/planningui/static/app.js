@@ -97,6 +97,16 @@ import {
   refreshDueDateBadges,
   scheduleOverdueRefresh,
 } from './modules/due-dates.js';
+import {
+  gitlabProjectLabel,
+  integrationProjectEntries,
+  memberUserEntries,
+  loadGitLabUsers,
+  loadGitLabProjects,
+  approvedGitLabProjectEntries,
+  validGitLabMergeRequestCatalog,
+  mergeRequestEntries,
+} from './modules/gitlab-catalog.js';
 // The Projects bar uses the same multi-value filter rules as the planning bar.
 const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
 const projectFilters = { assignee: new Set(), label: new Set() };
@@ -6223,152 +6233,6 @@ function observationTiming(link) {
     return Number.isNaN(date.getTime()) ? 'unavailable' : date.toLocaleString();
   };
   return `Last successful refresh: ${timestamp(link.last_success)} · Latest refresh attempt: ${timestamp(link.last_attempt)}`;
-}
-function gitlabProjectLabel(project) {
-  const name = String(project.name || '').trim();
-  const path = String(project.path_with_namespace || '').trim();
-  return `${name}${path && path !== name ? ` · ${path}` : ''} (#${project.id})`;
-}
-function integrationProjectEntries(projects, selected) {
-  const entries = [];
-  const seen = new Set();
-  projects.forEach((project) => {
-    if (
-      !Number.isSafeInteger(project.id) ||
-      project.id <= 0 ||
-      typeof project.name !== 'string' ||
-      !project.name.trim()
-    )
-      return;
-    const value = String(project.id);
-    if (seen.has(value)) return;
-    seen.add(value);
-    entries.push([value, gitlabProjectLabel(project)]);
-  });
-  selected.forEach((value) => {
-    if (!seen.has(value)) entries.push([value, `Project ${value} (currently approved)`]);
-  });
-  return entries;
-}
-function gitLabUserLabel(user) {
-  const name =
-    String(user.name || '').trim() ||
-    String(user.username || '').trim() ||
-    `GitLab user ${user.id}`;
-  const username = String(user.username || '').trim();
-  return `${name}${username && username !== name ? ` · @${username}` : ''} (#${user.id})`;
-}
-function validGitLabUserCatalog(data) {
-  return (
-    Array.isArray(data) &&
-    data.every(
-      (user) =>
-        user &&
-        Number.isSafeInteger(user.id) &&
-        user.id > 0 &&
-        typeof user.username === 'string' &&
-        user.username.trim() &&
-        typeof user.name === 'string' &&
-        user.name.trim() &&
-        (user.avatar_url === undefined || typeof user.avatar_url === 'string'),
-    )
-  );
-}
-function memberUserEntries(users, selected = []) {
-  const entries = [],
-    seen = new Set(),
-    existing = new Set(state.board.members.map((member) => member.subject)),
-    selectedSet = new Set(selected.map(String));
-  users.forEach((user) => {
-    const value = String(user.id);
-    if (seen.has(value) || (existing.has(value) && !selectedSet.has(value))) return;
-    seen.add(value);
-    entries.push([value, gitLabUserLabel(user)]);
-  });
-  selected.forEach((value) => {
-    value = String(value);
-    if (seen.has(value)) return;
-    seen.add(value);
-    entries.push([value, `GitLab user #${value} (currently selected)`]);
-  });
-  return entries;
-}
-async function loadGitLabUsers(currentRoot, search = '') {
-  const params = new URLSearchParams({ search });
-  const data = await api(currentRoot + '/gitlab/users?' + params);
-  if (!validGitLabUserCatalog(data))
-    throw new Error('GitLab user results are invalid. Refresh to retry.');
-  return data;
-}
-function validGitLabProjectCatalog(data) {
-  return (
-    Array.isArray(data) &&
-    data.every(
-      (project) =>
-        project &&
-        Number.isSafeInteger(project.id) &&
-        project.id > 0 &&
-        typeof project.name === 'string' &&
-        project.name.trim(),
-    )
-  );
-}
-async function loadGitLabProjects(currentRoot) {
-  const data = await api(currentRoot + '/gitlab/projects');
-  if (!validGitLabProjectCatalog(data))
-    throw new Error('GitLab project catalog is invalid. Refresh to retry.');
-  return data;
-}
-function approvedGitLabProjectEntries(projects) {
-  const approved = new Set(state.board.integration.projects.map(String));
-  return integrationProjectEntries(
-    projects.filter((project) => approved.has(String(project.id))),
-    state.board.integration.projects.map(String),
-  );
-}
-function mergeRequestLabel(mergeRequest) {
-  const title = String(mergeRequest.title || '').trim();
-  const state = String(mergeRequest.state || '').trim();
-  const timestamp =
-    typeof mergeRequest.updated_at === 'string' ? Date.parse(mergeRequest.updated_at) : NaN;
-  const updated = Number.isNaN(timestamp)
-    ? ''
-    : ` · updated ${new Date(timestamp).toLocaleDateString()}`;
-  return `MR !${mergeRequest.iid} · ${title}${state ? ` · ${state}` : ''}${mergeRequest.draft ? ' · Draft' : ''}${updated}`;
-}
-function validGitLabMergeRequestCatalog(data) {
-  return (
-    Array.isArray(data) &&
-    data.every(
-      (mergeRequest) =>
-        mergeRequest &&
-        Number.isSafeInteger(mergeRequest.iid) &&
-        mergeRequest.iid > 0 &&
-        typeof mergeRequest.title === 'string' &&
-        mergeRequest.title.trim(),
-    )
-  );
-}
-function mergeRequestEntries(mergeRequests, selected) {
-  const entries = [];
-  const seen = new Set();
-  mergeRequests.forEach((mergeRequest) => {
-    if (
-      !Number.isSafeInteger(mergeRequest.iid) ||
-      mergeRequest.iid <= 0 ||
-      typeof mergeRequest.title !== 'string' ||
-      !mergeRequest.title.trim()
-    )
-      return;
-    const value = String(mergeRequest.iid);
-    if (seen.has(value)) return;
-    seen.add(value);
-    entries.push([value, mergeRequestLabel(mergeRequest)]);
-  });
-  selected.forEach((value) => {
-    if (!seen.has(value)) entries.push([value, `MR !${value} (currently selected)`]);
-  });
-  return entries;
 }
 function editIntegration() {
   if (!state.board || state.busy || state.loading || state.integrationFormOpen) return;
