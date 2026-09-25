@@ -229,7 +229,7 @@
   white-space: nowrap;
 }
 .attachment-add::before {
-  content: "＋";
+  content: "＋" / "";
   margin-right: var(--s1);
 }
 .attachment-add:hover {
