@@ -1,20 +1,17 @@
-import { $, el, button, options, svgNode, field, uid } from './modules/dom.js';
+import { $, el, button, options, field } from './modules/dom.js';
 import { api, apiRevalidated, requestKey } from './modules/api.js';
 import { workspaceLabel, workspaceHistoryLabel } from './modules/format.js';
-import { renderMarkdown, markdownEditor } from './modules/markdown.js';
 import {
   contentRoot,
   pageStack,
   panel,
   sectionHead,
-  panelHead,
   helpText,
   statusLine,
   setStatusText,
   errorLine,
   setErrorText,
   emptyState,
-  metricList,
   filterBar,
   filterSelect,
   filterSearch,
@@ -46,13 +43,10 @@ import {
   labelInfo,
   labelBadge,
   styleLabelOptions,
-  done,
-  blocked,
-  scopeItems,
 } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName, memberListingInfo, avatarView } from './modules/people.js';
-import { patchNode, keyedNodeKey, reconcileKeyedChildren } from './modules/reconcile.js';
+import { patchNode } from './modules/reconcile.js';
 import { multiSelect, labelColorPicker } from './modules/multi-select.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import {
@@ -62,7 +56,7 @@ import {
   loadGitLabUsers,
   loadGitLabProjects,
 } from './modules/gitlab-catalog.js';
-import { planningHost, pageHost, pageRoot, setContentBusy } from './modules/mount.js';
+import { planningHost, pageHost, setContentBusy } from './modules/mount.js';
 import {
   PROJECT_FILTER_NAMES,
   projectFilters,
@@ -82,10 +76,8 @@ import {
   placeFilters,
   renderFilterChips,
   applyFilterChange,
-  sprintFilterItems,
-  sprintMatchesFilters,
 } from './modules/filters.js';
-import { resetBurndown, currentBurndownKey, renderBurndown } from './modules/view-burndown.js';
+import { resetBurndown } from './modules/view-burndown.js';
 import { change, clearUndo, quick, runSequence } from './modules/commands.js';
 import { isFileTransfer, initAttachmentTooltips } from './modules/item-attachments.js';
 import { closeEditor, openEditor } from './modules/dialog.js';
@@ -114,6 +106,12 @@ import { closeDetail, selectItem, openItemDetail } from './modules/item-detail.j
 import { renderProjectSummary, renderBoardContent, setupBoard } from './modules/view-board.js';
 import { renderCardListContent, resetArchive, loadArchive } from './modules/view-archive.js';
 import { renderListPresentationContent } from './modules/view-list.js';
+import {
+  renderSprintPage,
+  renderSprintSummary,
+  resetSprintHistory,
+  loadSprintHistory,
+} from './modules/view-sprints.js';
 // Late-bound calls from feature modules back into the shell.
 Object.assign(hooks, {
   chooseWorkspace,
@@ -129,15 +127,6 @@ Object.assign(hooks, {
   reopenItemEditor,
   resetBurndown,
   selectItem,
-});
-const sprintGoalLayouts = new Map();
-const sprintGoalResizeObserver = new ResizeObserver(() => {
-  for (const [content, update] of sprintGoalLayouts) {
-    if (!content.isConnected) {
-      sprintGoalLayouts.delete(content);
-      sprintGoalResizeObserver.unobserve(content);
-    } else update();
-  }
 });
 const theme =
   localStorage.getItem('flux-plan-theme') ||
@@ -424,120 +413,6 @@ document.addEventListener('dragover', (e) => {
 document.addEventListener('drop', (e) => {
   if (isFileTransfer(e.dataTransfer)) e.preventDefault();
 });
-function sprintGoal(value) {
-  const goal = el('div', undefined, 'sprint-goal');
-  const content = el('div', undefined, 'sprint-goal-content');
-  content.id = uid('sprint-goal');
-  content.inert = true;
-  renderMarkdown(content, value);
-  let expanded = false;
-  const updateDisclosure = () => {
-    const clipped = content.scrollHeight > content.clientHeight + 1;
-    toggle.hidden = !expanded && !clipped;
-    content.inert = !expanded && clipped;
-  };
-  const toggle = button(
-    'Show more',
-    () => {
-      expanded = !expanded;
-      toggle.textContent = expanded ? 'Show less' : 'Show more';
-      toggle.setAttribute('aria-expanded', String(expanded));
-      content.classList.toggle('is-expanded', expanded);
-      updateDisclosure();
-    },
-    'sprint-goal-toggle',
-  );
-  toggle.hidden = true;
-  toggle.setAttribute('aria-controls', content.id);
-  toggle.setAttribute('aria-expanded', 'false');
-  goal.append(content, toggle);
-  requestAnimationFrame(() => {
-    if (!content.isConnected) return;
-    updateDisclosure();
-    sprintGoalLayouts.set(content, updateDisclosure);
-    sprintGoalResizeObserver.observe(content);
-  });
-  return goal;
-}
-function sprintPanel(s, items = scopeItems(s)) {
-  const card = panel('sprint-panel', 'article');
-  card.dataset.sprintId = s.id;
-  const info = el('div', undefined, 'sprint-info');
-  const titleRow = el('div', undefined, 'sprint-title-row');
-  const titleCopy = el('div', undefined, 'sprint-title-copy');
-  titleCopy.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name));
-  titleRow.append(titleCopy);
-  info.append(titleRow, sprintGoal(s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
-  const metrics = metricList([
-    [items.length, 'In scope'],
-    [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'],
-    [items.filter(blocked).length, 'Blocked'],
-  ]);
-  const actions = el('div', undefined, 'actions sprint-actions');
-  const expanded = state.burndownExpanded.has(s.id);
-  const toggle = actionIconButton(
-    expanded ? 'Hide burn down' : 'Show burn down',
-    '▥',
-    () => {
-      if (expanded) state.burndownExpanded.delete(s.id);
-      else state.burndownExpanded.add(s.id);
-      render();
-      [...document.querySelectorAll('[data-burndown-toggle]')]
-        .find((element) => element.dataset.burndownToggle === s.id)
-        ?.focus();
-    },
-    'quiet',
-  );
-  toggle.dataset.burndownToggle = s.id;
-  toggle.setAttribute('aria-expanded', String(expanded));
-  if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`);
-  toggle.disabled = state.busy || state.loading;
-  actions.append(toggle);
-  actions.append(
-    actionIconButton('View scope', '◎', () => {
-      state.view = 'board';
-      $('scope').value = s.id;
-      render();
-      persistPlanningURL();
-    }),
-  );
-  if (s.state !== 'closed')
-    actions.append(writeIconButton('Edit sprint', '✎', () => editSprint(s)));
-  if (s.state === 'planned')
-    actions.append(
-      writeIconButton(
-        'Start sprint',
-        '▶',
-        () => quick({ kind: 'sprint.start', target: s.id }),
-        'primary',
-      ),
-    );
-  if (s.state === 'active')
-    actions.append(writeIconButton('Close sprint', '■', () => closeSprint(s)));
-  if (s.state === 'closed')
-    actions.append(
-      writeIconButton('Re-open sprint', '↶', () => quick({ kind: 'sprint.reopen', target: s.id })),
-    );
-  if (s.state === 'closed')
-    actions.append(writeIconButton('Archive sprint', '▣', () => archiveSprint(s), 'quiet'));
-  if (s.state === 'closed')
-    info.append(
-      el(
-        'small',
-        'Scope is preserved at closure. Archive this immutable sprint to keep it in paginated history; card details remain current.',
-        'muted',
-      ),
-    );
-  card.append(info, actions, metrics);
-  if (expanded) card.append(renderBurndown(s));
-  card.dataset.renderSignature = JSON.stringify({
-    s,
-    expanded,
-    data: expanded ? state.burndownData.get(currentBurndownKey(s.id)) || null : null,
-    error: expanded ? state.burndownErrors.get(currentBurndownKey(s.id)) || null : null,
-  });
-  return card;
-}
 function renderWorkspaceSelection(content) {
   const gate = panel('workspace-gate');
   gate.setAttribute('aria-label', 'Choose a workspace');
@@ -720,288 +595,6 @@ function render() {
   renderFilterChips();
   renderContent();
 }
-function renderSprintRows(list) {
-  const search = $('search').value.trim();
-  const query = state.searchQuery;
-  const filtered = state.board.sprints.filter(sprintMatchesFilters);
-  const matches = filtered.filter(
-    (sprint) => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query),
-  );
-  $('count').textContent = `${matches.length} ${matches.length === 1 ? 'sprint' : 'sprints'}`;
-  list.replaceChildren();
-  if (!matches.length) {
-    const message = !state.board.sprints.length
-      ? 'No sprints yet. Create a goal and time box, then add work from the backlog.'
-      : query && filtered.length !== state.board.sprints.length
-        ? `No sprints match “${search}” and the current filters.`
-        : query
-          ? `No sprints match “${search}”.`
-          : 'No sprints hold work matching the current filters.';
-    list.append(emptyState(message));
-    return;
-  }
-  matches.forEach((sprint) => list.append(sprintPanel(sprint, sprintFilterItems(sprint))));
-}
-function sprintHistoryTime(value) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? 'Unknown closure time'
-    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-function renderSprintHistory() {
-  const historyPanel = panel('sprint-history');
-  historyPanel.append(
-    panelHead('Archived sprint history', {
-      description:
-        'Immutable snapshots captured when each sprint closed. Archived sprints are read-only and do not consume the planning limit.',
-    }),
-  );
-  if (state.sprintHistoryError) historyPanel.append(emptyState(state.sprintHistoryError));
-  else if (!state.sprintHistory.length)
-    historyPanel.append(
-      emptyState(
-        'No archived sprints yet. Close and archive a sprint to preserve its closure summary.',
-      ),
-    );
-  else {
-    const list = maintenanceList('sprint-history-list');
-    state.sprintHistory.forEach((record) => {
-      const sprint = record.sprint || {};
-      const closure = record.closure || {};
-      const row = maintenanceRow({
-        content: [
-          el('strong', sprint.name || 'Unnamed sprint'),
-          el(
-            'span',
-            `${closure.scope_count || 0} committed · ${closure.completed_count || 0} completed · ${closure.carry_over_count || 0} carried over`,
-            'help',
-          ),
-          el('small', `Closed ${sprintHistoryTime(closure.closed_at)}`, 'muted'),
-        ],
-      });
-      row.dataset.sprintHistoryId = sprint.id || '';
-      list.append(row);
-    });
-    historyPanel.append(list);
-  }
-  if (!state.sprintHistoryError && state.sprintHistoryMore) {
-    const more = button('Load older archived sprints', async () => {
-      try {
-        await loadSprintHistory();
-        render();
-      } catch (error) {
-        state.sprintHistoryError = error.message;
-        render();
-      }
-    });
-    more.dataset.sprintHistoryMore = 'true';
-    more.disabled = state.busy || state.loading;
-    historyPanel.append(more);
-  }
-  historyPanel.dataset.renderSignature = JSON.stringify({
-    records: state.sprintHistory,
-    more: state.sprintHistoryMore,
-    error: state.sprintHistoryError,
-  });
-  return historyPanel;
-}
-// Delivery trend is derived from preserved closed-sprint scope and the current
-// state of those cards. It is a live read of native planning records, not a
-// recorded historical metric, so it is labeled as such.
-const VELOCITY_SPRINTS = 8;
-function velocitySeries() {
-  return state.board.sprints
-    .filter((sprint) => sprint.state === 'closed' && sprintMatchesFilters(sprint))
-    .map((sprint) => {
-      const items = sprintFilterItems(sprint);
-      return { sprint, committed: items.length, completed: items.filter(done).length };
-    })
-    .slice(-VELOCITY_SPRINTS);
-}
-function velocityChart(series) {
-  const width = 760,
-    height = 200,
-    left = 44,
-    right = 16,
-    top = 16,
-    bottom = 40;
-  const plotWidth = width - left - right,
-    plotHeight = height - top - bottom;
-  const maximum = Math.max(1, ...series.flatMap((entry) => [entry.committed, entry.completed]));
-  const band = plotWidth / series.length,
-    barWidth = Math.max(4, Math.min(28, band / 3));
-  const y = (value) => top + ((maximum - value) / maximum) * plotHeight;
-  const svg = svgNode('svg', {
-    viewBox: `0 0 ${width} ${height}`,
-    role: 'img',
-    'aria-label': 'Committed and completed work per closed sprint',
-    class: 'velocity-svg',
-  });
-  const title = svgNode('title');
-  title.textContent = 'Committed and completed work per closed sprint';
-  svg.append(title);
-  [
-    ...new Set(Array.from({ length: 4 }, (_, index) => Math.round(maximum * (1 - index / 3)))),
-  ].forEach((value) => {
-    svg.append(
-      svgNode('line', {
-        class: 'velocity-grid',
-        x1: left,
-        x2: width - right,
-        y1: y(value),
-        y2: y(value),
-      }),
-    );
-    const label = svgNode('text', {
-      class: 'velocity-axis-label',
-      x: left - 8,
-      y: y(value) + 4,
-      'text-anchor': 'end',
-    });
-    label.textContent = String(value);
-    svg.append(label);
-  });
-  series.forEach((entry, index) => {
-    const center = left + band * (index + 0.5);
-    [
-      ['committed', entry.committed, center - barWidth - 2],
-      ['completed', entry.completed, center + 2],
-    ].forEach(([kind, value, x]) => {
-      const bar = svgNode('rect', {
-        class: `velocity-bar velocity-bar-${kind}`,
-        x,
-        y: y(value),
-        width: barWidth,
-        height: Math.max(1, y(0) - y(value)),
-      });
-      const label = svgNode('title');
-      label.textContent = `${entry.sprint.name} · ${value} ${kind}`;
-      bar.append(label);
-      svg.append(bar);
-    });
-    const label = svgNode('text', {
-      class: 'velocity-axis-label',
-      x: center,
-      y: height - 14,
-      'text-anchor': 'middle',
-    });
-    label.textContent =
-      entry.sprint.name.length > 14 ? `${entry.sprint.name.slice(0, 13)}…` : entry.sprint.name;
-    svg.append(label);
-  });
-  return svg;
-}
-function velocityTable(series) {
-  const details = el('details', undefined, 'velocity-data');
-  details.dataset.stateKey = 'velocity-data';
-  details.append(el('summary', 'View sprint values'));
-  const scroll = el('div', undefined, 'velocity-table-scroll');
-  const table = el('table');
-  table.append(el('caption', 'Closed-sprint scope and current completion'));
-  const head = el('thead');
-  const heading = el('tr');
-  ['Sprint', 'Committed', 'Completed'].forEach((text) => {
-    const cell = el('th', text);
-    cell.scope = 'col';
-    heading.append(cell);
-  });
-  head.append(heading);
-  table.append(head);
-  const body = el('tbody');
-  series.forEach((entry) => {
-    const row = el('tr');
-    const name = el('th', entry.sprint.name);
-    name.scope = 'row';
-    row.append(name, el('td', String(entry.committed)), el('td', String(entry.completed)));
-    body.append(row);
-  });
-  table.append(body);
-  scroll.append(table);
-  details.append(scroll);
-  return details;
-}
-function sprintVelocityPanel() {
-  const series = velocitySeries();
-  const trend = panel('velocity-panel');
-  trend.setAttribute('aria-labelledby', 'velocity-heading');
-  trend.append(
-    panelHead('Delivery trend', {
-      id: 'velocity-heading',
-      description: `Committed and completed work for the last ${VELOCITY_SPRINTS} closed sprints. Completion reflects each card's current column, not its state at closure.`,
-    }),
-  );
-  if (!series.length) {
-    const narrowed = state.board.sprints.some((sprint) => sprint.state === 'closed');
-    trend.append(
-      emptyState(
-        narrowed
-          ? 'No closed sprint holds work matching the current filters.'
-          : 'No closed sprint yet. Close a sprint to start a delivery trend.',
-      ),
-    );
-    trend.dataset.renderSignature = `velocity:empty:${narrowed}`;
-    return trend;
-  }
-  const completed = series.map((entry) => entry.completed);
-  const average = completed.reduce((sum, value) => sum + value, 0) / completed.length;
-  const metrics = metricList(
-    [
-      [series.at(-1).completed, 'Last sprint'],
-      [Math.round(average * 10) / 10, 'Average completed'],
-      [Math.max(...completed), 'Best sprint'],
-    ],
-    'velocity-metrics',
-  );
-  const figure = el('figure', undefined, 'velocity-figure');
-  figure.append(velocityChart(series));
-  const legend = el('div', undefined, 'velocity-legend');
-  [
-    ['committed', 'Committed'],
-    ['completed', 'Completed'],
-  ].forEach(([kind, text]) => {
-    const entry = el('span', undefined, 'velocity-legend-item');
-    entry.append(
-      el('span', undefined, `velocity-swatch velocity-swatch-${kind}`),
-      el('span', text),
-    );
-    legend.append(entry);
-  });
-  figure.append(legend);
-  trend.append(metrics, figure, velocityTable(series));
-  trend.dataset.renderSignature = JSON.stringify(
-    series.map((entry) => [entry.sprint.id, entry.sprint.name, entry.committed, entry.completed]),
-  );
-  return trend;
-}
-// Sprints uses the same page layout as Projects: a read-only summary section
-// first, then a titled section whose filter bar sits directly below its heading.
-function renderSprintPage(content) {
-  const velocity = sprintVelocityPanel();
-  const head = sectionHead(
-    'Goals, scope, and deliberate carry-over',
-    writeButton('＋ New sprint', () => editSprint(), 'primary'),
-  );
-  head.dataset.renderSignature = 'sprint-page-head';
-  const list = el('div', undefined, 'sprints');
-  list.dataset.contentView = 'sprint-page-list';
-  renderSprintRows(list);
-  const historyPanel = renderSprintHistory();
-  const current = pageRoot('sprint-page');
-  if (!current) {
-    const sections = pageStack('sprint-page');
-    const planning = el('section', undefined, 'sprint-planning');
-    planning.append(head, filterSlot('sprint-filter-slot'), list);
-    sections.append(velocity, planning, historyPanel);
-    content.append(sections);
-  } else {
-    patchNode(current.firstElementChild, velocity);
-    const planning = current.children[1];
-    patchNode(planning.firstElementChild, head);
-    reconcileKeyedChildren(planning.lastElementChild, [...list.children], keyedNodeKey);
-    patchNode(current.children[2], historyPanel);
-  }
-  placeFilters($('sprint-filter-slot'));
-}
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
 function firstRunChecklist() {
@@ -1063,21 +656,6 @@ function showFirstRun() {
     !state.board.sprints.length &&
     !state.searchQuery
   );
-}
-function renderSprintSummary(sprints) {
-  const summary = $('sprint-summary');
-  if (state.view !== 'board') {
-    summary.replaceChildren();
-    return;
-  }
-  const next = sprints.map((sprint) => sprintPanel(sprint));
-  if (!next.length)
-    next.push(
-      emptyState(
-        'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.',
-      ),
-    );
-  reconcileKeyedChildren(summary, next, keyedNodeKey);
 }
 // Views that own their layout share one lifecycle: mount `#page-root`, keep the
 // root the view patches in place (if it has one), then build into the host.
@@ -1141,44 +719,6 @@ async function loadHistory(reset = false) {
   state.history = reset ? events : [...state.history, ...events];
   state.historyBefore = events.at(-1)?.id || 0;
   state.historyMore = events.length === 50;
-}
-const SPRINT_HISTORY_PAGE = 50;
-function resetSprintHistory() {
-  state.sprintHistory = [];
-  state.sprintHistoryOffset = 0;
-  state.sprintHistoryMore = false;
-  state.sprintHistoryError = '';
-}
-function validSprintHistoryPage(page) {
-  return (
-    page &&
-    Array.isArray(page.records) &&
-    Number.isSafeInteger(page.total) &&
-    page.total >= 0 &&
-    page.records.every(
-      (record) =>
-        record &&
-        record.sprint &&
-        typeof record.sprint.id === 'string' &&
-        record.closure &&
-        typeof record.closure.closed_at === 'string' &&
-        !Number.isNaN(Date.parse(record.closure.closed_at)),
-    ) &&
-    (page.next_offset === undefined ||
-      (Number.isSafeInteger(page.next_offset) && page.next_offset >= 0))
-  );
-}
-async function loadSprintHistory(reset = false) {
-  const offset = reset ? 0 : state.sprintHistoryOffset;
-  const page = await api(
-    `${state.root}/sprints/archive?offset=${offset}&limit=${SPRINT_HISTORY_PAGE}`,
-  );
-  if (!validSprintHistoryPage(page))
-    throw new Error('Sprint history response is invalid. Refresh to retry.');
-  state.sprintHistory = reset ? page.records : [...state.sprintHistory, ...page.records];
-  state.sprintHistoryOffset = offset + page.records.length;
-  state.sprintHistoryMore = page.next_offset !== undefined;
-  state.sprintHistoryError = '';
 }
 function showWorkspaceSelection() {
   if (state.busy || state.loading) return;
@@ -1490,113 +1030,6 @@ async function rejectProposal(id) {
     (data) => ({ kind: 'proposal.reject', target: id, reason: data.get('reason').trim() }),
   );
   $('save').textContent = 'Reject proposal';
-}
-function editSprint(sprint) {
-  const existing = !!sprint;
-  sprint ||= {
-    name: '',
-    goal: '',
-    start: new Date().toISOString().slice(0, 10),
-    end: new Date(Date.now() + 13 * 86400000).toISOString().slice(0, 10),
-  };
-  openEditor(
-    existing ? 'Edit sprint' : 'Plan a sprint',
-    (fields) => {
-      const name = field(fields, 'name', 'Sprint name', sprint.name);
-      name.required = true;
-      name.maxLength = 120;
-      markdownEditor(
-        fields,
-        'goal',
-        'Sprint goal · what outcome matters?',
-        sprint.goal,
-        4000,
-        false,
-        false,
-        'sprint goal',
-      );
-      const grid = el('div', undefined, 'form-grid');
-      fields.append(grid);
-      field(grid, 'start', 'Start date', sprint.start, 'date').required = true;
-      field(grid, 'end', 'End date', sprint.end, 'date').required = true;
-      fields.append(
-        helpText(
-          'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
-        ),
-      );
-    },
-    (data) => {
-      const goal = String(data.get('goal') || '').trim();
-      if (!goal) throw new Error('Sprint goal is required.');
-      return {
-        kind: 'sprint.save',
-        target: sprint.id || '',
-        sprint: {
-          ...sprint,
-          name: data.get('name').trim(),
-          goal,
-          start: data.get('start'),
-          end: data.get('end'),
-        },
-      };
-    },
-  );
-}
-function closeSprint(sprint) {
-  const items = scopeItems(sprint);
-  const unfinished = items.filter((i) => !done(i));
-  openEditor(
-    'Close sprint & decide carry-over',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `${sprint.name}: ${items.length} items in scope; ${unfinished.length} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`,
-        ),
-      );
-      field(fields, 'destination', 'Also assign unfinished work to', '', 'text', [
-        ['', 'No additional sprint'],
-        ...state.board.sprints
-          .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
-          .map((s) => [s.id, s.name]),
-      ]);
-      fields.append(
-        helpText(
-          'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
-        ),
-      );
-      const reason = field(fields, 'reason', 'Closing decision / rationale', '', 'textarea');
-      reason.required = true;
-      reason.maxLength = 4000;
-    },
-    (data) => ({
-      kind: 'sprint.close',
-      target: sprint.id,
-      destination: data.get('destination'),
-      reason: data.get('reason').trim(),
-    }),
-  );
-  $('save').textContent = 'Close sprint';
-}
-function archiveSprint(sprint) {
-  openEditor(
-    'Archive sprint',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`,
-        ),
-      );
-      fields.append(
-        helpText(
-          'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
-        ),
-      );
-    },
-    () => ({ kind: 'sprint.archive', target: sprint.id }),
-  );
-  $('save').textContent = 'Archive sprint';
 }
 function editProject(project) {
   $('editor').close();
