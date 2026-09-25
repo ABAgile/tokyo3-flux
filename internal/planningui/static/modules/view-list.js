@@ -28,7 +28,7 @@ function listCell(label, className) {
 }
 function listTableHeader() {
   const header = el('div', undefined, 'list-table-head');
-  ['Title', 'Project', 'Assignee', 'Labels', 'Sprints', 'Links / Status'].forEach((label) =>
+  ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'].forEach((label) =>
     header.append(el('span', label, 'list-table-heading')),
   );
   return header;
