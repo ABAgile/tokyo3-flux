@@ -1,6 +1,8 @@
 package planningui
 
 import (
+	"bytes"
+	"io/fs"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -20,7 +22,8 @@ func TestNativeAssets(t *testing.T) {
 		}
 	}
 	for _, path := range []string{"/missing", "/static/", "/index.html",
-		"/modules/", "/modules/missing.js", "/modules/nested/dom.js", "/modules/../app.js", "/modules/dom.css"} {
+		"/modules/", "/modules/missing.js", "/modules/nested/dom.js", "/modules/../app.js", "/modules/dom.css",
+		"/styles/", "/styles/010-tokens.css"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 404 {
@@ -31,6 +34,32 @@ func TestNativeAssets(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest("POST", "/", nil))
 	if w.Code != 405 {
 		t.Fatal("write accepted")
+	}
+}
+
+func TestStylesheetJoinsFeatureFiles(t *testing.T) {
+	names, err := fs.Glob(files, "static/styles/*.css")
+	if err != nil || len(names) < 2 {
+		t.Fatalf("feature stylesheets: %v %v", names, err)
+	}
+	var want []byte
+	for _, name := range names { // Glob returns names in lexical order.
+		content, err := fs.ReadFile(files, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, content...)
+	}
+	w := httptest.NewRecorder()
+	Handler().ServeHTTP(w, httptest.NewRequest("GET", "/styles.css", nil))
+	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), want) {
+		t.Fatalf("/styles.css: %d, %d bytes, want the %d joined bytes", w.Code, w.Body.Len(), len(want))
+	}
+	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
+		t.Fatalf("/styles.css content type %q", got)
+	}
+	if !strings.HasPrefix(names[0], "static/styles/010-tokens") {
+		t.Fatalf("tokens must load first, got %s", names[0])
 	}
 }
 

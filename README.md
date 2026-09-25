@@ -472,16 +472,17 @@ export FLUX_TEST_DATABASE_URL='postgres://USER@127.0.0.1:5432/flux_test?sslmode=
 make check
 go test -race ./...
 make build
-node --check internal/planningui/static/app.js
-for m in internal/planningui/static/modules/*.js; do node --check "$m"; done
-node tests/extension.test.mjs
-node tests/date-format.test.mjs
 docker compose config -q
 ```
+
+`make check` ends with `make check-web test-web`: pinned Biome and rumdl checks, `node --check` for `app.js` and every module, and the Node tests.
+Run `make fmt-web lint-web` after JS/CSS edits and `make fmt-md` after Markdown edits; [AGENTS.md](AGENTS.md) lists the frontend conventions.
+The stylesheet is authored as ordered files under `internal/planningui/static/styles/` and served joined, in name order, as `/styles.css`.
 
 Use a disposable test DB; PostgreSQL tests skip without its URL.
 Browser scripts in `tests/` mutate disposable workspaces: planning/proposals require fresh seeded workspaces, drag-labels requires an empty workspace.
 Their workspace must be first for the test identity.
 Verify light/dark at 1440, 768 and 390px and keyboard access.
 `tests/gitlab_fixture.py` provides synthetic loopback observations; use `--evolving` for `background.browser.js`.
+`tests/style-snapshot.browser.js` returns a computed-style snapshot of the main views; diff two same-day runs saved outside the repository to confirm a refactor leaves the UI unchanged.
 Never run these scripts on team data.

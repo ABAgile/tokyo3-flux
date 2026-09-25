@@ -26,12 +26,23 @@ type asset struct {
 
 var assets = loadAssets()
 
+func newAsset(name string, content []byte) asset {
+	sum := sha256.Sum256(content)
+	return asset{content: content, etag: `"` + hex.EncodeToString(sum[:]) + `"`, name: name}
+}
+
+// loadAssets indexes the embedded files by URL path. The stylesheet is authored
+// as ordered feature files under static/styles/ and served as the single
+// /styles.css asset, joined in name order, so the page keeps one <link> and
+// the individual files are never reachable.
 func loadAssets() map[string]asset {
 	root, err := fs.Sub(files, "static")
 	if err != nil {
 		panic(err)
 	}
 	out := map[string]asset{}
+	var styles []byte
+	// WalkDir visits entries in lexical order, which fixes the join order.
 	err = fs.WalkDir(root, ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil || entry.IsDir() {
 			return walkErr
@@ -40,8 +51,11 @@ func loadAssets() map[string]asset {
 		if readErr != nil {
 			return readErr
 		}
-		sum := sha256.Sum256(content)
-		value := asset{content: content, etag: `"` + hex.EncodeToString(sum[:]) + `"`, name: path.Base(name)}
+		if path.Dir(name) == "styles" && path.Ext(name) == ".css" {
+			styles = append(styles, content...)
+			return nil
+		}
+		value := newAsset(path.Base(name), content)
 		out["/"+name] = value
 		if name == "index.html" {
 			out["/"] = value
@@ -51,6 +65,10 @@ func loadAssets() map[string]asset {
 	if err != nil {
 		panic(err)
 	}
+	if len(styles) == 0 {
+		panic("planningui: no stylesheets under static/styles")
+	}
+	out["/styles.css"] = newAsset("styles.css", styles)
 	return out
 }
 

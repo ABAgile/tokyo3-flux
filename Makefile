@@ -92,7 +92,7 @@ fmt-md:
 
 ## check-web: Verify frontend and Markdown formatting and lint without changes
 check-web:
-	$(BIOME) ci .
+	$(BIOME) ci --diagnostic-level=error .
 	$(RUMDL) check .
 
 ## test-web: Syntax-check browser modules and run the Node tests
