@@ -1,9 +1,8 @@
 import { $, el, button, options, field } from './modules/dom.js';
 import { api, apiRevalidated, requestKey } from './modules/api.js';
-import { workspaceLabel, workspaceHistoryLabel } from './modules/format.js';
+import { workspaceLabel } from './modules/format.js';
 import {
   contentRoot,
-  pageStack,
   panel,
   helpText,
   statusLine,
@@ -21,7 +20,7 @@ import {
 } from './modules/notices.js';
 import { activeSprints, styleLabelOptions } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
-import { memberName, memberListingInfo } from './modules/people.js';
+import { memberName } from './modules/people.js';
 import { patchNode } from './modules/reconcile.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import { planningHost, pageHost, setContentBusy } from './modules/mount.js';
@@ -81,6 +80,7 @@ import { renderProjects } from './modules/view-projects.js';
 import { renderLabels } from './modules/view-labels.js';
 import { renderMembers } from './modules/view-members.js';
 import { showProposals } from './modules/view-proposals.js';
+import { loadHistory, renderHistory } from './modules/view-history.js';
 // Late-bound calls from feature modules back into the shell.
 Object.assign(hooks, {
   chooseWorkspace,
@@ -679,16 +679,6 @@ function renderContent() {
     body.append(more);
   }
 }
-async function loadHistory(reset = false) {
-  const events = await api(
-    state.root +
-      '/history' +
-      (!reset && state.historyBefore ? `?before=${state.historyBefore}` : ''),
-  );
-  state.history = reset ? events : [...state.history, ...events];
-  state.historyBefore = events.at(-1)?.id || 0;
-  state.historyMore = events.length === 50;
-}
 function showWorkspaceSelection() {
   if (state.busy || state.loading) return;
   state.workspaceGate = 'select';
@@ -770,49 +760,6 @@ async function createWorkspace(event) {
     }
     renderControls();
   }
-}
-function historyActorLabel(subject) {
-  const member = state.board.members.find((candidate) => candidate.subject === subject);
-  const name = member
-    ? memberListingInfo(member).name
-    : subject === state.session?.subject
-      ? String(state.session.name || '').trim()
-      : '';
-  return name ? `${name} (${subject})` : subject;
-}
-function renderHistory(content) {
-  const page = pageStack('history');
-  const label = workspaceHistoryLabel(state.board.workspace);
-  page.append(el('p', label, 'muted'));
-  if (!state.history.length) page.append(emptyState('No planning changes yet.'));
-  const list = el('div', undefined, 'history-list');
-  state.history.forEach((e) => {
-    const row = el('article', undefined, 'history-row');
-    row.append(
-      el('strong', e.action.replaceAll('.', ' · ')),
-      el(
-        'p',
-        `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`,
-        'muted',
-      ),
-    );
-    if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id'));
-    if (e.reason) row.append(el('p', e.reason));
-    list.append(row);
-  });
-  if (list.childElementCount) page.append(list);
-  if (state.historyMore)
-    page.append(
-      button('Load older changes', async () => {
-        try {
-          await loadHistory();
-          renderContent();
-        } catch (e) {
-          notice(e.message, true);
-        }
-      }),
-    );
-  content.append(page);
 }
 $('editor').addEventListener('cancel', (e) => {
   e.preventDefault();
