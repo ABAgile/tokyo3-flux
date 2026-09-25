@@ -12,11 +12,6 @@ import {
 } from './modules/dom.js';
 import { api, apiRevalidated, apiUpload, requestKey } from './modules/api.js';
 import { itemPayloadFromForm } from './modules/item-command.js';
-// Board reads are revalidated against the copy already in memory, so a refresh
-// that finds nothing new transfers no payload. The ETag is scoped to the root
-// it was issued for and discarded whenever the workspace changes.
-let boardETag = '',
-  boardETagRoot = '';
 import {
   initials,
   attachmentSize,
@@ -51,63 +46,11 @@ import {
   maintenanceList,
   maintenanceRow,
 } from './modules/layout.js';
+import { state } from './modules/state.js';
 
-let session,
-  workspaces = [],
-  board,
-  root,
-  view = 'board',
-  presentation = 'board',
-  busy = false,
-  loading = false,
-  planningChangeNotice = false,
-  overdueTimer;
-let workspaceGate = 'loading',
-  workspaceCreating = false,
-  workspaceCreateKey = '',
-  workspaceCreateName = '',
-  membershipPoll = false;
-let pendingPlanningURLState;
-let projectSearch = '';
 // The Projects bar uses the same multi-value filter rules as the planning bar.
 const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
 const projectFilters = { assignee: new Set(), label: new Set() };
-let selectedItemID = '',
-  detailPane,
-  detailState;
-// The open card is URL state: `item` names the card whose details are on
-// screen, so the address bar is always a shareable link to the current card.
-let sharedItemID = '',
-  sharedItemSync = false,
-  editorItemID = '';
-let attachmentTooltip, attachmentTooltipTarget, observationTooltipTarget;
-let history = [],
-  historyBefore = 0,
-  historyMore = false,
-  loadGeneration = 0;
-// Archived work is paged from its own endpoint; the board payload carries only
-// the live working set plus archived items still referenced by scope or dependencies.
-let archiveItems = [],
-  archiveOffset = 0,
-  archiveMore = false;
-let sprintHistory = [],
-  sprintHistoryOffset = 0,
-  sprintHistoryMore = false,
-  sprintHistoryError = '';
-let bulkSelection = new Set(),
-  undoOffer,
-  undoTimer;
-let integrationFormOpen = false,
-  integrationCatalog = [],
-  integrationCatalogLoaded = false,
-  integrationCatalogError = '',
-  integrationCatalogLoading = false,
-  integrationCatalogRequest = 0;
-let burndownData = new Map(),
-  burndownRequests = new Map(),
-  burndownErrors = new Map(),
-  burndownExpanded = new Set(),
-  burndownGeneration = 0;
 const sprintGoalLayouts = new Map();
 const sprintGoalResizeObserver = new ResizeObserver(() => {
   for (const [content, update] of sprintGoalLayouts) {
@@ -127,12 +70,6 @@ const filters = { project: new Set(), assignee: new Set(), label: new Set() };
 // once per keystroke, and each item's searchable text is memoized per revision.
 const SEARCH_DEBOUNCE_MS = 150;
 const searchIndex = new WeakMap();
-let searchQuery = '',
-  searchDebounce,
-  searchIndexGeneration = 0;
-let noticeText = '',
-  errorText = '',
-  shortcutChord = 0;
 const theme =
   localStorage.getItem('flux-plan-theme') ||
   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -226,41 +163,46 @@ function actionIconButton(label, icon, fn, className) {
 function writeIconButton(label, icon, fn, className) {
   const b = actionIconButton(label, icon, fn, className);
   b.dataset.write = 'true';
-  b.disabled = !writable() || integrationFormOpen;
+  b.disabled = !writable() || state.integrationFormOpen;
   return b;
 }
 function adminIconButton(label, icon, fn, className) {
   const b = actionIconButton(label, icon, fn, className);
   b.dataset.adminWrite = 'true';
-  b.disabled = !adminWritable() || integrationFormOpen;
+  b.disabled = !adminWritable() || state.integrationFormOpen;
   return b;
 }
 function writable() {
-  return board && board.role !== 'viewer' && !busy && !loading;
+  return state.board && state.board.role !== 'viewer' && !state.busy && !state.loading;
 }
 function adminWritable() {
-  return board && board.role === 'admin' && !busy && !loading;
+  return state.board && state.board.role === 'admin' && !state.busy && !state.loading;
 }
 function gitLabWritable() {
   return (
     writable() &&
-    !!board.connector_instance &&
-    board.connector_instance === board.integration.instance &&
-    !!board.integration.projects.length
+    !!state.board.connector_instance &&
+    state.board.connector_instance === state.board.integration.instance &&
+    !!state.board.integration.projects.length
   );
 }
 function canComment() {
-  return board && (board.role === 'member' || board.role === 'admin') && !busy && !loading;
+  return (
+    state.board &&
+    (state.board.role === 'member' || state.board.role === 'admin') &&
+    !state.busy &&
+    !state.loading
+  );
 }
 function writeButton(text, fn, className) {
   const b = button(text, fn, className);
-  b.disabled = !writable() || integrationFormOpen;
+  b.disabled = !writable() || state.integrationFormOpen;
   return b;
 }
 function adminButton(text, fn, className) {
   const b = button(text, fn, className);
   b.dataset.adminWrite = 'true';
-  b.disabled = !adminWritable() || integrationFormOpen;
+  b.disabled = !adminWritable() || state.integrationFormOpen;
   return b;
 }
 // `#content` has exactly two mounts: the persistent planning frame — project
@@ -290,16 +232,13 @@ function mountPage(showPageRoot, keepView) {
   $('planning-frame').hidden = showPageRoot;
   host.hidden = !showPageRoot;
   discarded.forEach((node) => node.remove());
-  setContentBusy(contentBusy);
+  setContentBusy(state.contentBusy);
 }
-// The busy flag belongs to the region that is actually rebuilt, so the filter
-// bar and the summaries above it stay available while work loads.
-let contentBusy = true;
 function setContentBusy(value) {
-  contentBusy = !!value;
+  state.contentBusy = !!value;
   const region = $('planning-frame').hidden ? $('page-root') : $('planning-body');
   ($('page-root') === region ? $('planning-body') : $('page-root')).removeAttribute('aria-busy');
-  region.setAttribute('aria-busy', String(contentBusy));
+  region.setAttribute('aria-busy', String(state.contentBusy));
 }
 // Transient progress and errors are separate surfaces. `#notice` is a polite
 // status line that is only written when its text actually changes, so screen
@@ -311,20 +250,20 @@ function notice(text, error = false) {
 }
 function setStatus(text) {
   const value = String(text || '');
-  if (value === noticeText) return;
-  noticeText = value;
+  if (value === state.noticeText) return;
+  state.noticeText = value;
   $('notice').textContent = value;
 }
 function showError(text) {
   const value = String(text || '');
-  if (value === errorText && !$('error-bar').hidden) return;
-  errorText = value;
+  if (value === state.errorText && !$('error-bar').hidden) return;
+  state.errorText = value;
   $('error-text').textContent = value;
   $('error-bar').hidden = !value;
 }
 function clearError() {
-  if (!errorText && $('error-bar').hidden) return;
-  errorText = '';
+  if (!state.errorText && $('error-bar').hidden) return;
+  state.errorText = '';
   $('error-text').textContent = '';
   $('error-bar').hidden = true;
 }
@@ -412,7 +351,7 @@ function filterChipNodes(group, names, onChange, { clearLabel = 'Clear filters' 
         'filter-chip-remove',
       );
       remove.setAttribute('aria-label', `Remove ${name} filter ${text}`);
-      remove.disabled = busy || loading;
+      remove.disabled = state.busy || state.loading;
       chip.append(remove);
       chips.push(chip);
     });
@@ -426,7 +365,7 @@ function filterChipNodes(group, names, onChange, { clearLabel = 'Clear filters' 
       },
       'filter-chip-clear',
     );
-    clear.disabled = busy || loading;
+    clear.disabled = state.busy || state.loading;
     chips.push(clear);
   }
   return chips;
@@ -439,14 +378,18 @@ function filterSummaryText(name) {
 }
 function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') {
   const banner = $('planning-change');
-  if (planningChangeNotice && !banner.hidden && $('planning-change-text').textContent === text)
+  if (
+    state.planningChangeNotice &&
+    !banner.hidden &&
+    $('planning-change-text').textContent === text
+  )
     return;
-  planningChangeNotice = true;
+  state.planningChangeNotice = true;
   $('planning-change-text').textContent = text;
   banner.hidden = false;
 }
 function clearPlanningChangeNotice() {
-  planningChangeNotice = false;
+  state.planningChangeNotice = false;
   $('planning-change').hidden = true;
 }
 function workspaceURLState() {
@@ -466,8 +409,8 @@ function persistWorkspaceURL(id) {
   else {
     url.searchParams.delete('workspace');
     url.searchParams.delete('item');
-    sharedItemID = '';
-    editorItemID = '';
+    state.sharedItemID = '';
+    state.editorItemID = '';
     localStorage.removeItem('flux-plan-workspace');
   }
   window.history.replaceState(null, '', url);
@@ -493,12 +436,12 @@ function workspaceListSignature(list) {
   );
 }
 function updateWorkspaceOptions(selected = '') {
-  const signature = workspaceListSignature(workspaces);
+  const signature = workspaceListSignature(state.workspaces);
   const select = $('workspace');
   if (select.dataset.signature === signature && select.value === selected) return;
   options(
     select,
-    workspaces.map((workspace) => [workspace.id, workspaceLabel(workspace)]),
+    state.workspaces.map((workspace) => [workspace.id, workspaceLabel(workspace)]),
     selected,
   );
   select.dataset.signature = signature;
@@ -506,9 +449,9 @@ function updateWorkspaceOptions(selected = '') {
 async function loadWorkspaces(selected = '') {
   const next = await api('/api/v2/workspaces');
   if (!validWorkspaceList(next)) throw new Error('Workspace list is invalid. Refresh to retry.');
-  workspaces = next;
+  state.workspaces = next;
   updateWorkspaceOptions(
-    selected && workspaces.some((workspace) => workspace.id === selected) ? selected : '',
+    selected && state.workspaces.some((workspace) => workspace.id === selected) ? selected : '',
   );
   return next;
 }
@@ -531,12 +474,12 @@ function filterURLValue(name) {
   return values.length ? values.join(',') : 'all';
 }
 function persistPlanningURL({ push = false } = {}) {
-  if (!board) return;
+  if (!state.board) return;
   const url = new URL(window.location.href);
-  url.searchParams.set('mode', presentation);
+  url.searchParams.set('mode', state.presentation);
   FILTER_NAMES.forEach((name) => url.searchParams.set(name, filterURLValue(name)));
   url.searchParams.set('scope', $('scope').value || 'active');
-  if (sharedItemID) url.searchParams.set('item', sharedItemID);
+  if (state.sharedItemID) url.searchParams.set('item', state.sharedItemID);
   else url.searchParams.delete('item');
   if (url.href === window.location.href) return;
   if (push) window.history.pushState(null, '', url);
@@ -548,13 +491,13 @@ function persistPlanningURL({ push = false } = {}) {
 // coalesced into one entry so Back does not stop at an intermediate state.
 function setSharedItem(id) {
   const next = String(id || '');
-  if (next === sharedItemID) return;
-  sharedItemID = next;
-  if (sharedItemSync) return;
-  sharedItemSync = true;
+  if (next === state.sharedItemID) return;
+  state.sharedItemID = next;
+  if (state.sharedItemSync) return;
+  state.sharedItemSync = true;
   queueMicrotask(() => {
-    sharedItemSync = false;
-    if ((new URL(window.location.href).searchParams.get('item') || '') !== sharedItemID)
+    state.sharedItemSync = false;
+    if ((new URL(window.location.href).searchParams.get('item') || '') !== state.sharedItemID)
       persistPlanningURL({ push: true });
   });
 }
@@ -565,7 +508,7 @@ function cardShareURL(itemID) {
   const url = new URL(window.location.href);
   url.hash = '';
   url.search = '';
-  url.searchParams.set('workspace', board.workspace.id);
+  url.searchParams.set('workspace', state.board.workspace.id);
   url.searchParams.set('item', itemID);
   return url.href;
 }
@@ -604,31 +547,32 @@ async function copyCardLink(item, control) {
 // read, which answers for archived cards too. Archive pages are never walked:
 // the card is found by identity regardless of how much history exists.
 async function resolveSharedItem(itemID) {
-  const local = board.items.find((value) => value.id === itemID);
+  const local = state.board.items.find((value) => value.id === itemID);
   if (local) return local;
-  const current = board,
-    path = root;
+  const current = state.board,
+    path = state.root;
   let response;
   try {
     response = await api(`${path}/items/${encodeURIComponent(itemID)}`);
   } catch {
     return undefined;
   }
-  if (board !== current || root !== path) return undefined;
+  if (state.board !== current || state.root !== path) return undefined;
   return response?.item?.id === itemID ? response.item : undefined;
 }
 async function openSharedItem(itemID) {
-  if (!board || !itemID) return false;
-  if (detailState?.itemID === itemID || (editorItemID === itemID && $('editor').open)) return true;
+  if (!state.board || !itemID) return false;
+  if (state.detailState?.itemID === itemID || (state.editorItemID === itemID && $('editor').open))
+    return true;
   const item = await resolveSharedItem(itemID);
   if (!item) {
     setSharedItem('');
     notice('Card not found or no longer available.', true);
     return false;
   }
-  if (view === 'board' && presentation === 'list' && detailPane) {
+  if (state.view === 'board' && state.presentation === 'list' && state.detailPane) {
     if (!closeDetail({ focus: false })) return false;
-    selectedItemID = item.id;
+    state.selectedItemID = item.id;
     openItemDetail(item);
   } else editItemModal(item);
   return true;
@@ -639,19 +583,19 @@ async function openSharedItem(itemID) {
 async function applyHistoryNavigation() {
   const urlState = planningURLState();
   const workspace = workspaceURLState();
-  if (board && workspace && workspace !== board.workspace.id) {
-    pendingPlanningURLState = urlState;
+  if (state.board && workspace && workspace !== state.board.workspace.id) {
+    state.pendingPlanningURLState = urlState;
     await chooseWorkspace(workspace);
     return;
   }
-  if (!board) return;
+  if (!state.board) return;
   const target = String(urlState.item || '');
-  if (detailState && detailState.itemID !== target && !closeDetail({ focus: false })) {
-    sharedItemID = detailState.itemID;
+  if (state.detailState && state.detailState.itemID !== target && !closeDetail({ focus: false })) {
+    state.sharedItemID = state.detailState.itemID;
     persistPlanningURL();
     return;
   }
-  if ($('editor').open && editorItemID !== target && !busy) closeEditor();
+  if ($('editor').open && state.editorItemID !== target && !state.busy) closeEditor();
   applyPlanningURLState(urlState);
 }
 window.addEventListener('popstate', () => {
@@ -659,12 +603,12 @@ window.addEventListener('popstate', () => {
 });
 function knownFilterValue(name, value) {
   if (value === 'none') return true;
-  if (name === 'project') return board.projects.some((project) => project.id === value);
-  if (name === 'assignee') return board.members.some((member) => member.subject === value);
-  return board.labels.some((label) => label.name === value);
+  if (name === 'project') return state.board.projects.some((project) => project.id === value);
+  if (name === 'assignee') return state.board.members.some((member) => member.subject === value);
+  return state.board.labels.some((label) => label.name === value);
 }
 function applyPlanningURLState(urlState = planningURLState()) {
-  if (!board) return;
+  if (!state.board) return;
   FILTER_NAMES.forEach((name) =>
     setFilterValues(
       name,
@@ -675,7 +619,7 @@ function applyPlanningURLState(urlState = planningURLState()) {
     ),
   );
   const project = singleFilterValue('project');
-  presentation =
+  state.presentation =
     urlState.mode === 'list' || (!urlState.mode && project !== 'all' && project !== 'none')
       ? 'list'
       : 'board';
@@ -683,7 +627,7 @@ function applyPlanningURLState(urlState = planningURLState()) {
   const validScope =
     requestedScope &&
     (['active', 'backlog', 'all'].includes(requestedScope) ||
-      board.sprints.some((value) => value.id === requestedScope));
+      state.board.sprints.some((value) => value.id === requestedScope));
   $('scope').value = validScope
     ? requestedScope
     : project !== 'all' && project !== 'none'
@@ -691,12 +635,12 @@ function applyPlanningURLState(urlState = planningURLState()) {
       : 'active';
   // The requested card is kept in the URL while it resolves, so a reload of a
   // shared link never drops the card it names before the details open.
-  sharedItemID = String(urlState.item || '');
+  state.sharedItemID = String(urlState.item || '');
   render();
   persistPlanningURL();
-  if (sharedItemID) void openSharedItem(sharedItemID);
+  if (state.sharedItemID) void openSharedItem(state.sharedItemID);
 }
-pendingPlanningURLState = planningURLState();
+state.pendingPlanningURLState = planningURLState();
 function mergeEntities(previous = [], next = [], key) {
   const existing = new Map(previous.map((value) => [key(value), value]));
   return next.map((value) => {
@@ -739,8 +683,8 @@ function captureUIState() {
   const scrollNodes = [
     document.querySelector('main'),
     $('content'),
-    detailPane,
-    detailState?.form?.querySelector('.item-detail-fields'),
+    state.detailPane,
+    state.detailState?.form?.querySelector('.item-detail-fields'),
     $('editor'),
     $('editor-form')?.querySelector('#fields'),
   ].filter((node, index, values) => node && values.indexOf(node) === index);
@@ -798,41 +742,41 @@ function restoreUIState(state) {
   }
 }
 function resetBurndown() {
-  burndownGeneration++;
-  burndownData.clear();
-  burndownRequests.clear();
-  burndownErrors.clear();
+  state.burndownGeneration++;
+  state.burndownData.clear();
+  state.burndownRequests.clear();
+  state.burndownErrors.clear();
 }
 function enterWorkspaceGate(mode, message) {
-  if (detailState) closeDetail({ force: true, focus: false });
-  if ($('editor').open && !busy) closeEditor();
+  if (state.detailState) closeDetail({ force: true, focus: false });
+  if ($('editor').open && !state.busy) closeEditor();
   clearUndo();
-  bulkSelection.clear();
-  board = undefined;
-  root = undefined;
-  boardETag = '';
-  boardETagRoot = '';
+  state.bulkSelection.clear();
+  state.board = undefined;
+  state.root = undefined;
+  state.boardETag = '';
+  state.boardETagRoot = '';
   resetSprintHistory();
-  workspaceGate = mode;
-  pendingPlanningURLState = undefined;
+  state.workspaceGate = mode;
+  state.pendingPlanningURLState = undefined;
   persistWorkspaceURL('');
   if (message) notice(message);
   render();
 }
 async function refreshWorkspaceGate() {
-  if (busy || loading || integrationFormOpen) return false;
-  const generation = ++loadGeneration;
-  loading = true;
+  if (state.busy || state.loading || state.integrationFormOpen) return false;
+  const generation = ++state.loadGeneration;
+  state.loading = true;
   renderControls();
   setContentBusy(true);
   try {
     const next = await loadWorkspaces('');
-    if (generation !== loadGeneration) return false;
+    if (generation !== state.loadGeneration) return false;
     if (next.length === 1) {
-      loading = false;
+      state.loading = false;
       return await chooseWorkspace(next[0].id);
     }
-    workspaceGate = next.length ? 'select' : 'create';
+    state.workspaceGate = next.length ? 'select' : 'create';
     if (!next.length) persistWorkspaceURL('');
     notice(
       next.length
@@ -841,11 +785,11 @@ async function refreshWorkspaceGate() {
     );
     return true;
   } catch (e) {
-    if (generation === loadGeneration) notice(e.message, true);
+    if (generation === state.loadGeneration) notice(e.message, true);
     return false;
   } finally {
-    if (generation === loadGeneration) {
-      loading = false;
+    if (generation === state.loadGeneration) {
+      state.loading = false;
       render();
     }
   }
@@ -854,17 +798,17 @@ async function refreshWorkspaceGate() {
 // applied without a second board read. Membership is still reloaded, because a
 // change receipt says nothing about workspace access.
 async function refresh(preloaded) {
-  if (busy || integrationFormOpen) return false;
-  if (!root) return refreshWorkspaceGate();
-  const generation = ++loadGeneration;
+  if (state.busy || state.integrationFormOpen) return false;
+  if (!state.root) return refreshWorkspaceGate();
+  const generation = ++state.loadGeneration;
   let uiState;
-  loading = true;
+  state.loading = true;
   renderControls();
   setContentBusy(true);
   try {
-    const selectedID = board?.workspace?.id || $('workspace').value;
+    const selectedID = state.board?.workspace?.id || $('workspace').value;
     const memberships = await loadWorkspaces(selectedID);
-    if (generation !== loadGeneration) return false;
+    if (generation !== state.loadGeneration) return false;
     if (!selectedID || !memberships.some((workspace) => workspace.id === selectedID)) {
       enterWorkspaceGate(
         memberships.length ? 'select' : 'create',
@@ -874,14 +818,14 @@ async function refresh(preloaded) {
       );
       return false;
     }
-    const cached = board && boardETagRoot === root ? boardETag : '';
+    const cached = state.board && state.boardETagRoot === state.root ? state.boardETag : '';
     const response =
       preloaded?.board?.workspace?.id === selectedID
         ? { modified: true, etag: preloaded.etag, data: preloaded.board }
-        : await apiRevalidated(root + '/board', cached);
-    if (generation !== loadGeneration) return false;
-    boardETag = response.etag;
-    boardETagRoot = root;
+        : await apiRevalidated(state.root + '/board', cached);
+    if (generation !== state.loadGeneration) return false;
+    state.boardETag = response.etag;
+    state.boardETagRoot = state.root;
     // The revision belongs in the non-live count, not in the polite status line:
     // repeating it on every poll would re-announce an unchanged board.
     if (!response.modified) {
@@ -892,33 +836,33 @@ async function refresh(preloaded) {
     }
     const next = response.data;
     uiState = captureUIState();
-    board = mergeBoardData(board, next);
-    searchIndexGeneration++;
-    workspaceGate = '';
-    persistWorkspaceURL(board.workspace.id);
+    state.board = mergeBoardData(state.board, next);
+    state.searchIndexGeneration++;
+    state.workspaceGate = '';
+    persistWorkspaceURL(state.board.workspace.id);
     clearPlanningChangeNotice();
     clearError();
     resetBurndown();
-    history = [];
-    historyBefore = 0;
+    state.history = [];
+    state.historyBefore = 0;
     resetArchive();
     resetSprintHistory();
-    observationDigest = '';
-    observationReadAt = 0;
-    if (view === 'history') await loadHistory(true);
-    if (view === 'archive') await loadArchive(true);
-    if (view === 'sprints') await loadSprintHistory(true);
+    state.observationDigest = '';
+    state.observationReadAt = 0;
+    if (state.view === 'history') await loadHistory(true);
+    if (state.view === 'archive') await loadArchive(true);
+    if (state.view === 'sprints') await loadSprintHistory(true);
     notice('Up to date.');
     return true;
   } catch (e) {
-    if (generation === loadGeneration) notice(e.message, true);
+    if (generation === state.loadGeneration) notice(e.message, true);
     return false;
   } finally {
-    if (generation === loadGeneration) {
-      loading = false;
+    if (generation === state.loadGeneration) {
+      state.loading = false;
       render();
       restoreUIState(uiState || captureUIState());
-      if (!burndownRequests.size) setContentBusy(false);
+      if (!state.burndownRequests.size) setContentBusy(false);
     }
   }
 }
@@ -928,11 +872,11 @@ async function refresh(preloaded) {
 function postChange(command, key = requestKey(), minimal = false) {
   const headers = {
     'Content-Type': 'application/json',
-    'X-CSRF-Token': session.csrf,
+    'X-CSRF-Token': state.session.csrf,
     'Idempotency-Key': key,
   };
   if (minimal) headers.Prefer = 'return=minimal';
-  return api(root + '/changes', { method: 'POST', headers, body: JSON.stringify(command) });
+  return api(state.root + '/changes', { method: 'POST', headers, body: JSON.stringify(command) });
 }
 function preloadedBoard(receipt) {
   return receipt?.board && typeof receipt.board_etag === 'string' && receipt.board_etag
@@ -950,14 +894,14 @@ function receiptRevision(receipt, fallback) {
 }
 async function change(command, key = requestKey()) {
   if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
-  busy = true;
+  state.busy = true;
   renderControls();
   notice('Saving changes…');
   let receipt;
   try {
     receipt = await postChange(command, key);
   } finally {
-    busy = false;
+    state.busy = false;
     renderControls();
   }
   const refreshed = await refresh(preloadedBoard(receipt));
@@ -975,18 +919,19 @@ async function change(command, key = requestKey()) {
 // the exact previous placement rather than left silently applied.
 const OPTIMISTIC_KINDS = new Set(['item.move', 'item.rank', 'item.archive', 'item.restore']);
 function optimisticApply(command) {
-  if (!board || !OPTIMISTIC_KINDS.has(command.kind)) return undefined;
+  if (!state.board || !OPTIMISTIC_KINDS.has(command.kind)) return undefined;
   if (command.kind === 'item.archive' || command.kind === 'item.restore') {
-    const source = command.kind === 'item.archive' ? board.items : archiveItems;
+    const source = command.kind === 'item.archive' ? state.board.items : state.archiveItems;
     const index = source.findIndex((value) => value.id === command.target);
     if (index < 0) return undefined;
     const [removed] = source.splice(index, 1);
     return () => {
-      if (source !== (command.kind === 'item.archive' ? board?.items : archiveItems)) return;
+      if (source !== (command.kind === 'item.archive' ? state.board?.items : state.archiveItems))
+        return;
       source.splice(index, 0, removed);
     };
   }
-  const items = board.items;
+  const items = state.board.items;
   const index = items.findIndex((value) => value.id === command.target);
   if (index < 0) return undefined;
   const item = items[index];
@@ -994,7 +939,7 @@ function optimisticApply(command) {
   const ranks = items.map((value) => value.rank);
   if (
     command.kind === 'item.move' &&
-    !board.columns.some((value) => value.id === command.destination)
+    !state.board.columns.some((value) => value.id === command.destination)
   )
     return undefined;
   items.splice(index, 1);
@@ -1012,7 +957,7 @@ function optimisticApply(command) {
     value.rank = rank;
   });
   return () => {
-    if (items !== board?.items) return;
+    if (items !== state.board?.items) return;
     items.splice(at, 1);
     items.splice(index, 0, item);
     item.column_id = column;
@@ -1023,9 +968,9 @@ function optimisticApply(command) {
 }
 const UNDO_TTL = 10000;
 function clearUndo() {
-  if (undoTimer) clearTimeout(undoTimer);
-  undoTimer = undefined;
-  undoOffer = undefined;
+  if (state.undoTimer) clearTimeout(state.undoTimer);
+  state.undoTimer = undefined;
+  state.undoOffer = undefined;
   $('undo-bar').hidden = true;
   $('undo-text').textContent = '';
 }
@@ -1033,11 +978,11 @@ function offerUndo(text, commands) {
   const list = (Array.isArray(commands) ? commands : [commands]).filter(Boolean);
   clearUndo();
   if (!list.length) return;
-  undoOffer = list;
+  state.undoOffer = list;
   $('undo-text').textContent = text;
   $('undo').disabled = !writable();
   $('undo-bar').hidden = false;
-  undoTimer = setTimeout(clearUndo, UNDO_TTL);
+  state.undoTimer = setTimeout(clearUndo, UNDO_TTL);
 }
 function itemTitle(id) {
   return findItem(id)?.title || 'work item';
@@ -1066,9 +1011,9 @@ function undoableInverse(command) {
       };
     case 'item.move':
     case 'item.rank': {
-      const index = board.items.findIndex((value) => value.id === command.target);
+      const index = state.board.items.findIndex((value) => value.id === command.target);
       if (index < 0) return undefined;
-      const item = board.items[index];
+      const item = state.board.items[index];
       return {
         text: `Moved “${item.title}”`,
         commands: [
@@ -1076,7 +1021,7 @@ function undoableInverse(command) {
             kind: 'item.move',
             target: item.id,
             destination: item.column_id,
-            before: board.items[index + 1]?.id || '',
+            before: state.board.items[index + 1]?.id || '',
           },
         ],
       };
@@ -1086,10 +1031,10 @@ function undoableInverse(command) {
   }
 }
 async function quick(command) {
-  const full = { revision: board.workspace.revision, ...command };
+  const full = { revision: state.board.workspace.revision, ...command };
   const allowed = writable();
   const undo = allowed ? undoableInverse(full) : undefined;
-  const currentBoard = board;
+  const currentBoard = state.board;
   const rollback = allowed ? optimisticApply(full) : undefined;
   if (rollback) render();
   try {
@@ -1097,7 +1042,7 @@ async function quick(command) {
     if (undo)
       offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
   } catch (e) {
-    if (rollback && board === currentBoard) rollback();
+    if (rollback && state.board === currentBoard) rollback();
     notice(e.message, true);
     render();
   }
@@ -1116,11 +1061,11 @@ async function runSequence(label, commands) {
     notice('Nothing to apply for the current selection.');
     return true;
   }
-  let revision = board.workspace.revision,
+  let revision = state.board.workspace.revision,
     receipt,
     applied = 0,
     failure = '';
-  busy = true;
+  state.busy = true;
   renderControls();
   try {
     for (const [index, command] of commands.entries()) {
@@ -1139,7 +1084,7 @@ async function runSequence(label, commands) {
       }
     }
   } finally {
-    busy = false;
+    state.busy = false;
     renderControls();
   }
   const refreshed = await refresh(preloadedBoard(receipt));
@@ -1153,7 +1098,7 @@ async function runSequence(label, commands) {
   return !failure;
 }
 function bulkTargets() {
-  return [...bulkSelection].map(findItem).filter((item) => item && !item.archived);
+  return [...state.bulkSelection].map(findItem).filter((item) => item && !item.archived);
 }
 function bulkItemUpdate(item, patch) {
   return {
@@ -1170,13 +1115,13 @@ async function runBulk(label, plan, undoFor) {
   }
   const commands = targets.map(plan).filter(Boolean);
   const undo = undoFor?.(targets);
-  bulkSelection.clear();
+  state.bulkSelection.clear();
   const ok = await runSequence(label, commands);
   if (ok && commands.length && undo)
     offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
 }
 function openBulkDialog(title, saveText, build, plan, label, undoFor) {
-  editorReturn = undefined;
+  state.editorReturn = undefined;
   $('editor-title').textContent = title;
   $('editor-form').classList.remove('item-editor-form');
   $('editor-form')
@@ -1190,7 +1135,7 @@ function openBulkDialog(title, saveText, build, plan, label, undoFor) {
   build($('fields'));
   $('editor-form').onsubmit = async (event) => {
     event.preventDefault();
-    if (busy) return;
+    if (state.busy) return;
     $('form-error').textContent = '';
     let apply;
     try {
@@ -1217,7 +1162,7 @@ function bulkAssign() {
       );
       field(fields, 'assignee', 'Assignee', '', 'text', [
         ['', 'Unassigned'],
-        ...board.members.map((member) => [member.subject, memberName(member.subject)]),
+        ...state.board.members.map((member) => [member.subject, memberName(member.subject)]),
       ]);
     },
     (data) => {
@@ -1229,7 +1174,7 @@ function bulkAssign() {
   );
 }
 function bulkSprint() {
-  const open = board.sprints.filter((sprint) => sprint.state !== 'closed');
+  const open = state.board.sprints.filter((sprint) => sprint.state !== 'closed');
   const count = bulkTargets().length;
   openBulkDialog(
     'Add selected work to a sprint',
@@ -1271,7 +1216,7 @@ function bulkLabel() {
     'Add a label to selected work',
     'Add label',
     (fields) => {
-      if (!board.labels.length) {
+      if (!state.board.labels.length) {
         fields.append(emptyState('No workspace label exists yet. Create one in the Labels view.'));
         $('save').hidden = true;
         return;
@@ -1286,15 +1231,15 @@ function bulkLabel() {
           fields,
           'label',
           'Label',
-          board.labels[0].name,
+          state.board.labels[0].name,
           'text',
-          board.labels.map((label) => [label.name, label.name]),
+          state.board.labels.map((label) => [label.name, label.name]),
         ),
       );
     },
     (data) => {
       const label = String(data.get('label') || '');
-      if (!board.labels.some((value) => value.name === label))
+      if (!state.board.labels.some((value) => value.name === label))
         throw new Error('Choose a workspace label.');
       return (item) =>
         item.labels.includes(label)
@@ -1338,14 +1283,14 @@ function bulkSelectableIDs(items) {
 }
 function pruneBulkSelection(items) {
   const selectable = new Set(bulkSelectableIDs(items));
-  bulkSelection.forEach((id) => {
-    if (!selectable.has(id)) bulkSelection.delete(id);
+  state.bulkSelection.forEach((id) => {
+    if (!selectable.has(id)) state.bulkSelection.delete(id);
   });
 }
 function renderBulkBar(bar, items) {
   if (!bar) return;
   const ids = bulkSelectableIDs(items);
-  if (!bulkSelection.size || board.role === 'viewer') {
+  if (!state.bulkSelection.size || state.board.role === 'viewer') {
     bar.hidden = true;
     bar.replaceChildren();
     return;
@@ -1357,22 +1302,22 @@ function renderBulkBar(bar, items) {
     writeButton('Add label…', bulkLabel),
     writeButton('Archive…', bulkArchive, 'danger'),
   );
-  if (bulkSelection.size < ids.length)
+  if (state.bulkSelection.size < ids.length)
     actions.append(
       button(`Select all ${ids.length} shown`, () => {
-        ids.forEach((id) => bulkSelection.add(id));
+        ids.forEach((id) => state.bulkSelection.add(id));
         renderContent();
       }),
     );
   actions.append(
     button('Clear selection', () => {
-      bulkSelection.clear();
+      state.bulkSelection.clear();
       renderContent();
     }),
   );
   bar.hidden = false;
   bar.replaceChildren(
-    el('span', `${bulkSelection.size} of ${ids.length} shown selected`, 'bulk-count'),
+    el('span', `${state.bulkSelection.size} of ${ids.length} shown selected`, 'bulk-count'),
     actions,
   );
 }
@@ -1382,10 +1327,10 @@ function refreshBulkBar() {
 }
 function renderControls() {
   document.querySelectorAll('[data-write]').forEach((b) => {
-    b.disabled = !writable() || integrationFormOpen;
+    b.disabled = !writable() || state.integrationFormOpen;
   });
   document.querySelectorAll('[data-admin-write]').forEach((b) => {
-    b.disabled = !adminWritable() || integrationFormOpen;
+    b.disabled = !adminWritable() || state.integrationFormOpen;
   });
   document.querySelectorAll('[data-gitlab-write]').forEach((b) => {
     b.disabled = !gitLabWritable();
@@ -1398,31 +1343,33 @@ function renderControls() {
     e.draggable = writable() && !item?.archived;
   });
   document.querySelectorAll('[data-view]').forEach((b) => {
-    b.disabled = busy || loading || integrationFormOpen;
+    b.disabled = state.busy || state.loading || state.integrationFormOpen;
   });
-  $('presentation-toggle').hidden = !board || view !== 'board';
-  $('presentation-board').disabled = !board || busy || loading || integrationFormOpen;
-  $('presentation-list').disabled = !board || busy || loading || integrationFormOpen;
-  $('presentation-board').setAttribute('aria-pressed', String(presentation === 'board'));
-  $('presentation-list').setAttribute('aria-pressed', String(presentation === 'list'));
-  $('refresh').disabled = busy || loading || integrationFormOpen;
-  $('planning-refresh').disabled = busy || loading || integrationFormOpen;
-  $('new-workspace').disabled = !session || busy || loading || integrationFormOpen;
-  $('workspace-field').hidden = !board && workspaceGate !== 'loading';
-  $('workspace').disabled = !board || busy || loading || integrationFormOpen;
-  document.querySelector('nav').hidden = !board;
-  document.querySelector('.heading .actions').hidden = !board;
-  $('planning-filters').hidden = !board;
-  $('project').disabled = !board || busy || loading;
-  $('assignee').disabled = !board || busy || loading;
-  $('label').disabled = !board || busy || loading;
+  $('presentation-toggle').hidden = !state.board || state.view !== 'board';
+  $('presentation-board').disabled =
+    !state.board || state.busy || state.loading || state.integrationFormOpen;
+  $('presentation-list').disabled =
+    !state.board || state.busy || state.loading || state.integrationFormOpen;
+  $('presentation-board').setAttribute('aria-pressed', String(state.presentation === 'board'));
+  $('presentation-list').setAttribute('aria-pressed', String(state.presentation === 'list'));
+  $('refresh').disabled = state.busy || state.loading || state.integrationFormOpen;
+  $('planning-refresh').disabled = state.busy || state.loading || state.integrationFormOpen;
+  $('new-workspace').disabled =
+    !state.session || state.busy || state.loading || state.integrationFormOpen;
+  $('workspace-field').hidden = !state.board && state.workspaceGate !== 'loading';
+  $('workspace').disabled =
+    !state.board || state.busy || state.loading || state.integrationFormOpen;
+  document.querySelector('nav').hidden = !state.board;
+  document.querySelector('.heading .actions').hidden = !state.board;
+  $('planning-filters').hidden = !state.board;
+  $('project').disabled = !state.board || state.busy || state.loading;
+  $('assignee').disabled = !state.board || state.busy || state.loading;
+  $('label').disabled = !state.board || state.busy || state.loading;
   $('undo').disabled = !writable();
   document.querySelectorAll('.list-row-select').forEach((input) => {
-    input.disabled = busy || loading;
+    input.disabled = state.busy || state.loading;
   });
 }
-let drag;
-let dragPreview;
 function isFileTransfer(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes('Files');
 }
@@ -1452,21 +1399,21 @@ function makeDraggable(node, type, id, name) {
     }
     e.stopPropagation();
     node.classList.add('drag-source');
-    observationTooltipTarget = undefined;
+    state.observationTooltipTarget = undefined;
     hideAttachmentTooltip();
-    drag = { type, id, revision: board.workspace.revision, root };
+    state.drag = { type, id, revision: state.board.workspace.revision, root: state.root };
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
     const bounds = node.getBoundingClientRect();
-    dragPreview?.remove();
-    dragPreview = node.cloneNode(true);
-    dragPreview.classList.add('drag-preview');
-    dragPreview.dataset.dragPreview = 'true';
-    dragPreview.removeAttribute('draggable');
-    dragPreview.removeAttribute('data-drag-type');
-    dragPreview.setAttribute('aria-hidden', 'true');
-    dragPreview.inert = true;
-    Object.assign(dragPreview.style, {
+    state.dragPreview?.remove();
+    state.dragPreview = node.cloneNode(true);
+    state.dragPreview.classList.add('drag-preview');
+    state.dragPreview.dataset.dragPreview = 'true';
+    state.dragPreview.removeAttribute('draggable');
+    state.dragPreview.removeAttribute('data-drag-type');
+    state.dragPreview.setAttribute('aria-hidden', 'true');
+    state.dragPreview.inert = true;
+    Object.assign(state.dragPreview.style, {
       position: 'fixed',
       left: '-10000px',
       top: '0',
@@ -1476,7 +1423,7 @@ function makeDraggable(node, type, id, name) {
       pointerEvents: 'none',
       zIndex: '-1',
     });
-    document.body.append(dragPreview);
+    document.body.append(state.dragPreview);
     const x =
       e.clientX >= bounds.left && e.clientX < bounds.right
         ? e.clientX - bounds.left
@@ -1485,13 +1432,13 @@ function makeDraggable(node, type, id, name) {
       e.clientY >= bounds.top && e.clientY < bounds.bottom
         ? e.clientY - bounds.top
         : bounds.height / 2;
-    e.dataTransfer.setDragImage(dragPreview, x, y);
+    e.dataTransfer.setDragImage(state.dragPreview, x, y);
   });
   node.addEventListener('dragend', () => {
     node.classList.remove('drag-source');
-    dragPreview?.remove();
-    dragPreview = undefined;
-    drag = undefined;
+    state.dragPreview?.remove();
+    state.dragPreview = undefined;
+    state.drag = undefined;
     clearDropMarks();
   });
   return node;
@@ -1499,8 +1446,8 @@ function makeDraggable(node, type, id, name) {
 function dropZone(node, type, command, axis = 'y') {
   function accepts() {
     return (
-      drag?.type === type &&
-      drag.root === root &&
+      state.drag?.type === type &&
+      state.drag.root === state.root &&
       writable() &&
       !(type === 'card' && findItem(node.dataset.item)?.archived)
     );
@@ -1525,22 +1472,23 @@ function dropZone(node, type, command, axis = 'y') {
     if (!accepts()) return;
     e.preventDefault();
     e.stopPropagation();
-    const c = command(drag.id, after(e));
-    const revision = drag.revision;
-    drag = undefined;
+    const c = command(state.drag.id, after(e));
+    const revision = state.drag.revision;
+    state.drag = undefined;
     clearDropMarks();
     if (c && c.target !== c.before) quick({ ...c, revision });
   });
 }
 function memberInfo(subject) {
-  const member = board.members.find((m) => m.subject === subject);
+  const member = state.board.members.find((m) => m.subject === subject);
   const name =
     member?.name ||
-    (subject === session?.subject && session.name) ||
+    (subject === state.session?.subject && state.session.name) ||
     (subject ? `Unnamed member (${subject})` : 'Unassigned');
   return {
     name,
-    avatarURL: member?.avatar_url || (subject === session?.subject && session.avatar_url) || '',
+    avatarURL:
+      member?.avatar_url || (subject === state.session?.subject && state.session.avatar_url) || '',
   };
 }
 function memberName(subject) {
@@ -1549,13 +1497,15 @@ function memberName(subject) {
 function memberListingInfo(member) {
   const name =
     String(member.name || '').trim() ||
-    (member.subject === session?.subject && String(session.name || '').trim()) ||
+    (member.subject === state.session?.subject && String(state.session.name || '').trim()) ||
     String(member.username || '').trim() ||
     'Unnamed member';
   return {
     name,
     avatarURL:
-      member.avatar_url || (member.subject === session?.subject && session.avatar_url) || '',
+      member.avatar_url ||
+      (member.subject === state.session?.subject && state.session.avatar_url) ||
+      '',
   };
 }
 function avatarView(name, avatarURL) {
@@ -1584,16 +1534,16 @@ const PARTICIPANT_ROLE_LABELS = Object.freeze({
 });
 const PARTICIPANT_STACK_LIMIT = 4;
 function itemParticipants(item) {
-  return (board.participants || []).filter((participant) => participant.item_id === item.id);
+  return (state.board.participants || []).filter((participant) => participant.item_id === item.id);
 }
 function participantInfo(participant) {
-  const member = board.members.find((value) => value.subject === participant.subject);
+  const member = state.board.members.find((value) => value.subject === participant.subject);
   // An admin-maintained workspace name wins over the provider's, so a card and
   // the roster never disagree about the same person.
   const name =
     member?.name ||
     String(participant.name || '').trim() ||
-    (participant.subject === session?.subject && session.name) ||
+    (participant.subject === state.session?.subject && state.session.name) ||
     (participant.username ? `@${participant.username}` : `Unnamed member (${participant.subject})`);
   const roles = (participant.roles || []).map((role) => PARTICIPANT_ROLE_LABELS[role] || role);
   return {
@@ -1602,7 +1552,7 @@ function participantInfo(participant) {
     avatarURL:
       participant.avatar_url ||
       member?.avatar_url ||
-      (participant.subject === session?.subject && session.avatar_url) ||
+      (participant.subject === state.session?.subject && state.session.avatar_url) ||
       '',
     assignee: (participant.roles || []).includes('assignee'),
   };
@@ -1692,7 +1642,7 @@ function cardLinkView(link, focusKey) {
   }
   return node;
 }
-function attachmentHref(item, attachment, base = root) {
+function attachmentHref(item, attachment, base = state.root) {
   return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
 }
 // A board read reports how many attachments a card has, not what they are, so
@@ -1712,7 +1662,7 @@ function attachmentCount(item) {
       : 0;
 }
 function setItemAttachments(item, attachments) {
-  const target = board?.items.find((value) => value.id === item.id) || item;
+  const target = state.board?.items.find((value) => value.id === item.id) || item;
   target.attachments = attachments;
   target.attachment_count = attachments.length;
   if (target !== item) {
@@ -1722,21 +1672,21 @@ function setItemAttachments(item, attachments) {
   attachmentListeners.forEach((listener) => listener(item.id));
 }
 function ensureAttachments(item) {
-  if (!item || !root || attachmentsLoaded(item)) return attachmentLoads.get(item?.id);
+  if (!item || !state.root || attachmentsLoaded(item)) return attachmentLoads.get(item?.id);
   if (attachmentLoads.has(item.id)) return attachmentLoads.get(item.id);
-  const currentBoard = board,
-    currentRoot = root,
+  const currentBoard = state.board,
+    currentRoot = state.root,
     id = item.id;
   const pending = (async () => {
     try {
       const data = await api(`${currentRoot}/items/${encodeURIComponent(id)}/attachments`);
-      if (board !== currentBoard || root !== currentRoot) return;
+      if (state.board !== currentBoard || state.root !== currentRoot) return;
       if (!validAttachments(data) || data.some((attachment) => attachment.item_id !== id))
         throw new Error('Attachment list is invalid. Refresh to retry.');
       setItemAttachments(item, data);
       renderContent();
     } catch (error) {
-      if (board === currentBoard && root === currentRoot) notice(error.message, true);
+      if (state.board === currentBoard && state.root === currentRoot) notice(error.message, true);
     } finally {
       attachmentLoads.delete(id);
     }
@@ -1746,9 +1696,6 @@ function ensureAttachments(item) {
 }
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024,
   MAX_ITEM_ATTACHMENTS = 100;
-// One upload at a time per browser, so a card drop and the editor picker
-// cannot race each other onto the same item.
-let uploadBusy = false;
 const uploadRequestKeys = new Map();
 function uploadSignature(item, file) {
   return [item.id, file.name, file.size, file.lastModified || 0, file.type || ''].join('\u0000');
@@ -1785,19 +1732,19 @@ function attachmentRejection(item, file) {
 // file drops. Progress is reported as a 0..1 fraction, or undefined when the
 // browser cannot measure the request body.
 async function uploadItemFile(item, file, onProgress) {
-  const currentRoot = root;
+  const currentRoot = state.root;
   const request = uploadRequestKey(item, file);
   const form = new FormData();
   form.append('file', file);
   const data = await apiUpload(`${currentRoot}/items/${encodeURIComponent(item.id)}/attachments`, {
-    headers: { 'X-CSRF-Token': session.csrf, 'Idempotency-Key': request.key },
+    headers: { 'X-CSRF-Token': state.session.csrf, 'Idempotency-Key': request.key },
     body: form,
     onProgress,
   });
   if (!validAttachments([data]) || data.item_id !== item.id)
     throw new Error('Attachment response is invalid. Refresh to retry.');
   clearUploadRequestKey(request.signature);
-  if (root !== currentRoot) return undefined;
+  if (state.root !== currentRoot) return undefined;
   // Without the current list there is nothing to append to, so the count is
   // advanced and the list reloaded rather than invented from one response.
   if (attachmentsLoaded(item))
@@ -1812,8 +1759,8 @@ async function uploadItemFile(item, file, onProgress) {
 // and failures are reported through the shared status and error surfaces.
 async function dropFilesOntoItem(item, files) {
   const selected = Array.from(files || []).filter(Boolean);
-  if (!selected.length || uploadBusy || !writable()) return;
-  uploadBusy = true;
+  if (!selected.length || state.uploadBusy || !writable()) return;
+  state.uploadBusy = true;
   renderControls();
   let uploaded = 0;
   try {
@@ -1836,7 +1783,7 @@ async function dropFilesOntoItem(item, files) {
       uploaded++;
     }
   } finally {
-    uploadBusy = false;
+    state.uploadBusy = false;
     renderControls();
   }
   if (uploaded) {
@@ -1852,7 +1799,7 @@ function itemFileDropZone(node, item) {
     if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (writable() && !uploadBusy && !item.archived) {
+    if (writable() && !state.uploadBusy && !item.archived) {
       event.dataTransfer.dropEffect = 'copy';
       node.classList.add('attachment-drop-active');
     } else {
@@ -1870,7 +1817,7 @@ function itemFileDropZone(node, item) {
     event.preventDefault();
     event.stopPropagation();
     clear();
-    if (writable() && !uploadBusy && !item.archived)
+    if (writable() && !state.uploadBusy && !item.archived)
       void dropFilesOntoItem(item, event.dataTransfer.files);
   });
 }
@@ -1884,7 +1831,7 @@ function attachmentPaperclip() {
   icon.setAttribute('aria-hidden', 'true');
   return icon;
 }
-function attachmentLinkView(item, attachment, base = root) {
+function attachmentLinkView(item, attachment, base = state.root) {
   const link = el('a', attachment.name, 'attachment-link');
   link.href = attachmentHref(item, attachment, base);
   link.setAttribute('aria-label', attachment.name);
@@ -1895,7 +1842,7 @@ function attachmentLinkView(item, attachment, base = root) {
 function attachmentTileLink(
   item,
   attachment,
-  base = root,
+  base = state.root,
   metadata = attachmentSize(attachment.size),
 ) {
   const link = attachmentLinkView(item, attachment, base);
@@ -1913,12 +1860,12 @@ function attachmentTooltipHost() {
   return document.querySelector('dialog[open]') || document.body;
 }
 function ensureAttachmentTooltip() {
-  if (attachmentTooltip) return attachmentTooltip;
-  attachmentTooltip = el('span', undefined, 'attachment-tooltip');
-  attachmentTooltip.id = 'attachment-tooltip';
-  attachmentTooltip.setAttribute('role', 'tooltip');
-  attachmentTooltip.hidden = true;
-  return attachmentTooltip;
+  if (state.attachmentTooltip) return state.attachmentTooltip;
+  state.attachmentTooltip = el('span', undefined, 'attachment-tooltip');
+  state.attachmentTooltip.id = 'attachment-tooltip';
+  state.attachmentTooltip.setAttribute('role', 'tooltip');
+  state.attachmentTooltip.hidden = true;
+  return state.attachmentTooltip;
 }
 function attachmentLinkTarget(target) {
   return target instanceof Element ? target.closest('.attachment-tile-link') : undefined;
@@ -1930,22 +1877,23 @@ function attachmentTooltipAnchor(target, source) {
   return mark && target.contains(mark) ? mark : target;
 }
 function hideAttachmentTooltip(target) {
-  if (target && target !== attachmentTooltipTarget) return;
-  if (attachmentTooltipTarget?.getAttribute('aria-describedby') === 'attachment-tooltip')
-    attachmentTooltipTarget.removeAttribute('aria-describedby');
-  attachmentTooltipTarget = undefined;
-  if (attachmentTooltip) attachmentTooltip.hidden = true;
+  if (target && target !== state.attachmentTooltipTarget) return;
+  if (state.attachmentTooltipTarget?.getAttribute('aria-describedby') === 'attachment-tooltip')
+    state.attachmentTooltipTarget.removeAttribute('aria-describedby');
+  state.attachmentTooltipTarget = undefined;
+  if (state.attachmentTooltip) state.attachmentTooltip.hidden = true;
 }
 function showAttachmentTooltip(target, source) {
   if (!target?.dataset.attachmentTooltip) {
     hideAttachmentTooltip();
     return;
   }
-  if (attachmentTooltipTarget && attachmentTooltipTarget !== target) hideAttachmentTooltip();
+  if (state.attachmentTooltipTarget && state.attachmentTooltipTarget !== target)
+    hideAttachmentTooltip();
   const tooltip = ensureAttachmentTooltip();
   const host = attachmentTooltipHost();
   if (tooltip.parentElement !== host) host.append(tooltip);
-  attachmentTooltipTarget = target;
+  state.attachmentTooltipTarget = target;
   tooltip.textContent = target.dataset.attachmentTooltip;
   target.setAttribute('aria-describedby', tooltip.id);
   tooltip.hidden = false;
@@ -1965,9 +1913,9 @@ function showAttachmentTooltip(target, source) {
   tooltip.style.top = `${Math.round(top)}px`;
 }
 function repositionAttachmentTooltip() {
-  const dialog = attachmentTooltipTarget?.closest('dialog');
-  if (attachmentTooltipTarget?.isConnected && (!dialog || dialog.open))
-    showAttachmentTooltip(attachmentTooltipTarget);
+  const dialog = state.attachmentTooltipTarget?.closest('dialog');
+  if (state.attachmentTooltipTarget?.isConnected && (!dialog || dialog.open))
+    showAttachmentTooltip(state.attachmentTooltipTarget);
   else hideAttachmentTooltip();
 }
 function attachmentTile(item, attachment, base, metadata, onRemove) {
@@ -2048,10 +1996,10 @@ function pipelineLinkView(link) {
   return node;
 }
 function activeSprints() {
-  return board.sprints.filter((s) => s.state === 'active');
+  return state.board.sprints.filter((s) => s.state === 'active');
 }
 function projectName(id) {
-  return board.projects.find((p) => p.id === id)?.name || 'No project';
+  return state.board.projects.find((p) => p.id === id)?.name || 'No project';
 }
 function itemProjectIDs(item) {
   if (Array.isArray(item?.project_ids)) return item.project_ids.filter(Boolean).map(String);
@@ -2063,21 +2011,21 @@ function projectBadges(item, className = 'card-project') {
   return names.map((name) => el('span', name, `badge badge-project ${className}`));
 }
 function labelInfo(name) {
-  return board.labels.find((label) => label.name === name) || { name, color: '#dcefe4' };
+  return state.board.labels.find((label) => label.name === name) || { name, color: '#dcefe4' };
 }
 function renderProjectSummary() {
   const summary = $('project-summary');
   const projectID = singleFilterValue('project');
-  const project = board.projects.find((value) => value.id === projectID);
-  if (view !== 'board' || !project || ['all', 'none'].includes(projectID)) {
+  const project = state.board.projects.find((value) => value.id === projectID);
+  if (state.view !== 'board' || !project || ['all', 'none'].includes(projectID)) {
     summary.hidden = true;
     summary.replaceChildren();
     return;
   }
-  const items = board.items.filter(
+  const items = state.board.items.filter(
     (item) => !item.archived && itemProjectIDs(item).includes(projectID),
   );
-  const openSprints = board.sprints.filter(
+  const openSprints = state.board.sprints.filter(
     (sprint) =>
       sprint.state !== 'closed' && items.some((item) => item.sprint_ids.includes(sprint.id)),
   );
@@ -2130,13 +2078,14 @@ function styleLabelOptions(select) {
   });
 }
 function done(item) {
-  return board.columns.find((c) => c.id === item.column_id)?.category === 'done';
+  return state.board.columns.find((c) => c.id === item.column_id)?.category === 'done';
 }
 // Dependency targets may be archived, so resolution spans the board payload and
 // the loaded archive page.
 function findItem(id) {
   return (
-    board?.items.find((value) => value.id === id) || archiveItems.find((value) => value.id === id)
+    state.board?.items.find((value) => value.id === id) ||
+    state.archiveItems.find((value) => value.id === id)
   );
 }
 function blocked(item) {
@@ -2147,10 +2096,10 @@ function blocked(item) {
 }
 function scopeItems(sprint) {
   return sprint.state === 'closed'
-    ? board.items.filter((i) =>
-        board.closed_scope.some((s) => s.sprint_id === sprint.id && s.item_id === i.id),
+    ? state.board.items.filter((i) =>
+        state.board.closed_scope.some((s) => s.sprint_id === sprint.id && s.item_id === i.id),
       )
-    : board.items.filter((i) => !i.archived && i.sprint_ids.includes(sprint.id));
+    : state.board.items.filter((i) => !i.archived && i.sprint_ids.includes(sprint.id));
 }
 function sprintGoal(value) {
   const goal = el('div', undefined, 'sprint-goal');
@@ -2202,13 +2151,13 @@ function sprintPanel(s, items = scopeItems(s)) {
     [items.filter(blocked).length, 'Blocked'],
   ]);
   const actions = el('div', undefined, 'actions sprint-actions');
-  const expanded = burndownExpanded.has(s.id);
+  const expanded = state.burndownExpanded.has(s.id);
   const toggle = actionIconButton(
     expanded ? 'Hide burn down' : 'Show burn down',
     '▥',
     () => {
-      if (expanded) burndownExpanded.delete(s.id);
-      else burndownExpanded.add(s.id);
+      if (expanded) state.burndownExpanded.delete(s.id);
+      else state.burndownExpanded.add(s.id);
       render();
       [...document.querySelectorAll('[data-burndown-toggle]')]
         .find((element) => element.dataset.burndownToggle === s.id)
@@ -2219,11 +2168,11 @@ function sprintPanel(s, items = scopeItems(s)) {
   toggle.dataset.burndownToggle = s.id;
   toggle.setAttribute('aria-expanded', String(expanded));
   if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`);
-  toggle.disabled = busy || loading;
+  toggle.disabled = state.busy || state.loading;
   actions.append(toggle);
   actions.append(
     actionIconButton('View scope', '◎', () => {
-      view = 'board';
+      state.view = 'board';
       $('scope').value = s.id;
       render();
       persistPlanningURL();
@@ -2261,8 +2210,8 @@ function sprintPanel(s, items = scopeItems(s)) {
   card.dataset.renderSignature = JSON.stringify({
     s,
     expanded,
-    data: expanded ? burndownData.get(currentBurndownKey(s.id)) || null : null,
-    error: expanded ? burndownErrors.get(currentBurndownKey(s.id)) || null : null,
+    data: expanded ? state.burndownData.get(currentBurndownKey(s.id)) || null : null,
+    error: expanded ? state.burndownErrors.get(currentBurndownKey(s.id)) || null : null,
   });
   return card;
 }
@@ -2276,7 +2225,7 @@ function renderWorkspaceSelection(content) {
   );
   const list = el('div', undefined, 'workspace-choice-list');
   list.setAttribute('role', 'list');
-  workspaces.forEach((workspace) => {
+  state.workspaces.forEach((workspace) => {
     const choice = button(
       '',
       () => {
@@ -2302,8 +2251,8 @@ function renderWorkspaceCreation(content) {
   gate.setAttribute('aria-label', 'Create a workspace');
   gate.append(
     helpText(
-      session?.name
-        ? `You are signed in as ${session.name}. Create a workspace to start planning; you will be its initial administrator.`
+      state.session?.name
+        ? `You are signed in as ${state.session.name}. Create a workspace to start planning; you will be its initial administrator.`
         : 'Create a workspace to start planning; your signed-in account will be its initial administrator.',
     ),
   );
@@ -2321,7 +2270,7 @@ function renderWorkspaceCreation(content) {
   const submit = button('Create workspace', undefined, 'primary');
   submit.type = 'submit';
   actions.append(submit);
-  if (workspaces.length)
+  if (state.workspaces.length)
     actions.append(button('Back to workspace selection', showWorkspaceSelection));
   form.append(actions);
   form.addEventListener('submit', createWorkspace);
@@ -2331,8 +2280,8 @@ function renderWorkspaceCreation(content) {
 }
 function render() {
   renderControls();
-  if (!board) {
-    setContentBusy(workspaceGate === 'loading' || loading);
+  if (!state.board) {
+    setContentBusy(state.workspaceGate === 'loading' || state.loading);
     $('project-summary').hidden = true;
     $('project-summary').replaceChildren();
     $('sprint-summary').replaceChildren();
@@ -2340,12 +2289,12 @@ function render() {
     $('planning-change').hidden = true;
     $('filter-chips').hidden = true;
     $('filter-chips').replaceChildren();
-    if (workspaceGate === 'select') {
+    if (state.workspaceGate === 'select') {
       $('title').textContent = 'Choose a workspace';
       $('subtitle').textContent = 'Select a shared planning space to continue.';
       renderWorkspaceSelection(pageHost());
-    } else if (workspaceGate === 'create') {
-      $('title').textContent = workspaces.length
+    } else if (state.workspaceGate === 'create') {
+      $('title').textContent = state.workspaces.length
         ? 'Create a workspace'
         : 'Create your first workspace';
       $('subtitle').textContent = 'Set up a shared planning space for your team.';
@@ -2361,7 +2310,11 @@ function render() {
   // toolbar carries the full multi-value filter state.
   options(
     $('project'),
-    [['all', 'All projects'], ['none', 'No project'], ...board.projects.map((p) => [p.id, p.name])],
+    [
+      ['all', 'All projects'],
+      ['none', 'No project'],
+      ...state.board.projects.map((p) => [p.id, p.name]),
+    ],
     'all',
   );
   options(
@@ -2369,7 +2322,7 @@ function render() {
     [
       ['all', 'All assignees'],
       ['none', 'Unassigned'],
-      ...board.members.map((m) => [m.subject, memberName(m.subject)]),
+      ...state.board.members.map((m) => [m.subject, memberName(m.subject)]),
     ],
     'all',
   );
@@ -2378,7 +2331,7 @@ function render() {
     [
       ['all', 'All labels'],
       ['none', 'No labels'],
-      ...board.labels.map((label) => [label.name, label.name]),
+      ...state.board.labels.map((label) => [label.name, label.name]),
     ],
     'all',
   );
@@ -2390,7 +2343,7 @@ function render() {
     ),
   );
   const titles = {
-    board: presentation === 'list' ? 'Planning list' : 'Kanban board',
+    board: state.presentation === 'list' ? 'Planning list' : 'Kanban board',
     sprints: 'Sprints',
     projects: 'Projects',
     labels: 'Labels',
@@ -2403,14 +2356,14 @@ function render() {
     labels: 'Maintain labels used to classify work.',
     members: 'Manage workspace members, roles, and names.',
   };
-  $('title').textContent = titles[view];
+  $('title').textContent = titles[state.view];
   $('subtitle').textContent =
-    board.role === 'viewer'
+    state.board.role === 'viewer'
       ? 'Read-only workspace access.'
-      : subtitles[view] || 'Plan intentionally. Keep work moving.';
-  $('search').placeholder = view === 'sprints' ? 'Find sprints…' : 'Find work…';
+      : subtitles[state.view] || 'Plan intentionally. Keep work moving.';
+  $('search').placeholder = state.view === 'sprints' ? 'Find sprints…' : 'Find work…';
   document.querySelectorAll('[data-view]').forEach((b) => {
-    if (b.dataset.view === view) b.setAttribute('aria-current', 'page');
+    if (b.dataset.view === state.view) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
   const active = activeSprints();
@@ -2421,26 +2374,26 @@ function render() {
       ['active', 'Active sprints'],
       ['backlog', 'Backlog'],
       ['all', 'All open work'],
-      ...board.sprints.map((s) => [s.id, `${s.name} (${s.state})`]),
+      ...state.board.sprints.map((s) => [s.id, `${s.name} (${s.state})`]),
     ],
     selected,
   );
   if (!$('scope').value) $('scope').value = 'active';
-  const selectedSprint = board.sprints.find((s) => s.id === $('scope').value);
+  const selectedSprint = state.board.sprints.find((s) => s.id === $('scope').value);
   const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
   $('sprint-summary').setAttribute(
     'aria-label',
     selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints',
   );
   renderProjectSummary();
-  renderSprintSummary(view === 'board' ? summarySprints : []);
-  $('scope-label').hidden = view !== 'board';
-  $('label-filter').hidden = view === 'sprints' || view === 'history';
-  $('search-filter').hidden = view === 'history';
-  $('planning-filters').hidden = ['history', 'projects', 'labels', 'members'].includes(view);
+  renderSprintSummary(state.view === 'board' ? summarySprints : []);
+  $('scope-label').hidden = state.view !== 'board';
+  $('label-filter').hidden = state.view === 'sprints' || state.view === 'history';
+  $('search-filter').hidden = state.view === 'history';
+  $('planning-filters').hidden = ['history', 'projects', 'labels', 'members'].includes(state.view);
   // Views that own a page layout host the filter bar themselves, below their
   // heading; everywhere else it stays in its slot above the content.
-  if (view !== 'sprints') placeFilters();
+  if (state.view !== 'sprints') placeFilters();
   renderFilterChips();
   renderContent();
 }
@@ -2449,34 +2402,38 @@ function render() {
 // invalidate the memo without tracking each name individually.
 function itemHaystack(item) {
   const cached = searchIndex.get(item);
-  if (cached && cached.generation === searchIndexGeneration && cached.revision === item.revision)
+  if (
+    cached &&
+    cached.generation === state.searchIndexGeneration &&
+    cached.revision === item.revision
+  )
     return cached.text;
   const text =
     `${item.title} ${item.description} ${item.labels.join(' ')} ${item.assignee} ${memberName(item.assignee)} ${itemProjectIDs(item).map(projectName).join(' ')}`.toLowerCase();
-  searchIndex.set(item, { generation: searchIndexGeneration, revision: item.revision, text });
+  searchIndex.set(item, { generation: state.searchIndexGeneration, revision: item.revision, text });
   return text;
 }
 // Typing filters once per pause. `flushSearch` applies the pending query
 // immediately for Enter, blur, and any programmatic reset.
 function resetSearch() {
-  if (searchDebounce) clearTimeout(searchDebounce);
-  searchDebounce = undefined;
+  if (state.searchDebounce) clearTimeout(state.searchDebounce);
+  state.searchDebounce = undefined;
   $('search').value = '';
-  searchQuery = '';
+  state.searchQuery = '';
 }
 function flushSearch() {
-  if (searchDebounce) clearTimeout(searchDebounce);
-  searchDebounce = undefined;
+  if (state.searchDebounce) clearTimeout(state.searchDebounce);
+  state.searchDebounce = undefined;
   const next = $('search').value.trim().toLowerCase();
-  if (next === searchQuery) return false;
-  searchQuery = next;
+  if (next === state.searchQuery) return false;
+  state.searchQuery = next;
   return true;
 }
 function queueSearch() {
-  if (searchDebounce) clearTimeout(searchDebounce);
-  searchDebounce = setTimeout(() => {
-    searchDebounce = undefined;
-    if (flushSearch() && board) renderContent();
+  if (state.searchDebounce) clearTimeout(state.searchDebounce);
+  state.searchDebounce = setTimeout(() => {
+    state.searchDebounce = undefined;
+    if (flushSearch() && state.board) renderContent();
   }, SEARCH_DEBOUNCE_MS);
 }
 function matchesItemFilters(item) {
@@ -2487,14 +2444,14 @@ function matchesItemFilters(item) {
   );
 }
 function filteredItems() {
-  const query = searchQuery;
+  const query = state.searchQuery;
   const scope = $('scope').value;
-  const sprint = board.sprints.find((s) => s.id === scope);
-  return (view === 'archive' ? archiveItems : board.items).filter((i) => {
-    if (view === 'archive') {
+  const sprint = state.board.sprints.find((s) => s.id === scope);
+  return (state.view === 'archive' ? state.archiveItems : state.board.items).filter((i) => {
+    if (state.view === 'archive') {
       if (!i.archived) return false;
     } else if (i.archived && sprint?.state !== 'closed') return false;
-    if (view !== 'archive') {
+    if (state.view !== 'archive') {
       if (scope === 'active' && !activeSprints().some((s) => i.sprint_ids.includes(s.id)))
         return false;
       if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false;
@@ -2524,11 +2481,12 @@ function renderFilterChips() {
 function applyFilterChange(name) {
   if (name !== 'label') resetBurndown();
   render();
-  if (name !== 'label' && !burndownRequests.size) setContentBusy(false);
+  if (name !== 'label' && !state.burndownRequests.size) setContentBusy(false);
   persistPlanningURL();
 }
 function itemDateStatus(item, now = new Date()) {
-  const category = board?.columns.find((column) => column.id === item.column_id)?.category || '';
+  const category =
+    state.board?.columns.find((column) => column.id === item.column_id)?.category || '';
   return dueDatePresentation(item.due_date, category, !!item.archived, now);
 }
 function dueDateBadge(item) {
@@ -2538,7 +2496,7 @@ function dueDateBadge(item) {
   badge.dataset.dueDateBadge = item.id;
   badge.dataset.dueDate = item.due_date;
   badge.dataset.dueCategory =
-    board?.columns.find((column) => column.id === item.column_id)?.category || '';
+    state.board?.columns.find((column) => column.id === item.column_id)?.category || '';
   badge.dataset.dueArchived = String(!!item.archived);
   return badge;
 }
@@ -2622,10 +2580,10 @@ function refreshDueDateBadges(now = new Date()) {
   });
 }
 function scheduleOverdueRefresh() {
-  clearTimeout(overdueTimer);
+  clearTimeout(state.overdueTimer);
   const now = new Date();
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  overdueTimer = setTimeout(
+  state.overdueTimer = setTimeout(
     () => {
       if (!document.hidden) refreshDueDateBadges();
       scheduleOverdueRefresh();
@@ -2668,7 +2626,7 @@ function cardRenderSignature(item, links) {
       participantInfo(participant).name,
       participantInfo(participant).avatarURL,
     ]),
-    sprints: item.sprint_ids.map((id) => board.sprints.find((s) => s.id === id)?.name || id),
+    sprints: item.sprint_ids.map((id) => state.board.sprints.find((s) => s.id === id)?.name || id),
     labels: item.labels.map(labelInfo),
     blocked: blocked(item),
   });
@@ -2727,9 +2685,9 @@ function positionObservationTooltip(target) {
   target.style.setProperty('--observation-tooltip-top', `${Math.round(top)}px`);
 }
 function repositionObservationTooltip() {
-  const target = observationTooltipTarget;
+  const target = state.observationTooltipTarget;
   if (!target?.isConnected || (!target.matches(':hover') && document.activeElement !== target)) {
-    observationTooltipTarget = undefined;
+    state.observationTooltipTarget = undefined;
     return;
   }
   positionObservationTooltip(target);
@@ -2795,7 +2753,7 @@ function card(item, peers) {
     editItem(item);
   });
   dropZone(c, 'card', (id, after) => {
-    const current = board.items.find((value) => value.id === item.id) || item;
+    const current = state.board.items.find((value) => value.id === item.id) || item;
     const currentPeers = filteredItems().filter((value) => value.column_id === current.column_id);
     const index = currentPeers.findIndex((value) => value.id === current.id);
     return {
@@ -2815,7 +2773,7 @@ function card(item, peers) {
   item.sprint_ids.forEach((id) => {
     const tag = el(
       'span',
-      board.sprints.find((s) => s.id === id)?.name || id,
+      state.board.sprints.find((s) => s.id === id)?.name || id,
       'badge badge-sprint',
     );
     tag.dataset.sprintId = id;
@@ -2838,7 +2796,7 @@ function card(item, peers) {
     );
     c.append(controls);
   }
-  const links = board.links.filter((l) => l.items.includes(item.id));
+  const links = state.board.links.filter((l) => l.items.includes(item.id));
   if (links.length) {
     const linkSection = el('div', undefined, 'card-links-section');
     linkSection.setAttribute('role', 'group');
@@ -2919,7 +2877,7 @@ function patchObservationIcon(node, link) {
   if (node.tagName === replacement.tagName) {
     syncAttributes(node, replacement);
     if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent;
-    if (observationTooltipTarget === node) positionObservationTooltip(node);
+    if (state.observationTooltipTarget === node) positionObservationTooltip(node);
     return node;
   }
   node.replaceWith(replacement);
@@ -2939,8 +2897,8 @@ function refreshLinkDisabled(link) {
   return (
     !writable() ||
     !link ||
-    !board.connector_instance ||
-    board.connector_instance !== board.integration.instance ||
+    !state.board.connector_instance ||
+    state.board.connector_instance !== state.board.integration.instance ||
     (!!link.next_refresh && Date.parse(link.next_refresh) > Date.now())
   );
 }
@@ -2977,7 +2935,7 @@ function patchObservationUI(previousLinks, nextLinks) {
 }
 function currentBurndownKey(sprintID) {
   return [
-    board?.workspace.revision || 0,
+    state.board?.workspace.revision || 0,
     sprintID,
     singleFilterValue('project'),
     singleFilterValue('assignee'),
@@ -3165,11 +3123,11 @@ function renderBurndown(sprint) {
     }),
   );
   const key = currentBurndownKey(sprint.id);
-  const data = burndownData.get(key);
-  const error = burndownErrors.get(key);
+  const data = state.burndownData.get(key);
+  const error = state.burndownErrors.get(key);
   if (error) {
     const retry = button('Retry burn down', () => requestBurndown(sprint.id, true));
-    retry.disabled = busy || loading;
+    retry.disabled = state.busy || state.loading;
     const message = errorLine(error);
     chart.append(context, message, retry);
     return chart;
@@ -3220,19 +3178,19 @@ function renderBurndown(sprint) {
   return chart;
 }
 async function requestBurndown(sprintID, force = false) {
-  if (!board || !burndownExpanded.has(sprintID) || loading) return;
+  if (!state.board || !state.burndownExpanded.has(sprintID) || state.loading) return;
   const key = currentBurndownKey(sprintID);
-  if (burndownRequests.has(key)) return;
-  if (!force && (burndownData.has(key) || burndownErrors.has(key))) return;
+  if (state.burndownRequests.has(key)) return;
+  if (!force && (state.burndownData.has(key) || state.burndownErrors.has(key))) return;
   if (force) {
-    burndownData.delete(key);
-    burndownErrors.delete(key);
+    state.burndownData.delete(key);
+    state.burndownErrors.delete(key);
   }
-  const generation = burndownGeneration;
-  const currentBoard = board,
-    currentRoot = root;
+  const generation = state.burndownGeneration;
+  const currentBoard = state.board,
+    currentRoot = state.root;
   const token = {};
-  burndownRequests.set(key, token);
+  state.burndownRequests.set(key, token);
   setContentBusy(true);
   try {
     const query = new URLSearchParams({
@@ -3241,22 +3199,37 @@ async function requestBurndown(sprintID, force = false) {
       assignee: singleFilterValue('assignee'),
     });
     const next = await api(currentRoot + '/burndown?' + query);
-    if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return;
+    if (
+      generation !== state.burndownGeneration ||
+      state.board !== currentBoard ||
+      state.root !== currentRoot
+    )
+      return;
     if (!next || !Array.isArray(next.points) || !next.sprint)
       throw new Error('Burn-down data is invalid. Refresh to retry.');
     if (next.revision !== currentBoard.workspace.revision)
       throw new Error('Planning changed while loading. Refresh to review.');
-    burndownData.set(key, next);
-    burndownErrors.delete(key);
+    state.burndownData.set(key, next);
+    state.burndownErrors.delete(key);
   } catch (e) {
-    if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return;
-    burndownErrors.set(key, e.message);
+    if (
+      generation !== state.burndownGeneration ||
+      state.board !== currentBoard ||
+      state.root !== currentRoot
+    )
+      return;
+    state.burndownErrors.set(key, e.message);
   } finally {
-    if (burndownRequests.get(key) === token) burndownRequests.delete(key);
-    // biome-ignore lint/correctness/noUnsafeFinally: a stale response must not render; try/catch never rethrow.
-    if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return;
-    if (!burndownRequests.size) setContentBusy(false);
-    if (view === 'board' || view === 'sprints') render();
+    if (state.burndownRequests.get(key) === token) state.burndownRequests.delete(key);
+    if (
+      generation !== state.burndownGeneration ||
+      state.board !== currentBoard ||
+      state.root !== currentRoot
+    )
+      // biome-ignore lint/correctness/noUnsafeFinally: a stale response must not render; try/catch never rethrow.
+      return;
+    if (!state.burndownRequests.size) setContentBusy(false);
+    if (state.view === 'board' || state.view === 'sprints') render();
   }
 }
 function patchNode(target, next) {
@@ -3323,7 +3296,9 @@ function renderColumn(col, items) {
   section.dataset.column = col.id;
   section.setAttribute('aria-label', col.name);
   const peers = items.filter((item) => item.column_id === col.id);
-  const total = board.items.filter((item) => !item.archived && item.column_id === col.id).length;
+  const total = state.board.items.filter(
+    (item) => !item.archived && item.column_id === col.id,
+  ).length;
   const head = el('div', undefined, 'column-head');
   head.dataset.renderSignature = JSON.stringify({
     id: col.id,
@@ -3351,7 +3326,8 @@ function renderColumn(col, items) {
       kind: 'column.rank',
       target: id,
       before: after
-        ? board.columns[board.columns.findIndex((value) => value.id === col.id) + 1]?.id || ''
+        ? state.board.columns[state.board.columns.findIndex((value) => value.id === col.id) + 1]
+            ?.id || ''
         : col.id,
     }),
     'x',
@@ -3407,7 +3383,7 @@ function patchCardLinksSection(target, next) {
 function patchCardLinks(target, next) {
   syncAttributes(target, next);
   reconcileKeyedChildren(target, [...next.children], cardLinkChildKey, (current, fresh) => {
-    const link = board.links.find((value) => value.id === fresh.dataset.linkId);
+    const link = state.board.links.find((value) => value.id === fresh.dataset.linkId);
     if (link && fresh.dataset.observation === 'status-icon')
       return patchObservationIcon(current, link);
     if (link && fresh.dataset.observation === 'link') return patchObservationLink(current, link);
@@ -3480,7 +3456,7 @@ function patchColumn(target, next, cardPool) {
 }
 function renderBoardContent(content, items) {
   const next = contentRoot('div', 'board', 'board');
-  board.columns.forEach((column) => next.append(renderColumn(column, items)));
+  state.board.columns.forEach((column) => next.append(renderColumn(column, items)));
   const current = content.firstElementChild;
   if (!current || current.dataset.contentView !== 'board') {
     content.replaceChildren(next);
@@ -3497,12 +3473,12 @@ function renderBoardContent(content, items) {
   );
 }
 function renderCardListContent(content, items) {
-  const next = contentRoot('div', 'list', `list:${view}`);
+  const next = contentRoot('div', 'list', `list:${state.view}`);
   appendCards(next, items);
   if (!items.length)
     next.append(
       emptyState(
-        view === 'board' && $('scope').value === 'backlog'
+        state.view === 'board' && $('scope').value === 'backlog'
           ? 'Backlog is clear. Create work without a sprint to plan what comes next.'
           : 'No matching work.',
       ),
@@ -3551,7 +3527,7 @@ function listRow(item) {
   itemFileDropZone(row, item);
   row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
   dropZone(row, 'card', (id, after) => {
-    const current = board.items.find((value) => value.id === item.id) || item;
+    const current = state.board.items.find((value) => value.id === item.id) || item;
     const currentPeers = filteredItems().filter((value) => value.column_id === current.column_id);
     const index = currentPeers.findIndex((value) => value.id === current.id);
     return {
@@ -3564,20 +3540,20 @@ function listRow(item) {
   const title = listCell('Title', 'list-cell-title');
   const titleDetails = el('div', undefined, 'list-row-title-details');
   const titleLine = el('div', undefined, 'list-row-title-line');
-  const bulkSelected = bulkSelection.has(item.id);
-  if (board.role !== 'viewer' && !item.archived) {
+  const bulkSelected = state.bulkSelection.has(item.id);
+  if (state.board.role !== 'viewer' && !item.archived) {
     const toggle = el('input');
     toggle.id = `bulk-select-${item.id}`;
     toggle.type = 'checkbox';
     toggle.className = 'list-row-select';
     toggle.checked = bulkSelected;
-    toggle.disabled = busy || loading;
+    toggle.disabled = state.busy || state.loading;
     toggle.dataset.focusKey = `item:${item.id}:bulk-select`;
     toggle.setAttribute('aria-label', `Select ${item.title} for bulk actions`);
     toggle.addEventListener('click', (event) => event.stopPropagation());
     toggle.addEventListener('change', () => {
-      if (toggle.checked) bulkSelection.add(item.id);
-      else bulkSelection.delete(item.id);
+      if (toggle.checked) state.bulkSelection.add(item.id);
+      else state.bulkSelection.delete(item.id);
       row.classList.toggle('is-bulk-selected', toggle.checked);
       refreshBulkBar();
     });
@@ -3603,7 +3579,7 @@ function listRow(item) {
   }
   if (item.archived) statusBadges.append(el('span', 'Archived', 'badge'));
   if (statusBadges.childElementCount || due?.overdue) statusContent.append(statusBadges);
-  const links = board.links.filter((link) => link.items.includes(item.id));
+  const links = state.board.links.filter((link) => link.items.includes(item.id));
   if (links.length) {
     const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links');
     linkIndicator.setAttribute(
@@ -3661,15 +3637,15 @@ function listRow(item) {
   const sprints = listCell('Sprints', 'list-cell-sprints');
   item.sprint_ids.forEach((id) =>
     sprints.append(
-      el('span', board.sprints.find((s) => s.id === id)?.name || id, 'badge badge-sprint'),
+      el('span', state.board.sprints.find((s) => s.id === id)?.name || id, 'badge badge-sprint'),
     ),
   );
   if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
   row.append(title, project, people, labels, sprints, status);
   if (due?.overdue) positionListDueBadge(row.querySelector('.badge-due'), true);
-  row.classList.toggle('is-selected', selectedItemID === item.id);
+  row.classList.toggle('is-selected', state.selectedItemID === item.id);
   row.classList.toggle('is-bulk-selected', bulkSelected);
-  row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${selectedItemID === item.id}|bulk:${bulkSelected}`;
+  row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${state.selectedItemID === item.id}|bulk:${bulkSelected}`;
   return row;
 }
 function listSection(column, items) {
@@ -3678,7 +3654,9 @@ function listSection(column, items) {
   section.open = true;
   section.setAttribute('aria-label', column.name);
   const peers = items.filter((item) => item.column_id === column.id);
-  const total = board.items.filter((item) => !item.archived && item.column_id === column.id).length;
+  const total = state.board.items.filter(
+    (item) => !item.archived && item.column_id === column.id,
+  ).length;
   const head = el('summary', undefined, 'list-section-head');
   head.dataset.renderSignature = JSON.stringify({
     id: column.id,
@@ -3710,7 +3688,8 @@ function listSection(column, items) {
       kind: 'column.rank',
       target: id,
       before: after
-        ? board.columns[board.columns.findIndex((value) => value.id === column.id) + 1]?.id || ''
+        ? state.board.columns[state.board.columns.findIndex((value) => value.id === column.id) + 1]
+            ?.id || ''
         : column.id,
     }),
     'x',
@@ -3766,7 +3745,7 @@ function renderListPresentationContent(content, items) {
     sections = layout.querySelector(':scope > .planning-list > .list-sections');
   }
   pruneBulkSelection(items);
-  const nextSections = board.columns.map((column) => listSection(column, items));
+  const nextSections = state.board.columns.map((column) => listSection(column, items));
   reconcileKeyedChildren(
     sections,
     nextSections,
@@ -3794,17 +3773,17 @@ function sprintMatchesFilters(sprint) {
 }
 function renderSprintRows(list) {
   const search = $('search').value.trim();
-  const query = searchQuery;
-  const filtered = board.sprints.filter(sprintMatchesFilters);
+  const query = state.searchQuery;
+  const filtered = state.board.sprints.filter(sprintMatchesFilters);
   const matches = filtered.filter(
     (sprint) => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query),
   );
   $('count').textContent = `${matches.length} ${matches.length === 1 ? 'sprint' : 'sprints'}`;
   list.replaceChildren();
   if (!matches.length) {
-    const message = !board.sprints.length
+    const message = !state.board.sprints.length
       ? 'No sprints yet. Create a goal and time box, then add work from the backlog.'
-      : query && filtered.length !== board.sprints.length
+      : query && filtered.length !== state.board.sprints.length
         ? `No sprints match “${search}” and the current filters.`
         : query
           ? `No sprints match “${search}”.`
@@ -3828,8 +3807,8 @@ function renderSprintHistory() {
         'Immutable snapshots captured when each sprint closed. Archived sprints are read-only and do not consume the planning limit.',
     }),
   );
-  if (sprintHistoryError) historyPanel.append(emptyState(sprintHistoryError));
-  else if (!sprintHistory.length)
+  if (state.sprintHistoryError) historyPanel.append(emptyState(state.sprintHistoryError));
+  else if (!state.sprintHistory.length)
     historyPanel.append(
       emptyState(
         'No archived sprints yet. Close and archive a sprint to preserve its closure summary.',
@@ -3837,7 +3816,7 @@ function renderSprintHistory() {
     );
   else {
     const list = maintenanceList('sprint-history-list');
-    sprintHistory.forEach((record) => {
+    state.sprintHistory.forEach((record) => {
       const sprint = record.sprint || {};
       const closure = record.closure || {};
       const row = maintenanceRow({
@@ -3856,24 +3835,24 @@ function renderSprintHistory() {
     });
     historyPanel.append(list);
   }
-  if (!sprintHistoryError && sprintHistoryMore) {
+  if (!state.sprintHistoryError && state.sprintHistoryMore) {
     const more = button('Load older archived sprints', async () => {
       try {
         await loadSprintHistory();
         render();
       } catch (error) {
-        sprintHistoryError = error.message;
+        state.sprintHistoryError = error.message;
         render();
       }
     });
     more.dataset.sprintHistoryMore = 'true';
-    more.disabled = busy || loading;
+    more.disabled = state.busy || state.loading;
     historyPanel.append(more);
   }
   historyPanel.dataset.renderSignature = JSON.stringify({
-    records: sprintHistory,
-    more: sprintHistoryMore,
-    error: sprintHistoryError,
+    records: state.sprintHistory,
+    more: state.sprintHistoryMore,
+    error: state.sprintHistoryError,
   });
   return historyPanel;
 }
@@ -3882,7 +3861,7 @@ function renderSprintHistory() {
 // recorded historical metric, so it is labeled as such.
 const VELOCITY_SPRINTS = 8;
 function velocitySeries() {
-  return board.sprints
+  return state.board.sprints
     .filter((sprint) => sprint.state === 'closed' && sprintMatchesFilters(sprint))
     .map((sprint) => {
       const items = sprintFilterItems(sprint);
@@ -4003,7 +3982,7 @@ function sprintVelocityPanel() {
     }),
   );
   if (!series.length) {
-    const narrowed = board.sprints.some((sprint) => sprint.state === 'closed');
+    const narrowed = state.board.sprints.some((sprint) => sprint.state === 'closed');
     trend.append(
       emptyState(
         narrowed
@@ -4079,21 +4058,21 @@ function renderSprintPage(content) {
 function firstRunChecklist() {
   const steps = [
     {
-      done: board.projects.length > 0,
+      done: state.board.projects.length > 0,
       title: 'Create a project',
       help: 'Projects classify work items; they are optional but make filtering and the project lens useful.',
       action: 'Open Projects',
       run: () => goToView('projects'),
     },
     {
-      done: board.sprints.length > 0,
+      done: state.board.sprints.length > 0,
       title: 'Create and start a sprint',
       help: 'Give the sprint a goal and a time box, then start it so the board can show active scope.',
       action: 'Open Sprints',
       run: () => goToView('sprints'),
     },
     {
-      done: board.items.length > 0,
+      done: state.board.items.length > 0,
       title: 'Add your first work item',
       help: 'Every card belongs to a board column; sprints and projects can be added at any time.',
       action: '＋ New item',
@@ -4129,16 +4108,16 @@ function firstRunChecklist() {
 }
 function showFirstRun() {
   return (
-    view === 'board' &&
-    board.role !== 'viewer' &&
-    !board.items.length &&
-    !board.sprints.length &&
-    !searchQuery
+    state.view === 'board' &&
+    state.board.role !== 'viewer' &&
+    !state.board.items.length &&
+    !state.board.sprints.length &&
+    !state.searchQuery
   );
 }
 function renderSprintSummary(sprints) {
   const summary = $('sprint-summary');
-  if (view !== 'board') {
+  if (state.view !== 'board') {
     summary.replaceChildren();
     return;
   }
@@ -4167,14 +4146,14 @@ function renderPageRoot(name) {
   return true;
 }
 function renderContent() {
-  if (!board) return;
-  if (renderPageRoot(view)) return;
+  if (!state.board) return;
+  if (renderPageRoot(state.view)) return;
   const body = planningHost();
   const items = filteredItems();
   $('count').textContent =
-    view === 'archive'
-      ? `${items.length} archived${archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
-      : `${items.length} items · workspace revision ${board.workspace.revision}`;
+    state.view === 'archive'
+      ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${state.board.workspace.revision}`
+      : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
   if (showFirstRun()) {
     const next = firstRunChecklist();
     const current = body.firstElementChild;
@@ -4182,11 +4161,12 @@ function renderContent() {
     else patchNode(current, next);
     return;
   }
-  if (view === 'board' && presentation === 'list') renderListPresentationContent(body, items);
-  else if (view === 'board') renderBoardContent(body, items);
+  if (state.view === 'board' && state.presentation === 'list')
+    renderListPresentationContent(body, items);
+  else if (state.view === 'board') renderBoardContent(body, items);
   else renderCardListContent(body, items);
   body.querySelector(':scope > .archive-more')?.remove();
-  if (view === 'archive' && archiveMore) {
+  if (state.view === 'archive' && state.archiveMore) {
     const more = button(
       'Load older archived work',
       async () => {
@@ -4199,7 +4179,7 @@ function renderContent() {
       },
       'archive-more',
     );
-    more.disabled = busy || loading;
+    more.disabled = state.busy || state.loading;
     body.append(more);
   }
 }
@@ -4208,32 +4188,34 @@ function appendCards(parent, items) {
 }
 async function loadHistory(reset = false) {
   const events = await api(
-    root + '/history' + (!reset && historyBefore ? `?before=${historyBefore}` : ''),
+    state.root +
+      '/history' +
+      (!reset && state.historyBefore ? `?before=${state.historyBefore}` : ''),
   );
-  history = reset ? events : [...history, ...events];
-  historyBefore = events.at(-1)?.id || 0;
-  historyMore = events.length === 50;
+  state.history = reset ? events : [...state.history, ...events];
+  state.historyBefore = events.at(-1)?.id || 0;
+  state.historyMore = events.length === 50;
 }
 const ARCHIVE_PAGE = 50;
 function resetArchive() {
-  archiveItems = [];
-  archiveOffset = 0;
-  archiveMore = false;
+  state.archiveItems = [];
+  state.archiveOffset = 0;
+  state.archiveMore = false;
 }
 async function loadArchive(reset = false) {
-  const offset = reset ? 0 : archiveOffset;
-  const page = await api(`${root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`);
+  const offset = reset ? 0 : state.archiveOffset;
+  const page = await api(`${state.root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`);
   if (!Array.isArray(page)) throw new Error('Archive response is invalid. Refresh to retry.');
-  archiveItems = reset ? page : [...archiveItems, ...page];
-  archiveOffset = offset + page.length;
-  archiveMore = page.length === ARCHIVE_PAGE;
+  state.archiveItems = reset ? page : [...state.archiveItems, ...page];
+  state.archiveOffset = offset + page.length;
+  state.archiveMore = page.length === ARCHIVE_PAGE;
 }
 const SPRINT_HISTORY_PAGE = 50;
 function resetSprintHistory() {
-  sprintHistory = [];
-  sprintHistoryOffset = 0;
-  sprintHistoryMore = false;
-  sprintHistoryError = '';
+  state.sprintHistory = [];
+  state.sprintHistoryOffset = 0;
+  state.sprintHistoryMore = false;
+  state.sprintHistoryError = '';
 }
 function validSprintHistoryPage(page) {
   return (
@@ -4255,35 +4237,37 @@ function validSprintHistoryPage(page) {
   );
 }
 async function loadSprintHistory(reset = false) {
-  const offset = reset ? 0 : sprintHistoryOffset;
-  const page = await api(`${root}/sprints/archive?offset=${offset}&limit=${SPRINT_HISTORY_PAGE}`);
+  const offset = reset ? 0 : state.sprintHistoryOffset;
+  const page = await api(
+    `${state.root}/sprints/archive?offset=${offset}&limit=${SPRINT_HISTORY_PAGE}`,
+  );
   if (!validSprintHistoryPage(page))
     throw new Error('Sprint history response is invalid. Refresh to retry.');
-  sprintHistory = reset ? page.records : [...sprintHistory, ...page.records];
-  sprintHistoryOffset = offset + page.records.length;
-  sprintHistoryMore = page.next_offset !== undefined;
-  sprintHistoryError = '';
+  state.sprintHistory = reset ? page.records : [...state.sprintHistory, ...page.records];
+  state.sprintHistoryOffset = offset + page.records.length;
+  state.sprintHistoryMore = page.next_offset !== undefined;
+  state.sprintHistoryError = '';
 }
 function showWorkspaceSelection() {
-  if (busy || loading) return;
-  workspaceGate = 'select';
+  if (state.busy || state.loading) return;
+  state.workspaceGate = 'select';
   render();
   document.querySelector('[data-workspace-choice]')?.focus();
 }
 function showWorkspaceCreate() {
-  if (busy || loading || integrationFormOpen) return;
-  workspaceCreateKey = '';
-  workspaceCreateName = '';
-  if (board) {
+  if (state.busy || state.loading || state.integrationFormOpen) return;
+  state.workspaceCreateKey = '';
+  state.workspaceCreateName = '';
+  if (state.board) {
     enterWorkspaceGate('create', 'Create a workspace to add another planning space.');
     return;
   }
-  workspaceGate = 'create';
+  state.workspaceGate = 'create';
   render();
 }
 async function createWorkspace(event) {
   event.preventDefault();
-  if (workspaceCreating || busy || loading) return;
+  if (state.workspaceCreating || state.busy || state.loading) return;
   const form = event.currentTarget;
   const input = form.elements.name;
   const status = form.querySelector('[data-workspace-create-status]');
@@ -4296,11 +4280,11 @@ async function createWorkspace(event) {
     input.focus();
     return;
   }
-  if (workspaceCreateName !== name || !workspaceCreateKey) {
-    workspaceCreateName = name;
-    workspaceCreateKey = requestKey();
+  if (state.workspaceCreateName !== name || !state.workspaceCreateKey) {
+    state.workspaceCreateName = name;
+    state.workspaceCreateKey = requestKey();
   }
-  workspaceCreating = true;
+  state.workspaceCreating = true;
   submit.disabled = true;
   input.disabled = true;
   setStatus('Creating workspace…');
@@ -4309,8 +4293,8 @@ async function createWorkspace(event) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-CSRF-Token': session.csrf,
-        'Idempotency-Key': workspaceCreateKey,
+        'X-CSRF-Token': state.session.csrf,
+        'Idempotency-Key': state.workspaceCreateKey,
       },
       body: JSON.stringify({ name }),
     });
@@ -4319,25 +4303,25 @@ async function createWorkspace(event) {
     const next = await loadWorkspaces(created.id);
     if (!next.some((workspace) => workspace.id === created.id))
       throw new Error('The new workspace is not available yet. Refresh to retry.');
-    pendingPlanningURLState = undefined;
+    state.pendingPlanningURLState = undefined;
     if (!(await chooseWorkspace(created.id)))
       throw new Error('Workspace created, but its board could not be opened. Refresh to retry.');
-    workspaceCreateKey = '';
-    workspaceCreateName = '';
+    state.workspaceCreateKey = '';
+    state.workspaceCreateName = '';
   } catch (error) {
     if (!document.querySelector('[data-workspace-create-status]')) {
-      workspaceGate = 'create';
-      root = undefined;
+      state.workspaceGate = 'create';
+      state.root = undefined;
       render();
     }
     const currentForm = document.querySelector('.workspace-create-form');
     const currentStatus = currentForm?.querySelector('[data-workspace-create-status]');
     const currentInput = currentForm?.elements.name;
-    if (currentInput && !currentInput.value) currentInput.value = workspaceCreateName || name;
+    if (currentInput && !currentInput.value) currentInput.value = state.workspaceCreateName || name;
     if (currentStatus) setStatusText(currentStatus, error.message, true);
     if (currentInput) currentInput.focus();
   } finally {
-    workspaceCreating = false;
+    state.workspaceCreating = false;
     const currentForm = document.querySelector('.workspace-create-form');
     if (currentForm) {
       currentForm.elements.name.disabled = false;
@@ -4347,21 +4331,21 @@ async function createWorkspace(event) {
   }
 }
 function historyActorLabel(subject) {
-  const member = board.members.find((candidate) => candidate.subject === subject);
+  const member = state.board.members.find((candidate) => candidate.subject === subject);
   const name = member
     ? memberListingInfo(member).name
-    : subject === session?.subject
-      ? String(session.name || '').trim()
+    : subject === state.session?.subject
+      ? String(state.session.name || '').trim()
       : '';
   return name ? `${name} (${subject})` : subject;
 }
 function renderHistory(content) {
   const page = pageStack('history');
-  const label = workspaceHistoryLabel(board.workspace);
+  const label = workspaceHistoryLabel(state.board.workspace);
   page.append(el('p', label, 'muted'));
-  if (!history.length) page.append(emptyState('No planning changes yet.'));
+  if (!state.history.length) page.append(emptyState('No planning changes yet.'));
   const list = el('div', undefined, 'history-list');
-  history.forEach((e) => {
+  state.history.forEach((e) => {
     const row = el('article', undefined, 'history-row');
     row.append(
       el('strong', e.action.replaceAll('.', ' · ')),
@@ -4376,7 +4360,7 @@ function renderHistory(content) {
     list.append(row);
   });
   if (list.childElementCount) page.append(list);
-  if (historyMore)
+  if (state.historyMore)
     page.append(
       button('Load older changes', async () => {
         try {
@@ -4666,17 +4650,16 @@ function labelColorPicker(parent, value) {
   parent.append(palette);
   return palette;
 }
-let editorReturn;
 function closeEditor() {
-  if (busy) return;
-  const returnTo = editorReturn;
-  editorReturn = undefined;
+  if (state.busy) return;
+  const returnTo = state.editorReturn;
+  state.editorReturn = undefined;
   hideAttachmentTooltip();
   $('editor').close();
   if (returnTo) returnTo();
 }
 function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
-  editorReturn = afterClose;
+  state.editorReturn = afterClose;
   $('editor-title').textContent = title;
   $('editor-form')
     .querySelectorAll('.dialog-head .badge-due[data-due-date-badge]')
@@ -4693,7 +4676,7 @@ function openEditor(title, build, submit, readOnly = false, afterSave, afterClos
   $('save').textContent = 'Save changes';
   $('save').hidden = readOnly;
   $('save').disabled = false;
-  const revision = board.workspace.revision;
+  const revision = state.board.workspace.revision;
   let pending, key;
   build($('fields'));
   if (readOnly) {
@@ -4712,7 +4695,7 @@ function openEditor(title, build, submit, readOnly = false, afterSave, afterClos
   }
   $('editor-form').onsubmit = async (e) => {
     e.preventDefault();
-    if (readOnly || busy) return;
+    if (readOnly || state.busy) return;
     $('form-error').textContent = '';
     $('save').disabled = true;
     $('cancel').disabled = true;
@@ -4739,11 +4722,11 @@ function openEditor(title, build, submit, readOnly = false, afterSave, afterClos
   $('editor').showModal();
 }
 async function showProposals(before = 0) {
-  if (!board || busy || loading) return;
-  const currentRoot = root;
+  if (!state.board || state.busy || state.loading) return;
+  const currentRoot = state.root;
   try {
     const rows = await api(currentRoot + '/proposals?before=' + before);
-    if (root !== currentRoot || busy) return;
+    if (state.root !== currentRoot || state.busy) return;
     $('editor').close();
     openEditor(
       'Planning proposals',
@@ -4816,10 +4799,10 @@ function importProposal(document) {
   $('save').textContent = 'Save draft only';
 }
 async function reviewProposal(id) {
-  const currentRoot = root;
+  const currentRoot = state.root;
   try {
     const preview = await api(currentRoot + '/proposals/' + encodeURIComponent(id));
-    if (root !== currentRoot || busy) return;
+    if (state.root !== currentRoot || state.busy) return;
     const v = preview.proposal;
     const canAccept = v.state === 'draft' && !!preview.digest && !preview.problem && writable();
     $('editor').close();
@@ -4990,13 +4973,17 @@ function resolveGitLabMRURL(value, currentBoard, projects) {
   return { project: Number(project.id), kind: 'mr', number: Number(iid) };
 }
 async function attachItemGitLabLink(item, link, context) {
-  const currentBoard = board,
-    currentRoot = root;
+  const currentBoard = state.board,
+    currentRoot = state.root;
   const form = context?.form || ($('editor').open ? $('editor-form') : undefined);
   const draft = form ? itemEditorDraft(form) : undefined;
   const mode =
     context?.mode ||
-    ($('editor').open ? 'modal' : view === 'board' && presentation === 'list' ? 'detail' : 'modal');
+    ($('editor').open
+      ? 'modal'
+      : state.view === 'board' && state.presentation === 'list'
+        ? 'detail'
+        : 'modal');
   const origin = context?.origin;
   const previous = new Set(
     currentBoard.links.filter((value) => value.items.includes(item.id)).map((value) => value.id),
@@ -5010,17 +4997,17 @@ async function attachItemGitLabLink(item, link, context) {
       link,
     });
   } catch (error) {
-    if (root === currentRoot && board) {
-      const latest = board.items.find((value) => value.id === item.id);
+    if (state.root === currentRoot && state.board) {
+      const latest = state.board.items.find((value) => value.id === item.id);
       if (latest && draft) reopenItemEditor(latest, draft, mode, origin);
       notice(error.message, true);
     }
     return;
   }
-  if (root !== currentRoot || !board) return;
-  const latest = board.items.find((value) => value.id === item.id);
+  if (state.root !== currentRoot || !state.board) return;
+  const latest = state.board.items.find((value) => value.id === item.id);
   if (!latest) return;
-  const added = board.links
+  const added = state.board.links
     .filter((value) => value.items.includes(item.id) && !previous.has(value.id))
     .map((value) => value.id);
   reopenItemEditor(
@@ -5031,8 +5018,8 @@ async function attachItemGitLabLink(item, link, context) {
   );
 }
 function inlineGitLabPaste(parent, item, readOnly, context) {
-  const currentBoard = board,
-    currentRoot = root;
+  const currentBoard = state.board,
+    currentRoot = state.root;
   const row = el('div', undefined, 'gitlab-paste-row');
   const input = noAutofill(el('input'));
   input.id = uid('gitlab-mr-url');
@@ -5061,7 +5048,7 @@ function inlineGitLabPaste(parent, item, readOnly, context) {
     setStatus('Resolving GitLab merge request…');
     try {
       const projects = await loadGitLabProjects(currentRoot);
-      if (!row.isConnected || board !== currentBoard || root !== currentRoot) return;
+      if (!row.isConnected || state.board !== currentBoard || state.root !== currentRoot) return;
       const link = resolveGitLabMRURL(raw, currentBoard, projects);
       await attachItemGitLabLink(item, link, context);
     } catch (error) {
@@ -5083,25 +5070,29 @@ function inlineGitLabPaste(parent, item, readOnly, context) {
   parent.append(row, status);
 }
 async function addGitLabLink(item, context) {
-  const currentBoard = board,
-    currentRoot = root;
+  const currentBoard = state.board,
+    currentRoot = state.root;
   const form = context?.form || ($('editor').open ? $('editor-form') : undefined);
   const draft = form ? itemEditorDraft(form) : undefined;
   const mode =
     context?.mode ||
-    ($('editor').open ? 'modal' : view === 'board' && presentation === 'list' ? 'detail' : 'modal');
+    ($('editor').open
+      ? 'modal'
+      : state.view === 'board' && state.presentation === 'list'
+        ? 'detail'
+        : 'modal');
   const origin = context?.origin;
   if (mode === 'modal') closeEditor();
   let projects = [],
     catalogError = '';
   const returnToCard = () => {
-    if (root !== currentRoot || !board) return;
-    const latest = board.items.find((value) => value.id === item.id);
+    if (state.root !== currentRoot || !state.board) return;
+    const latest = state.board.items.find((value) => value.id === item.id);
     if (!latest) return;
     const previous = new Set(
       currentBoard.links.filter((value) => value.items.includes(item.id)).map((value) => value.id),
     );
-    const added = board.links
+    const added = state.board.links
       .filter((value) => value.items.includes(item.id) && !previous.has(value.id))
       .map((value) => value.id);
     const returnDraft = draft
@@ -5114,7 +5105,7 @@ async function addGitLabLink(item, context) {
   } catch (e) {
     catalogError = e.message;
   }
-  if (board !== currentBoard || root !== currentRoot) return;
+  if (state.board !== currentBoard || state.root !== currentRoot) return;
   openEditor(
     'Add link',
     (fields) => {
@@ -5183,7 +5174,11 @@ async function addGitLabLink(item, context) {
               search: query,
             });
             const data = await api(currentRoot + '/gitlab/merge-requests?' + params);
-            if (generation !== searchGeneration || board !== currentBoard || root !== currentRoot)
+            if (
+              generation !== searchGeneration ||
+              state.board !== currentBoard ||
+              state.root !== currentRoot
+            )
               return;
             if (!validGitLabMergeRequestCatalog(data))
               throw new Error('GitLab merge-request results are invalid. Refresh to retry.');
@@ -5191,7 +5186,11 @@ async function addGitLabLink(item, context) {
             controls.setEntries(mergeRequestEntries(data, selected), selected);
             controls.setStatus(data.length ? '' : 'No matching merge requests.');
           } catch (e) {
-            if (generation === searchGeneration && board === currentBoard && root === currentRoot)
+            if (
+              generation === searchGeneration &&
+              state.board === currentBoard &&
+              state.root === currentRoot
+            )
               controls.setStatus(e.message);
           }
         }, 250);
@@ -5232,7 +5231,7 @@ async function addGitLabLink(item, context) {
         );
         if (wasOpen) queueMergeRequestSearch('', mrPicker);
       });
-      if (!projects.length && !catalogError && !board.integration.projects.length)
+      if (!projects.length && !catalogError && !state.board.integration.projects.length)
         fields.append(helpText('No approved GitLab projects are available for linking.'));
     },
     (data) => {
@@ -5259,25 +5258,26 @@ async function addGitLabLink(item, context) {
 }
 async function reconcileItemLinks(itemID, desiredIDs) {
   const desired = new Set(desiredIDs);
-  for (const link of board.links.filter(
+  for (const link of state.board.links.filter(
     (link) => link.items.includes(itemID) && !desired.has(link.id),
   )) {
     await change({
-      revision: board.workspace.revision,
+      revision: state.board.workspace.revision,
       kind: 'link.detach',
       target: itemID,
       destination: link.id,
     });
   }
   for (const linkID of desired) {
-    if (board.links.some((link) => link.id === linkID && link.items.includes(itemID))) continue;
-    const link = board.links.find((value) => value.id === linkID);
+    if (state.board.links.some((link) => link.id === linkID && link.items.includes(itemID)))
+      continue;
+    const link = state.board.links.find((value) => value.id === linkID);
     if (!link)
       throw new Error(
         'A selected GitLab link is no longer available. Refresh and reopen the card.',
       );
     await change({
-      revision: board.workspace.revision,
+      revision: state.board.workspace.revision,
       kind: 'link.attach',
       target: itemID,
       link: { project: link.project, kind: link.kind, number: link.number },
@@ -5353,7 +5353,7 @@ function renderCommentList(list, comments) {
   reconcileKeyedChildren(list, next, (node) => `comment:${node.dataset.commentId}`);
 }
 function renderItemComments(fields, item) {
-  const currentRoot = root;
+  const currentRoot = state.root;
   const section = el('section', undefined, 'item-comments');
   const heading = panelHead('Comments');
   const status = statusLine();
@@ -5371,7 +5371,7 @@ function renderItemComments(fields, item) {
   const setStatus = (text, error = false) => setStatusText(status, text, error);
   setStatus('Loading comments…');
   section.append(heading, status, older, list);
-  if (board.role !== 'member' && board.role !== 'admin')
+  if (state.board.role !== 'member' && state.board.role !== 'admin')
     section.append(helpText('Viewers can read comments; members and admins can add them.'));
   else {
     const composer = el('div', undefined, 'comment-composer');
@@ -5396,7 +5396,8 @@ function renderItemComments(fields, item) {
       const page = await api(
         currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments?' + query,
       );
-      if (loadID !== commentLoad || root !== currentRoot || !section.isConnected) return false;
+      if (loadID !== commentLoad || state.root !== currentRoot || !section.isConnected)
+        return false;
       if (!validCommentPage(page))
         throw new Error('Comments are invalid. Reopen the item to retry.');
       comments = append ? [...page.comments, ...comments] : page.comments;
@@ -5411,7 +5412,7 @@ function renderItemComments(fields, item) {
       );
       return true;
     } catch (error) {
-      if (loadID === commentLoad && root === currentRoot && section.isConnected) {
+      if (loadID === commentLoad && state.root === currentRoot && section.isConnected) {
         older.hidden = !nextBefore;
         older.disabled = false;
         setStatus(error.message, true);
@@ -5443,12 +5444,12 @@ function renderItemComments(fields, item) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRF-Token': session.csrf,
+          'X-CSRF-Token': state.session.csrf,
           'Idempotency-Key': pendingCommentKey,
         },
         body: JSON.stringify({ body }),
       });
-      if (root !== currentRoot || !section.isConnected) return;
+      if (state.root !== currentRoot || !section.isConnected) return;
       pendingCommentBody = '';
       pendingCommentKey = '';
       textarea.value = '';
@@ -5456,7 +5457,7 @@ function renderItemComments(fields, item) {
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       await loadComments();
     } catch (error) {
-      if (root === currentRoot && section.isConnected) setStatus(error.message, true);
+      if (state.root === currentRoot && section.isConnected) setStatus(error.message, true);
     } finally {
       commentBusy = false;
       if (addButton && section.isConnected) {
@@ -5468,7 +5469,7 @@ function renderItemComments(fields, item) {
   void loadComments();
 }
 function renderItemAttachments(fields, item, readOnly) {
-  const currentRoot = root;
+  const currentRoot = state.root;
   const section = el('section', undefined, 'item-attachments');
   section.setAttribute('aria-label', 'Attachments');
   const heading = el('div', undefined, 'section-head');
@@ -5519,9 +5520,9 @@ function renderItemAttachments(fields, item, readOnly) {
     try {
       await api(attachmentHref(item, attachment, currentRoot), {
         method: 'DELETE',
-        headers: { 'X-CSRF-Token': session.csrf },
+        headers: { 'X-CSRF-Token': state.session.csrf },
       });
-      if (root !== currentRoot || !section.isConnected) return;
+      if (state.root !== currentRoot || !section.isConnected) return;
       setItemAttachments(
         item,
         (item.attachments || []).filter((value) => value.id !== attachment.id),
@@ -5570,14 +5571,14 @@ function renderItemAttachments(fields, item, readOnly) {
     heading.append(headingTitle, upload);
     async function uploadFile(file) {
       add.focus();
-      if (attachmentBusy || uploadBusy || !writable()) return false;
+      if (attachmentBusy || state.uploadBusy || !writable()) return false;
       const rejection = attachmentRejection(item, file);
       if (rejection) {
         setStatus(rejection, true);
         return false;
       }
       attachmentBusy = true;
-      uploadBusy = true;
+      state.uploadBusy = true;
       add.disabled = true;
       setStatus(`Uploading ${file.name}…`);
       showProgress(0);
@@ -5589,7 +5590,7 @@ function renderItemAttachments(fields, item, readOnly) {
           if (fraction !== undefined)
             setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`);
         });
-        if (root !== currentRoot || !section.isConnected) return false;
+        if (state.root !== currentRoot || !section.isConnected) return false;
         renderList();
         renderContent();
         setStatus('Attachment uploaded.');
@@ -5598,7 +5599,7 @@ function renderItemAttachments(fields, item, readOnly) {
         if (section.isConnected) setStatus(error.message, true);
       } finally {
         attachmentBusy = false;
-        uploadBusy = false;
+        state.uploadBusy = false;
         hideProgress();
         if (section.isConnected) {
           add.disabled = !writable();
@@ -5609,7 +5610,7 @@ function renderItemAttachments(fields, item, readOnly) {
       return uploaded;
     }
     async function uploadFiles(files) {
-      if (attachmentBusy || uploadBusy || !writable()) return;
+      if (attachmentBusy || state.uploadBusy || !writable()) return;
       const selected = Array.from(files || []).filter(Boolean);
       input.value = '';
       if (!selected.length) {
@@ -5640,7 +5641,7 @@ function renderItemAttachments(fields, item, readOnly) {
       if (!isFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
-      if (writable() && !attachmentBusy && !uploadBusy) {
+      if (writable() && !attachmentBusy && !state.uploadBusy) {
         event.dataTransfer.dropEffect = 'copy';
         section.classList.add('attachment-drop-active');
         hint.hidden = false;
@@ -5664,7 +5665,8 @@ function renderItemAttachments(fields, item, readOnly) {
       event.preventDefault();
       event.stopPropagation();
       clearAttachmentDrop();
-      if (writable() && !attachmentBusy && !uploadBusy) void uploadFiles(event.dataTransfer.files);
+      if (writable() && !attachmentBusy && !state.uploadBusy)
+        void uploadFiles(event.dataTransfer.files);
     });
   } else heading.append(headingTitle);
   section.append(heading, status, list);
@@ -5796,19 +5798,20 @@ function itemStatusSummary(item) {
   const section = el('details', undefined, 'item-status');
   section.dataset.stateKey = `item:${item.id}:status`;
   section.setAttribute('aria-label', 'Current card status');
-  const column = board.columns.find((value) => value.id === item.column_id);
+  const column = state.board.columns.find((value) => value.id === item.column_id);
   const category =
     { todo: 'To do', doing: 'In progress', done: 'Done' }[column?.category] || 'Uncategorised';
   const openSprints = (item.sprint_ids || []).map(
-    (id) => board.sprints.find((sprint) => sprint.id === id)?.name || id,
+    (id) => state.board.sprints.find((sprint) => sprint.id === id)?.name || id,
   );
-  const closedSprints = board.closed_scope
+  const closedSprints = state.board.closed_scope
     .filter((scope) => scope.item_id === item.id)
     .map(
       (scope) =>
-        board.sprints.find((sprint) => sprint.id === scope.sprint_id)?.name || scope.sprint_id,
+        state.board.sprints.find((sprint) => sprint.id === scope.sprint_id)?.name ||
+        scope.sprint_id,
     );
-  const links = board.links.filter((link) => link.items.includes(item.id));
+  const links = state.board.links.filter((link) => link.items.includes(item.id));
   // The summary is the whole status in one line; everything that would push the
   // editor down \u2014 sprint history and cached provider observations \u2014 waits behind
   // the disclosure.
@@ -5889,7 +5892,7 @@ function itemStatusSummary(item) {
 async function restoreSharedItem(item, context) {
   if (!writable()) return;
   await quick({ kind: 'item.restore', target: item.id });
-  if (!board) return;
+  if (!state.board) return;
   if (context?.mode === 'modal') closeEditor();
   else closeDetail({ force: true, focus: false });
   await openSharedItem(item.id);
@@ -5937,12 +5940,14 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
     readOnly,
     true,
   );
-  const selfSubject = board.members.find((member) => member.subject === session?.subject)?.subject;
+  const selfSubject = state.board.members.find(
+    (member) => member.subject === state.session?.subject,
+  )?.subject;
   const assigneePicker = multiSelect(
     controls,
     'assignee',
     'Assignee',
-    [['', 'Unassigned'], ...board.members.map((m) => [m.subject, memberName(m.subject)])],
+    [['', 'Unassigned'], ...state.board.members.map((m) => [m.subject, memberName(m.subject)])],
     [draft?.assignee ?? item.assignee],
     undefined,
     undefined,
@@ -5961,7 +5966,7 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
     controls,
     'labels',
     'Labels',
-    board.labels.map((label) => [label.name, label.name]),
+    state.board.labels.map((label) => [label.name, label.name]),
     draft?.labels ?? item.labels,
     (chip, value) => {
       const label = labelInfo(value);
@@ -5976,7 +5981,7 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
     controls,
     'project_id',
     'Project',
-    [['', 'No project'], ...board.projects.map((p) => [p.id, p.name])],
+    [['', 'No project'], ...state.board.projects.map((p) => [p.id, p.name])],
     selectedProjects.length ? selectedProjects : [''],
     undefined,
     'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.',
@@ -5987,30 +5992,34 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
     controls,
     'sprint_ids',
     'Open sprints',
-    board.sprints.filter((s) => s.state !== 'closed').map((s) => [s.id, `${s.name} (${s.state})`]),
+    state.board.sprints
+      .filter((s) => s.state !== 'closed')
+      .map((s) => [s.id, `${s.name} (${s.state})`]),
     draft?.sprint_ids ?? item.sprint_ids,
     undefined,
     'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.',
   );
-  const closed = board.closed_scope
+  const closed = state.board.closed_scope
     .filter((s) => s.item_id === item.id)
-    .map((scope) => board.sprints.find((s) => s.id === scope.sprint_id)?.name || scope.sprint_id);
+    .map(
+      (scope) => state.board.sprints.find((s) => s.id === scope.sprint_id)?.name || scope.sprint_id,
+    );
   if (closed.length)
     controls.append(helpText('Closed sprint history (read-only): ' + closed.join(', ')));
   multiSelect(
     controls,
     'dependencies',
     'Depends on',
-    board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title]),
+    state.board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title]),
     draft?.dependencies ?? item.dependencies,
   );
   if (item.id) {
-    const itemLinks = board.links.filter((link) => link.items.includes(item.id));
+    const itemLinks = state.board.links.filter((link) => link.items.includes(item.id));
     const linkPicker = multiSelect(
       controls,
       'link_ids',
       'GitLab links',
-      board.links.map((link) => [link.id, linkDisplayName(link)]),
+      state.board.links.map((link) => [link.id, linkDisplayName(link)]),
       draft?.link_ids ?? itemLinks.map((link) => link.id),
       undefined,
       'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.',
@@ -6038,7 +6047,7 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
     'Move to',
     draft?.column_id ?? item.column_id,
     'text',
-    board.columns.map((c) => [c.id, c.name]),
+    state.board.columns.map((c) => [c.id, c.name]),
   );
   if (item.id && !item.archived && !readOnly) {
     const archive = writeButton('Archive item', () => archiveItem(item, context), 'danger');
@@ -6049,7 +6058,7 @@ function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
     const cancel = footer?.querySelector('#cancel,.detail-cancel');
     if (footer) footer.insertBefore(archive, cancel || footer.lastElementChild);
   }
-  if (item.id && item.archived && board.role !== 'viewer') {
+  if (item.id && item.archived && state.board.role !== 'viewer') {
     const restore = writeButton('Restore item', () => void restoreSharedItem(item, context));
     restore.dataset.itemFooter = 'true';
     restore.dataset.write = 'true';
@@ -6066,26 +6075,26 @@ function createDetailPane() {
   const pane = el('aside', undefined, 'item-detail-pane');
   pane.hidden = true;
   pane.setAttribute('aria-label', 'Selected work item');
-  detailPane = pane;
+  state.detailPane = pane;
   return pane;
 }
 function syncListSelection() {
   document.querySelectorAll('.list-row').forEach((row) => {
-    const selected = row.dataset.item === selectedItemID;
+    const selected = row.dataset.item === state.selectedItemID;
     row.classList.toggle('is-selected', selected);
     if (selected) row.setAttribute('aria-current', 'true');
     else row.removeAttribute('aria-current');
   });
 }
 function updateDetailPaneVisibility() {
-  if (!detailPane) return;
+  if (!state.detailPane) return;
   const open =
-    !!detailState &&
-    detailState.pane === detailPane &&
-    !!selectedItemID &&
-    detailState.form?.isConnected;
-  detailPane.hidden = !open;
-  detailPane.parentElement?.classList.toggle('has-detail', open);
+    !!state.detailState &&
+    state.detailState.pane === state.detailPane &&
+    !!state.selectedItemID &&
+    state.detailState.form?.isConnected;
+  state.detailPane.hidden = !open;
+  state.detailPane.parentElement?.classList.toggle('has-detail', open);
   syncListSelection();
 }
 function detailDraftIsDirty(state) {
@@ -6105,22 +6114,22 @@ function detailDraftIsDirty(state) {
 }
 function detailDiscardAllowed() {
   return (
-    !detailState?.dirty ||
-    window.confirm(`Discard unsaved changes to “${detailState.item?.title || 'this item'}”?`)
+    !state.detailState?.dirty ||
+    window.confirm(`Discard unsaved changes to “${state.detailState.item?.title || 'this item'}”?`)
   );
 }
 function closeDetail({ force = false, focus = true } = {}) {
-  if (busy) return false;
-  if (!detailState) {
-    selectedItemID = '';
-    detailPane?.removeAttribute('data-item');
+  if (state.busy) return false;
+  if (!state.detailState) {
+    state.selectedItemID = '';
+    state.detailPane?.removeAttribute('data-item');
     updateDetailPaneVisibility();
     return true;
   }
   if (!force && !detailDiscardAllowed()) return false;
-  const detail = detailState;
-  detailState = undefined;
-  selectedItemID = '';
+  const detail = state.detailState;
+  state.detailState = undefined;
+  state.selectedItemID = '';
   setSharedItem('');
   if (detail.pane) {
     detail.pane.hidden = true;
@@ -6139,30 +6148,30 @@ function closeDetail({ force = false, focus = true } = {}) {
   return true;
 }
 function selectItem(itemID, origin) {
-  if (!board || view !== 'board' || presentation !== 'list') return false;
-  if (detailState?.itemID === itemID) {
-    if (origin) detailState.origin = origin;
-    detailState.form?.querySelector('[name="title"]')?.focus({ preventScroll: true });
+  if (!state.board || state.view !== 'board' || state.presentation !== 'list') return false;
+  if (state.detailState?.itemID === itemID) {
+    if (origin) state.detailState.origin = origin;
+    state.detailState.form?.querySelector('[name="title"]')?.focus({ preventScroll: true });
     return true;
   }
   if (!closeDetail({ focus: false })) return false;
-  const item = board.items.find((value) => value.id === itemID);
+  const item = state.board.items.find((value) => value.id === itemID);
   if (!item) return false;
-  selectedItemID = itemID;
+  state.selectedItemID = itemID;
   openItemDetail(item, undefined, origin);
   return true;
 }
 function updateDetailHeader(item) {
-  if (!detailState?.form || !item) return;
-  detailState.item = item;
-  const title = detailState.form.querySelector('.item-detail-title');
+  if (!state.detailState?.form || !item) return;
+  state.detailState.item = item;
+  const title = state.detailState.form.querySelector('.item-detail-title');
   if (title?.firstChild) title.firstChild.nodeValue = item.title;
   const help = title?.querySelector('.help-popover-content');
   if (help) help.textContent = `Card ID: ${item.id}\nRevision: ${item.revision}`;
 }
 function openItemDetail(item, draft, origin) {
-  if (!detailPane) return;
-  const readOnly = board.role === 'viewer' || item.archived;
+  if (!state.detailPane) return;
+  const readOnly = state.board.role === 'viewer' || item.archived;
   const form = el('form', undefined, 'item-detail-form');
   const heading = el('div', undefined, 'item-detail-head');
   const title = el('h2', item.title, 'item-detail-title');
@@ -6180,8 +6189,8 @@ function openItemDetail(item, draft, origin) {
   save.dataset.write = 'true';
   footer.append(cancel, save);
   form.append(heading, fields, error, footer);
-  detailPane.replaceChildren(form);
-  detailPane.hidden = false;
+  state.detailPane.replaceChildren(form);
+  state.detailPane.hidden = false;
   const context = { mode: 'detail', form, footer, origin };
   buildItemEditor(fields, item, draft, readOnly, context, title);
   if (readOnly) {
@@ -6197,22 +6206,22 @@ function openItemDetail(item, draft, origin) {
     });
   }
   save.hidden = readOnly;
-  let revision = board.workspace.revision;
+  let revision = state.board.workspace.revision;
   let pending, key;
-  detailState = {
+  state.detailState = {
     itemID: item.id,
     item,
     itemRevision: item.revision,
     form,
-    pane: detailPane,
+    pane: state.detailPane,
     origin,
     dirty: false,
     initialDraft: null,
   };
-  const detail = detailState;
+  const detail = state.detailState;
   setSharedItem(item.id);
   const updateDirty = () => {
-    if (detailState === detail) detail.dirty = detailDraftIsDirty(detail);
+    if (state.detailState === detail) detail.dirty = detailDraftIsDirty(detail);
   };
   form.addEventListener('input', updateDirty);
   form.addEventListener('change', updateDirty);
@@ -6220,12 +6229,12 @@ function openItemDetail(item, draft, origin) {
   updateDetailPaneVisibility();
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (readOnly || busy || detailState !== detail) return;
+    if (readOnly || state.busy || state.detailState !== detail) return;
     setErrorText(error, '');
     save.disabled = true;
     cancel.disabled = true;
     close.disabled = true;
-    revision = board.workspace.revision;
+    revision = state.board.workspace.revision;
     const data = new FormData(form);
     const desired = data.getAll('link_ids');
     detail.desiredLinkIDs = desired;
@@ -6248,15 +6257,15 @@ function openItemDetail(item, draft, origin) {
         );
       revision = receiptRevision(result.receipt, revision + 1);
       await reconcileItemLinks(item.id, detail.desiredLinkIDs || []);
-      if (detailState !== detail || !board) return;
-      const latest = board.items.find((value) => value.id === item.id);
+      if (state.detailState !== detail || !state.board) return;
+      const latest = state.board.items.find((value) => value.id === item.id);
       if (!latest) {
         closeDetail({ force: true });
         return;
       }
       detail.item = latest;
       detail.itemRevision = latest.revision;
-      revision = board.workspace.revision;
+      revision = state.board.workspace.revision;
       detail.initialDraft = itemEditorDraft(form);
       detail.dirty = false;
       updateDetailHeader(latest);
@@ -6264,7 +6273,7 @@ function openItemDetail(item, draft, origin) {
       refreshEditorDueBadge(form, latest);
       notice('Changes saved.');
     } catch (err) {
-      if (detailState === detail) {
+      if (state.detailState === detail) {
         detail.dirty = true;
         setErrorText(
           error,
@@ -6272,7 +6281,7 @@ function openItemDetail(item, draft, origin) {
         );
       }
     } finally {
-      if (detailState === detail && form.isConnected) {
+      if (state.detailState === detail && form.isConnected) {
         save.disabled = false;
         cancel.disabled = false;
         close.disabled = false;
@@ -6289,7 +6298,7 @@ function reopenItemEditor(item, draft, mode, origin) {
 }
 function editItemModal(item, draft) {
   const existing = !!item;
-  const readOnly = board.role === 'viewer' || item?.archived;
+  const readOnly = state.board.role === 'viewer' || item?.archived;
   let desiredLinkIDs;
   const project = singleFilterValue('project');
   const projectIDs = ['all', 'none'].includes(project) ? [] : [project];
@@ -6299,7 +6308,7 @@ function editItemModal(item, draft) {
     start_date: '',
     end_date: '',
     due_date: '',
-    column_id: board.columns[0].id,
+    column_id: state.board.columns[0].id,
     project_id: projectIDs[0] || '',
     project_ids: projectIDs,
     sprint_ids: [],
@@ -6308,7 +6317,7 @@ function editItemModal(item, draft) {
     dependencies: [],
   };
   const context = { mode: 'modal', form: $('editor-form') };
-  editorItemID = existing ? item.id : '';
+  state.editorItemID = existing ? item.id : '';
   if (existing) setSharedItem(item.id);
   openEditor(
     existing ? 'Work item' : 'Create work item',
@@ -6329,7 +6338,7 @@ function editItemModal(item, draft) {
   );
 }
 function editItem(item, draft) {
-  if (item && view === 'board' && presentation === 'list') return selectItem(item.id);
+  if (item && state.view === 'board' && state.presentation === 'list') return selectItem(item.id);
   return editItemModal(item, draft);
 }
 function archiveItem(item, context) {
@@ -6423,7 +6432,7 @@ function closeSprint(sprint) {
       );
       field(fields, 'destination', 'Also assign unfinished work to', '', 'text', [
         ['', 'No additional sprint'],
-        ...board.sprints
+        ...state.board.sprints
           .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
           .map((s) => [s.id, s.name]),
       ]);
@@ -6530,7 +6539,7 @@ function editProject(project) {
   );
 }
 function integrationProjectChips(projectIDs) {
-  const catalog = new Map(integrationCatalog.map((project) => [String(project.id), project]));
+  const catalog = new Map(state.integrationCatalog.map((project) => [String(project.id), project]));
   const chips = el('div', undefined, 'tags integration-project-chips');
   chips.setAttribute('aria-label', 'Approved GitLab projects');
   projectIDs.forEach((id) => {
@@ -6543,10 +6552,10 @@ function integrationProjectChips(projectIDs) {
   return chips;
 }
 function openProject(project) {
-  if (!board || !project || busy || loading || integrationFormOpen) return;
-  if (detailState && !closeDetail({ focus: false })) return;
-  view = 'board';
-  presentation = 'list';
+  if (!state.board || !project || state.busy || state.loading || state.integrationFormOpen) return;
+  if (state.detailState && !closeDetail({ focus: false })) return;
+  state.view = 'board';
+  state.presentation = 'list';
   setFilterValues('project', [project.id]);
   setFilterValues('assignee', []);
   setFilterValues('label', []);
@@ -6567,7 +6576,7 @@ function renderProjectFilterChips(host, list, count) {
 }
 function projectMatchesFilters(project) {
   if (!projectFilters.assignee.size && !projectFilters.label.size) return true;
-  return board.items.some((item) =>
+  return state.board.items.some((item) =>
     item.archived
       ? false
       : itemProjectIDs(item).includes(project.id) &&
@@ -6576,16 +6585,16 @@ function projectMatchesFilters(project) {
   );
 }
 function renderProjectRows(list, count, chips) {
-  const search = projectSearch.trim();
+  const search = state.projectSearch.trim();
   const query = search.toLowerCase();
-  const filtered = board.projects.filter(projectMatchesFilters);
+  const filtered = state.board.projects.filter(projectMatchesFilters);
   const matches = filtered.filter((project) => project.name.toLowerCase().includes(query));
   if (count) count.textContent = `${matches.length} project${matches.length === 1 ? '' : 's'}`;
   if (chips) renderProjectFilterChips(chips, list, count);
   list.replaceChildren();
   if (!matches.length) {
-    const narrowed = filtered.length !== board.projects.length;
-    const message = !board.projects.length
+    const narrowed = filtered.length !== state.board.projects.length;
+    const message = !state.board.projects.length
       ? 'No projects yet. Items can remain unclassified.'
       : query && narrowed
         ? `No projects match \u201c${search}\u201d and the current filters.`
@@ -6597,7 +6606,7 @@ function renderProjectRows(list, count, chips) {
   }
   matches.forEach((project) => {
     const open = actionIconButton('View scope', '◎', () => openProject(project));
-    open.disabled = busy || loading || integrationFormOpen;
+    open.disabled = state.busy || state.loading || state.integrationFormOpen;
     list.append(
       maintenanceRow({
         content: [el('strong', project.name)],
@@ -6607,25 +6616,25 @@ function renderProjectRows(list, count, chips) {
   });
 }
 function renderProjects(content) {
-  const approvedIDs = board.integration?.projects || [];
+  const approvedIDs = state.board.integration?.projects || [];
   if (
-    !integrationFormOpen &&
-    board.connector_instance &&
+    !state.integrationFormOpen &&
+    state.board.connector_instance &&
     approvedIDs.length &&
-    !integrationCatalogLoaded &&
-    !integrationCatalogLoading
+    !state.integrationCatalogLoaded &&
+    !state.integrationCatalogLoading
   )
     void loadIntegrationCatalog();
   const sections = pageStack('projects');
   const integration = panel('maintenance-section');
   const integrationHead = sectionHead('GitLab integration');
-  if (integrationFormOpen) {
+  if (state.integrationFormOpen) {
     integration.append(integrationHead, renderIntegrationForm());
   } else {
     const edit = writeButton('Edit integration', editIntegration);
     edit.dataset.write = 'true';
     integrationHead.append(edit);
-    const configured = board.connector_instance || 'Not configured';
+    const configured = state.board.connector_instance || 'Not configured';
     const approved = approvedIDs.length;
     integration.append(
       integrationHead,
@@ -6633,15 +6642,15 @@ function renderProjects(content) {
       helpText(`${approved} approved GitLab project${approved === 1 ? '' : 's'}.`),
     );
     if (approved) integration.append(integrationProjectChips(approvedIDs));
-    if (integrationCatalogLoading)
+    if (state.integrationCatalogLoading)
       integration.append(helpText('Loading approved GitLab project names…'));
-    if (integrationCatalogError)
+    if (state.integrationCatalogError)
       integration.append(
         helpText(
-          `Project names are unavailable; approved IDs remain visible. ${integrationCatalogError}`,
+          `Project names are unavailable; approved IDs remain visible. ${state.integrationCatalogError}`,
         ),
       );
-    if (!board.connector_instance)
+    if (!state.board.connector_instance)
       integration.append(
         helpText(
           'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.',
@@ -6656,15 +6665,15 @@ function renderProjects(content) {
   const assigneeFilter = filterSelect('Assignee', [
     ['all', 'Any assignee'],
     ['none', 'Unassigned'],
-    ...board.members.map((member) => [member.subject, memberName(member.subject)]),
+    ...state.board.members.map((member) => [member.subject, memberName(member.subject)]),
   ]);
   const labelFilter = filterSelect('Label', [
     ['all', 'Any label'],
     ['none', 'No labels'],
-    ...board.labels.map((label) => [label.name, label.name]),
+    ...state.board.labels.map((label) => [label.name, label.name]),
   ]);
   const search = filterSearch('Search', {
-    value: projectSearch,
+    value: state.projectSearch,
     placeholder: 'Find projects…',
     maxLength: 120,
   });
@@ -6680,7 +6689,7 @@ function renderProjects(content) {
   const list = maintenanceList();
   renderProjectRows(list, projectCount, projectChips);
   search.input.addEventListener('input', () => {
-    projectSearch = search.input.value;
+    state.projectSearch = search.input.value;
     renderProjectRows(list, projectCount, projectChips);
   });
   PROJECT_FILTER_NAMES.forEach((name, index) => {
@@ -6730,7 +6739,7 @@ function deleteLabel(label) {
       fields.append(
         el(
           'p',
-          `Remove “${label.name}” from the workspace and all ${board.items.filter((i) => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`,
+          `Remove “${label.name}” from the workspace and all ${state.board.items.filter((i) => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`,
         ),
       );
     },
@@ -6739,8 +6748,8 @@ function deleteLabel(label) {
   $('save').textContent = 'Delete label';
 }
 function renderLabels(content) {
-  $('count').textContent = board.labels.length
-    ? `${board.labels.length} label${board.labels.length === 1 ? '' : 's'}`
+  $('count').textContent = state.board.labels.length
+    ? `${state.board.labels.length} label${state.board.labels.length === 1 ? '' : 's'}`
     : '';
   const page = pageStack('labels');
   const newLabel = writeButton('＋ New label', () => editLabel(), 'primary');
@@ -6752,13 +6761,13 @@ function renderLabels(content) {
     ),
   );
   content.append(page);
-  if (!board.labels.length) {
+  if (!state.board.labels.length) {
     page.append(emptyState('No labels yet. Create reusable labels for this workspace.'));
     return;
   }
   const list = maintenanceList('label-maintenance-list');
-  board.labels.forEach((label) => {
-    const usage = board.items.filter((item) => item.labels.includes(label.name)).length;
+  state.board.labels.forEach((label) => {
+    const usage = state.board.items.filter((item) => item.labels.includes(label.name)).length;
     list.append(
       maintenanceRow({
         tag: 'article',
@@ -6831,7 +6840,7 @@ function editMember(member) {
 }
 function removeMember(member) {
   if (!adminWritable()) return;
-  const assigned = board.items.filter((item) => item.assignee === member.subject).length;
+  const assigned = state.board.items.filter((item) => item.assignee === member.subject).length;
   $('editor').close();
   openEditor(
     'Remove workspace member',
@@ -6856,8 +6865,8 @@ function removeMember(member) {
 }
 function addMember() {
   if (!adminWritable()) return;
-  const currentBoard = board,
-    currentRoot = root;
+  const currentBoard = state.board,
+    currentRoot = state.root;
   $('editor').close();
   openEditor(
     'Add workspace member',
@@ -6886,7 +6895,11 @@ function addMember() {
           async () => {
             try {
               const users = await loadGitLabUsers(currentRoot, search);
-              if (generation !== searchGeneration || board !== currentBoard || root !== currentRoot)
+              if (
+                generation !== searchGeneration ||
+                state.board !== currentBoard ||
+                state.root !== currentRoot
+              )
                 return;
               users.forEach((user) => usersBySubject.set(String(user.id), user));
               const selected = controls.selected();
@@ -6896,7 +6909,11 @@ function addMember() {
                 entries.length ? '' : 'No available GitLab users match this search.',
               );
             } catch (error) {
-              if (generation === searchGeneration && board === currentBoard && root === currentRoot)
+              if (
+                generation === searchGeneration &&
+                state.board === currentBoard &&
+                state.root === currentRoot
+              )
                 controls.setStatus(error.message || String(error));
             }
           },
@@ -6945,9 +6962,10 @@ function addMember() {
   $('save').textContent = 'Add member';
 }
 function renderMembers(content) {
-  $('count').textContent = `${board.members.length} member${board.members.length === 1 ? '' : 's'}`;
+  $('count').textContent =
+    `${state.board.members.length} member${state.board.members.length === 1 ? '' : 's'}`;
   const page = pageStack('members');
-  const admin = board.role === 'admin';
+  const admin = state.board.role === 'admin';
   page.append(
     sectionHead(
       'Workspace members',
@@ -6960,12 +6978,12 @@ function renderMembers(content) {
     ),
   );
   content.append(page);
-  if (!board.members.length) {
+  if (!state.board.members.length) {
     page.append(emptyState('No workspace members yet.'));
     return;
   }
   const list = maintenanceList();
-  board.members.forEach((member) =>
+  state.board.members.forEach((member) =>
     list.append(
       maintenanceRow({
         content: [memberIdentityView(member)],
@@ -7041,7 +7059,7 @@ function validGitLabUserCatalog(data) {
 function memberUserEntries(users, selected = []) {
   const entries = [],
     seen = new Set(),
-    existing = new Set(board.members.map((member) => member.subject)),
+    existing = new Set(state.board.members.map((member) => member.subject)),
     selectedSet = new Set(selected.map(String));
   users.forEach((user) => {
     const value = String(user.id);
@@ -7084,10 +7102,10 @@ async function loadGitLabProjects(currentRoot) {
   return data;
 }
 function approvedGitLabProjectEntries(projects) {
-  const approved = new Set(board.integration.projects.map(String));
+  const approved = new Set(state.board.integration.projects.map(String));
   return integrationProjectEntries(
     projects.filter((project) => approved.has(String(project.id))),
-    board.integration.projects.map(String),
+    state.board.integration.projects.map(String),
   );
 }
 function mergeRequestLabel(mergeRequest) {
@@ -7135,50 +7153,58 @@ function mergeRequestEntries(mergeRequests, selected) {
   return entries;
 }
 function editIntegration() {
-  if (!board || busy || loading || integrationFormOpen) return;
-  integrationFormOpen = true;
-  integrationCatalog = [];
-  integrationCatalogLoaded = false;
-  integrationCatalogError = '';
-  integrationCatalogLoading = false;
-  integrationCatalogRequest++;
-  if (board.connector_instance) void loadIntegrationCatalog();
+  if (!state.board || state.busy || state.loading || state.integrationFormOpen) return;
+  state.integrationFormOpen = true;
+  state.integrationCatalog = [];
+  state.integrationCatalogLoaded = false;
+  state.integrationCatalogError = '';
+  state.integrationCatalogLoading = false;
+  state.integrationCatalogRequest++;
+  if (state.board.connector_instance) void loadIntegrationCatalog();
   else render();
 }
 async function loadIntegrationCatalog() {
-  if (!board || integrationCatalogLoading || view !== 'projects') return;
-  const currentBoard = board,
-    currentRoot = root,
-    request = ++integrationCatalogRequest;
-  integrationCatalogLoading = true;
-  integrationCatalogError = '';
-  if (integrationFormOpen) {
+  if (!state.board || state.integrationCatalogLoading || state.view !== 'projects') return;
+  const currentBoard = state.board,
+    currentRoot = state.root,
+    request = ++state.integrationCatalogRequest;
+  state.integrationCatalogLoading = true;
+  state.integrationCatalogError = '';
+  if (state.integrationFormOpen) {
     render();
     notice('Loading available GitLab projects…');
   }
   try {
     const catalog = await loadGitLabProjects(currentRoot);
-    if (request !== integrationCatalogRequest || board !== currentBoard || root !== currentRoot)
+    if (
+      request !== state.integrationCatalogRequest ||
+      state.board !== currentBoard ||
+      state.root !== currentRoot
+    )
       return;
-    integrationCatalog = catalog;
-    integrationCatalogLoaded = true;
+    state.integrationCatalog = catalog;
+    state.integrationCatalogLoaded = true;
   } catch (error) {
-    if (request !== integrationCatalogRequest || board !== currentBoard || root !== currentRoot)
+    if (
+      request !== state.integrationCatalogRequest ||
+      state.board !== currentBoard ||
+      state.root !== currentRoot
+    )
       return;
-    integrationCatalogError = error.message;
-    integrationCatalogLoaded = true;
+    state.integrationCatalogError = error.message;
+    state.integrationCatalogLoaded = true;
   } finally {
     // biome-ignore lint/correctness/noUnsafeFinally: a superseded request must not render; try/catch never rethrow.
-    if (request !== integrationCatalogRequest) return;
-    integrationCatalogLoading = false;
-    if (board === currentBoard && root === currentRoot && view === 'projects') {
-      if (integrationFormOpen) notice('');
+    if (request !== state.integrationCatalogRequest) return;
+    state.integrationCatalogLoading = false;
+    if (state.board === currentBoard && state.root === currentRoot && state.view === 'projects') {
+      if (state.integrationFormOpen) notice('');
       render();
     }
   }
 }
 function renderIntegrationForm() {
-  const currentBoard = board;
+  const currentBoard = state.board;
   const readOnly = currentBoard.role !== 'admin';
   const selected = currentBoard.integration.projects.map(String);
   const form = el('form', undefined, 'inline-maintenance-form');
@@ -7192,25 +7218,25 @@ function renderIntegrationForm() {
     form,
     'projects',
     'Approved GitLab projects',
-    integrationProjectEntries(integrationCatalog, selected),
+    integrationProjectEntries(state.integrationCatalog, selected),
     selected,
     undefined,
     'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.',
   );
-  if (integrationCatalogLoading) form.append(helpText('Loading available GitLab projects…'));
-  if (integrationCatalogError) {
+  if (state.integrationCatalogLoading) form.append(helpText('Loading available GitLab projects…'));
+  if (state.integrationCatalogError) {
     form.append(
       errorLine(
-        `Could not load the GitLab project list. ${integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`,
+        `Could not load the GitLab project list. ${state.integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`,
       ),
     );
     const retry = button('Retry loading projects', loadIntegrationCatalog);
-    retry.disabled = readOnly || integrationCatalogLoading;
+    retry.disabled = readOnly || state.integrationCatalogLoading;
     form.append(retry);
   } else if (
     currentBoard.connector_instance &&
-    !integrationCatalogLoading &&
-    !integrationCatalog.length
+    !state.integrationCatalogLoading &&
+    !state.integrationCatalog.length
   ) {
     form.append(helpText('No GitLab projects are visible to the configured read connector.'));
   }
@@ -7238,10 +7264,10 @@ function renderIntegrationForm() {
   form.append(error);
   const actions = el('div', undefined, 'dialog-foot inline-maintenance-actions');
   const cancel = button('Cancel', () => {
-    integrationFormOpen = false;
-    integrationCatalogError = '';
-    integrationCatalogLoading = false;
-    integrationCatalogRequest++;
+    state.integrationFormOpen = false;
+    state.integrationCatalogError = '';
+    state.integrationCatalogLoading = false;
+    state.integrationCatalogRequest++;
     render();
   });
   actions.append(cancel);
@@ -7249,11 +7275,11 @@ function renderIntegrationForm() {
   if (!readOnly) {
     save = button('Save changes', undefined, 'primary');
     save.type = 'submit';
-    save.disabled = integrationCatalogLoading;
+    save.disabled = state.integrationCatalogLoading;
     actions.append(save);
   }
   form.append(actions);
-  if (readOnly || integrationCatalogLoading) {
+  if (readOnly || state.integrationCatalogLoading) {
     form.querySelectorAll('input,select,textarea').forEach((input) => {
       input.disabled = true;
     });
@@ -7263,7 +7289,7 @@ function renderIntegrationForm() {
   }
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (readOnly || !save || busy || integrationCatalogLoading) return;
+    if (readOnly || !save || state.busy || state.integrationCatalogLoading) return;
     const parts = new FormData(form).getAll('projects');
     try {
       if (parts.length > 100) throw new Error('Select at most 100 GitLab projects.');
@@ -7273,20 +7299,20 @@ function renderIntegrationForm() {
         throw new Error('Choose only positive numeric GitLab projects.');
       if (new Set(parts).size !== parts.length)
         throw new Error('A GitLab project may only be selected once.');
-      integrationFormOpen = false;
+      state.integrationFormOpen = false;
       save.disabled = true;
       cancel.disabled = true;
       await change({
-        revision: board.workspace.revision,
+        revision: state.board.workspace.revision,
         kind: 'integration.save',
-        integration: { instance: board.connector_instance, projects: parts.map(Number) },
+        integration: { instance: state.board.connector_instance, projects: parts.map(Number) },
       });
-      integrationCatalogError = '';
-      integrationCatalogLoading = false;
-      integrationCatalogRequest++;
+      state.integrationCatalogError = '';
+      state.integrationCatalogLoading = false;
+      state.integrationCatalogRequest++;
       render();
     } catch (submitError) {
-      integrationFormOpen = true;
+      state.integrationFormOpen = true;
       setErrorText(
         error,
         `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
@@ -7299,19 +7325,23 @@ function renderIntegrationForm() {
   return form;
 }
 function showLinks(item) {
-  const ready = board.connector_instance && board.connector_instance === board.integration.instance;
+  const ready =
+    state.board.connector_instance &&
+    state.board.connector_instance === state.board.integration.instance;
   openEditor(
     'Linked GitLab observations',
     (fields) => {
       fields.append(
-        helpText(`${item.title} · ${board.integration.instance || 'No approved integration'}`),
+        helpText(
+          `${item.title} · ${state.board.integration.instance || 'No approved integration'}`,
+        ),
       );
       fields.append(
         helpText(
-          `Engineering observations only. Refresh does not move cards or change sprint scope. ${board.refresh_seconds ? `Background refresh: about every ${board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
+          `Engineering observations only. Refresh does not move cards or change sprint scope. ${state.board.refresh_seconds ? `Background refresh: about every ${state.board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
         ),
       );
-      const links = board.links.filter((l) => l.items.includes(item.id));
+      const links = state.board.links.filter((l) => l.items.includes(item.id));
       if (!links.length)
         fields.append(
           emptyState('Unlinked. Add an approved MR; never infer links from card titles.'),
@@ -7359,11 +7389,11 @@ function showLinks(item) {
           if (!writable()) return;
           try {
             await change(
-              { kind: 'link.refresh', target: link.id, revision: board.workspace.revision },
+              { kind: 'link.refresh', target: link.id, revision: state.board.workspace.revision },
               key,
             );
             $('editor').close();
-            showLinks(board.items.find((i) => i.id === item.id));
+            showLinks(state.board.items.find((i) => i.id === item.id));
           } catch (e) {
             $('form-error').textContent =
               e.message +
@@ -7404,7 +7434,7 @@ function setupBoard() {
           'Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.',
         ),
       );
-      board.columns.forEach((c, index) => {
+      state.board.columns.forEach((c, index) => {
         const row = el('div', undefined, 'setup-row');
         row.append(
           el('strong', c.name),
@@ -7418,12 +7448,12 @@ function setupBoard() {
               await quick({
                 kind: 'column.rank',
                 target: c.id,
-                before: board.columns[index - 1].id,
+                before: state.board.columns[index - 1].id,
               });
               $('editor').close();
             }),
           );
-        if (board.columns.length > 1)
+        if (state.board.columns.length > 1)
           actions.append(
             writeButton('Remove…', () => {
               $('editor').close();
@@ -7442,7 +7472,7 @@ function setupBoard() {
                     'Destination column',
                     '',
                     'text',
-                    board.columns.filter((v) => v.id !== c.id).map((v) => [v.id, v.name]),
+                    state.board.columns.filter((v) => v.id !== c.id).map((v) => [v.id, v.name]),
                   );
                 },
                 (data) => ({
@@ -7464,15 +7494,15 @@ function setupBoard() {
 }
 $('editor').addEventListener('cancel', (e) => {
   e.preventDefault();
-  if (e.target === $('editor') && !busy) closeEditor();
+  if (e.target === $('editor') && !state.busy) closeEditor();
 });
 $('editor').addEventListener('click', (e) => {
-  if (!busy && e.target === $('editor')) closeEditor();
+  if (!state.busy && e.target === $('editor')) closeEditor();
 });
 document.addEventListener('pointerover', (e) => {
   const target = observationIconTarget(e.target);
   if (target && !(e.relatedTarget instanceof Node && target.contains(e.relatedTarget))) {
-    observationTooltipTarget = target;
+    state.observationTooltipTarget = target;
     positionObservationTooltip(target);
   }
 });
@@ -7485,12 +7515,12 @@ document.addEventListener('pointerout', (e) => {
     target.contains(document.activeElement)
   )
     return;
-  if (observationTooltipTarget === target) observationTooltipTarget = undefined;
+  if (state.observationTooltipTarget === target) state.observationTooltipTarget = undefined;
 });
 document.addEventListener('focusin', (e) => {
   const target = observationIconTarget(e.target);
   if (target) {
-    observationTooltipTarget = target;
+    state.observationTooltipTarget = target;
     positionObservationTooltip(target);
   }
 });
@@ -7502,7 +7532,7 @@ document.addEventListener('focusout', (e) => {
     target.matches(':hover')
   )
     return;
-  if (observationTooltipTarget === target) observationTooltipTarget = undefined;
+  if (state.observationTooltipTarget === target) state.observationTooltipTarget = undefined;
 });
 window.addEventListener('resize', repositionObservationTooltip);
 document.addEventListener('scroll', repositionObservationTooltip, true);
@@ -7543,7 +7573,7 @@ document.addEventListener('pointerdown', (e) => {
     if (!menu.contains(e.target)) menu.open = false;
   });
   const editor = $('editor');
-  if (!editor.open || busy) return;
+  if (!editor.open || state.busy) return;
   const r = editor.getBoundingClientRect();
   if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
     closeEditor();
@@ -7551,28 +7581,28 @@ document.addEventListener('pointerdown', (e) => {
 function setPresentation(next) {
   if (
     !['board', 'list'].includes(next) ||
-    next === presentation ||
-    loading ||
-    busy ||
-    integrationFormOpen
+    next === state.presentation ||
+    state.loading ||
+    state.busy ||
+    state.integrationFormOpen
   )
     return;
-  if (detailState && !closeDetail({ focus: false })) return;
-  presentation = next;
-  bulkSelection.clear();
+  if (state.detailState && !closeDetail({ focus: false })) return;
+  state.presentation = next;
+  state.bulkSelection.clear();
   render();
   persistPlanningURL();
 }
 $('dismiss').onclick = $('cancel').onclick = () => {
-  if (!busy) closeEditor();
+  if (!state.busy) closeEditor();
 };
 // A closed item editor is no longer a view of that card. The check is deferred
 // because closing one dialog to open another — archive, observations, restore —
 // happens within the same task and must not drop the card from the URL.
 $('editor').addEventListener('close', () => {
   setTimeout(() => {
-    if ($('editor').open || detailState) return;
-    editorItemID = '';
+    if ($('editor').open || state.detailState) return;
+    state.editorItemID = '';
     setSharedItem('');
   }, 0);
 });
@@ -7599,18 +7629,22 @@ FILTER_NAMES.forEach((name) => {
 });
 $('search').oninput = queueSearch;
 $('search').onchange = () => {
-  if (flushSearch() && board) renderContent();
+  if (flushSearch() && state.board) renderContent();
 };
 $('search').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
     event.preventDefault();
-    if (flushSearch() && board) renderContent();
+    if (flushSearch() && state.board) renderContent();
   }
 });
 $('error-dismiss').onclick = clearError;
 $('shortcuts-dismiss').onclick = $('shortcuts-close').onclick = () => $('shortcuts').close();
 document.addEventListener('keydown', (event) => {
-  if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open)
+  if (
+    event.key !== 'Escape' ||
+    !state.detailState?.pane?.contains(event.target) ||
+    $('editor').open
+  )
     return;
   const menu = event.target.closest?.('.multi-select-menu');
   if (menu && !menu.hidden) return;
@@ -7637,7 +7671,7 @@ document.addEventListener('keydown', (event) => {
     !control ||
     control.closest('dialog') ||
     control.closest('.multi-select-menu') ||
-    detailState?.pane?.contains(control)
+    state.detailState?.pane?.contains(control)
   )
     return;
   event.preventDefault();
@@ -7682,8 +7716,8 @@ document.addEventListener('keydown', (event) => {
   // so holding Shift between `g` and the view key still navigates.
   if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(event.key)) return;
   const key = shortcutKey(event);
-  const chord = shortcutChord && Date.now() - shortcutChord < SHORTCUT_CHORD_MS;
-  shortcutChord = 0;
+  const chord = state.shortcutChord && Date.now() - state.shortcutChord < SHORTCUT_CHORD_MS;
+  state.shortcutChord = 0;
   if (chord) {
     if (VIEW_SHORTCUTS[key]) {
       event.preventDefault();
@@ -7709,7 +7743,7 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (key === 'g') {
-    shortcutChord = Date.now();
+    state.shortcutChord = Date.now();
     notice('Go to… press b, s, p, m, l, a or h.');
     return;
   }
@@ -7728,9 +7762,9 @@ document.addEventListener('keydown', (event) => {
   }
 });
 $('undo').onclick = async () => {
-  const commands = undoOffer;
+  const commands = state.undoOffer;
   clearUndo();
-  if (!commands?.length || !board || !writable()) return;
+  if (!commands?.length || !state.board || !writable()) return;
   if (commands.length === 1) {
     await quick(commands[0]);
     return;
@@ -7739,36 +7773,36 @@ $('undo').onclick = async () => {
 };
 document.querySelectorAll('[data-view]').forEach((b) => {
   b.onclick = async () => {
-    if (loading || busy || integrationFormOpen) return;
+    if (state.loading || state.busy || state.integrationFormOpen) return;
     if (
-      view === 'board' &&
+      state.view === 'board' &&
       b.dataset.view !== 'board' &&
-      detailState &&
+      state.detailState &&
       !closeDetail({ focus: false })
     )
       return;
-    view = b.dataset.view;
-    bulkSelection.clear();
-    if (view === 'history') {
+    state.view = b.dataset.view;
+    state.bulkSelection.clear();
+    if (state.view === 'history') {
       try {
         await loadHistory(true);
       } catch (e) {
         notice(e.message, true);
       }
     }
-    if (view === 'archive') {
+    if (state.view === 'archive') {
       try {
         await loadArchive(true);
       } catch (e) {
         notice(e.message, true);
       }
     }
-    if (view === 'sprints') {
+    if (state.view === 'sprints') {
       resetSprintHistory();
       try {
         await loadSprintHistory(true);
       } catch (e) {
-        sprintHistoryError = e.message;
+        state.sprintHistoryError = e.message;
         notice(e.message, true);
       }
     }
@@ -7776,44 +7810,44 @@ document.querySelectorAll('[data-view]').forEach((b) => {
   };
 });
 async function chooseWorkspace(workspaceID = '') {
-  if (busy || loading) return false;
-  if (detailState && !closeDetail({ focus: false })) {
-    if (board?.workspace?.id) $('workspace').value = board.workspace.id;
+  if (state.busy || state.loading) return false;
+  if (state.detailState && !closeDetail({ focus: false })) {
+    if (state.board?.workspace?.id) $('workspace').value = state.board.workspace.id;
     return false;
   }
   const selectedID = workspaceID || $('workspace').value;
-  if (!workspaces.some((workspace) => workspace.id === selectedID)) return false;
-  const urlState = pendingPlanningURLState;
-  pendingPlanningURLState = undefined;
-  integrationFormOpen = false;
-  integrationCatalog = [];
-  integrationCatalogLoaded = false;
-  integrationCatalogError = '';
-  integrationCatalogLoading = false;
-  integrationCatalogRequest++;
+  if (!state.workspaces.some((workspace) => workspace.id === selectedID)) return false;
+  const urlState = state.pendingPlanningURLState;
+  state.pendingPlanningURLState = undefined;
+  state.integrationFormOpen = false;
+  state.integrationCatalog = [];
+  state.integrationCatalogLoaded = false;
+  state.integrationCatalogError = '';
+  state.integrationCatalogLoading = false;
+  state.integrationCatalogRequest++;
   clearPlanningChangeNotice();
   clearUndo();
   clearError();
-  bulkSelection.clear();
-  board = undefined;
-  workspaceGate = 'loading';
+  state.bulkSelection.clear();
+  state.board = undefined;
+  state.workspaceGate = 'loading';
   updateWorkspaceOptions(selectedID);
   resetBurndown();
-  burndownExpanded.clear();
+  state.burndownExpanded.clear();
   resetSprintHistory();
-  projectSearch = '';
+  state.projectSearch = '';
   clearFilterGroup(projectFilters);
   clearFilters();
   $('scope').value = 'active';
   resetSearch();
-  root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`;
+  state.root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`;
   render();
   const refreshed = await refresh();
   if (!refreshed) {
-    if (urlState && workspaceGate === 'loading') pendingPlanningURLState = urlState;
+    if (urlState && state.workspaceGate === 'loading') state.pendingPlanningURLState = urlState;
     return false;
   }
-  workspaceGate = '';
+  state.workspaceGate = '';
   persistWorkspaceURL(selectedID);
   if (urlState) applyPlanningURLState(urlState);
   else persistPlanningURL();
@@ -7822,9 +7856,6 @@ async function chooseWorkspace(workspaceID = '') {
 $('workspace').onchange = () => {
   void chooseWorkspace();
 };
-let observationPoll = false,
-  observationDigest = '',
-  observationReadAt = 0;
 // A digest that only ever reports "unchanged" is indistinguishable from a
 // working one, so the board is re-read on a timer regardless of the digest.
 // This bounds staleness if the digest ever stops tracking the board payload.
@@ -7834,28 +7865,28 @@ const OBSERVATION_FALLBACK_MS = 120000;
 // indexed lookups instead of a full board load every fifteen seconds.
 setInterval(async () => {
   if (
-    !board?.refresh_seconds ||
-    busy ||
-    loading ||
-    integrationFormOpen ||
-    drag ||
+    !state.board?.refresh_seconds ||
+    state.busy ||
+    state.loading ||
+    state.integrationFormOpen ||
+    state.drag ||
     document.hidden ||
     $('editor').open ||
-    observationPoll
+    state.observationPoll
   )
     return;
-  const current = board,
-    path = root;
-  observationPoll = true;
+  const current = state.board,
+    path = state.root;
+  state.observationPoll = true;
   try {
     const revisionState = await api(path + '/revision');
     if (
-      board !== current ||
-      root !== path ||
-      busy ||
-      loading ||
-      integrationFormOpen ||
-      drag ||
+      state.board !== current ||
+      state.root !== path ||
+      state.busy ||
+      state.loading ||
+      state.integrationFormOpen ||
+      state.drag ||
       $('editor').open
     )
       return;
@@ -7865,9 +7896,12 @@ setInterval(async () => {
       typeof revisionState.role !== 'string'
     )
       throw new Error('Workspace state response is invalid.');
-    if (revisionState.revision !== board.workspace.revision || revisionState.role !== board.role) {
+    if (
+      revisionState.revision !== state.board.workspace.revision ||
+      revisionState.role !== state.board.role
+    ) {
       showPlanningChangeNotice(
-        revisionState.role !== board.role
+        revisionState.role !== state.board.role
           ? 'Workspace permissions changed elsewhere · Refresh to review'
           : undefined,
       );
@@ -7875,35 +7909,38 @@ setInterval(async () => {
     }
     const digest = String(revisionState.links_digest || '');
     if (
-      observationDigest &&
-      digest === observationDigest &&
-      Date.now() - observationReadAt < OBSERVATION_FALLBACK_MS
+      state.observationDigest &&
+      digest === state.observationDigest &&
+      Date.now() - state.observationReadAt < OBSERVATION_FALLBACK_MS
     )
       return;
     const next = await api(path + '/board');
     if (
-      board !== current ||
-      root !== path ||
-      busy ||
-      loading ||
-      integrationFormOpen ||
-      drag ||
+      state.board !== current ||
+      state.root !== path ||
+      state.busy ||
+      state.loading ||
+      state.integrationFormOpen ||
+      state.drag ||
       $('editor').open
     )
       return;
     if (!next?.workspace || !Array.isArray(next.links))
       throw new Error('Observation response is invalid.');
-    if (next.workspace.revision !== board.workspace.revision || next.role !== board.role) {
+    if (
+      next.workspace.revision !== state.board.workspace.revision ||
+      next.role !== state.board.role
+    ) {
       showPlanningChangeNotice(
-        next.role !== board.role
+        next.role !== state.board.role
           ? 'Workspace permissions changed elsewhere · Refresh to review'
           : undefined,
       );
       return;
     }
-    const currentLinks = new Map(board.links.map((link) => [link.id, link]));
+    const currentLinks = new Map(state.board.links.map((link) => [link.id, link]));
     if (
-      next.links.length !== board.links.length ||
+      next.links.length !== state.board.links.length ||
       next.links.some((link) => {
         const current = currentLinks.get(link.id);
         return !current || linkIdentitySignature(current) !== linkIdentitySignature(link);
@@ -7912,38 +7949,45 @@ setInterval(async () => {
       showPlanningChangeNotice();
       return;
     }
-    observationDigest = digest;
-    observationReadAt = Date.now();
+    state.observationDigest = digest;
+    state.observationReadAt = Date.now();
     const uiState = captureUIState();
-    const previousLinks = board.links;
-    board.links = next.links;
-    if (patchObservationUI(previousLinks, board.links)) restoreUIState(uiState);
+    const previousLinks = state.board.links;
+    state.board.links = next.links;
+    if (patchObservationUI(previousLinks, state.board.links)) restoreUIState(uiState);
   } catch {
-    if (board === current && !busy && !integrationFormOpen && !$('editor').open)
+    if (state.board === current && !state.busy && !state.integrationFormOpen && !$('editor').open)
       notice('Observation cache could not be reloaded. Use Refresh to retry.', true);
   } finally {
-    observationPoll = false;
+    state.observationPoll = false;
   }
 }, 15000);
 setInterval(async () => {
   if (
-    !board ||
-    busy ||
-    loading ||
-    integrationFormOpen ||
-    drag ||
+    !state.board ||
+    state.busy ||
+    state.loading ||
+    state.integrationFormOpen ||
+    state.drag ||
     document.hidden ||
     $('editor').open ||
-    membershipPoll
+    state.membershipPoll
   )
     return;
-  const current = board,
-    selectedID = board.workspace.id,
-    before = workspaceListSignature(workspaces);
-  membershipPoll = true;
+  const current = state.board,
+    selectedID = state.board.workspace.id,
+    before = workspaceListSignature(state.workspaces);
+  state.membershipPoll = true;
   try {
     const next = await loadWorkspaces(selectedID);
-    if (board !== current || busy || loading || integrationFormOpen || document.hidden) return;
+    if (
+      state.board !== current ||
+      state.busy ||
+      state.loading ||
+      state.integrationFormOpen ||
+      document.hidden
+    )
+      return;
     if (!next.some((workspace) => workspace.id === selectedID)) {
       enterWorkspaceGate(
         next.length ? 'select' : 'create',
@@ -7956,17 +8000,17 @@ setInterval(async () => {
     if (workspaceListSignature(next) !== before)
       showPlanningChangeNotice('Workspace membership changed · Refresh to review');
   } catch {
-    if (board === current && !busy && !integrationFormOpen)
+    if (state.board === current && !state.busy && !state.integrationFormOpen)
       notice('Workspace access could not be reloaded. Use Refresh to retry.', true);
   } finally {
-    membershipPoll = false;
+    state.membershipPoll = false;
   }
 }, 30000);
 // Local freshness/cooldowns require no additional network requests.
 setInterval(() => {
-  if (!board) return;
+  if (!state.board) return;
   document.querySelectorAll('[data-refresh-link]').forEach((node) => {
-    const link = board.links.find((l) => l.id === node.dataset.refreshLink);
+    const link = state.board.links.find((l) => l.id === node.dataset.refreshLink);
     patchRefreshControl(node, link);
   });
 }, 10000);
@@ -7977,13 +8021,13 @@ scheduleOverdueRefresh();
 renderControls();
 (async () => {
   try {
-    session = await api('/api/v2/session');
-    $('identity').textContent = session.name || session.subject;
+    state.session = await api('/api/v2/session');
+    $('identity').textContent = state.session.name || state.session.subject;
     const next = await loadWorkspaces('');
     const preferred = workspacePreference();
     if (!next.length) {
-      pendingPlanningURLState = undefined;
-      workspaceGate = 'create';
+      state.pendingPlanningURLState = undefined;
+      state.workspaceGate = 'create';
       persistWorkspaceURL('');
       notice('No workspace yet. Create one to get started.');
       render();
@@ -7998,7 +8042,7 @@ renderControls();
       await chooseWorkspace(next[0].id);
       return;
     }
-    workspaceGate = 'select';
+    state.workspaceGate = 'select';
     notice('Choose a workspace to continue.');
     render();
   } catch (e) {
