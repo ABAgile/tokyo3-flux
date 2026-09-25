@@ -1,6 +1,6 @@
-import { $, el, button, options, svgNode, syncAttributes, field, uid } from './modules/dom.js';
+import { $, el, button, options, svgNode, field, uid } from './modules/dom.js';
 import { api, apiRevalidated, requestKey } from './modules/api.js';
-import { workspaceLabel, workspaceHistoryLabel, columnWIPLabel } from './modules/format.js';
+import { workspaceLabel, workspaceHistoryLabel } from './modules/format.js';
 import { renderMarkdown, markdownEditor } from './modules/markdown.js';
 import {
   contentRoot,
@@ -43,26 +43,18 @@ import {
 import {
   activeSprints,
   itemProjectIDs,
-  projectBadges,
   labelInfo,
   labelBadge,
   styleLabelOptions,
   done,
-  findItem,
   blocked,
   scopeItems,
 } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
-import { memberName, memberListingInfo, avatarView, participantStack } from './modules/people.js';
+import { memberName, memberListingInfo, avatarView } from './modules/people.js';
 import { patchNode, keyedNodeKey, reconcileKeyedChildren } from './modules/reconcile.js';
 import { multiSelect, labelColorPicker } from './modules/multi-select.js';
-import {
-  itemDateStatus,
-  dueDateBadge,
-  positionListDueBadge,
-  refreshDueDateBadges,
-  scheduleOverdueRefresh,
-} from './modules/due-dates.js';
+import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import {
   gitlabProjectLabel,
   integrationProjectEntries,
@@ -94,23 +86,13 @@ import {
   sprintMatchesFilters,
 } from './modules/filters.js';
 import { resetBurndown, currentBurndownKey, renderBurndown } from './modules/view-burndown.js';
-import { change, UNDO_TTL, clearUndo, offerUndo, quick, runSequence } from './modules/commands.js';
-import {
-  isFileTransfer,
-  attachmentCount,
-  itemFileDropZone,
-  attachmentPaperclip,
-  initAttachmentTooltips,
-} from './modules/item-attachments.js';
+import { change, clearUndo, quick, runSequence } from './modules/commands.js';
+import { isFileTransfer, initAttachmentTooltips } from './modules/item-attachments.js';
 import { closeEditor, openEditor } from './modules/dialog.js';
-import { makeDraggable, dropZone } from './modules/drag.js';
 import {
-  cardLinkView,
-  cardObservationIcon,
   linkIdentitySignature,
   patchRefreshControl,
   patchObservationUI,
-  showLinks,
   initObservationTooltips,
 } from './modules/gitlab.js';
 import {
@@ -128,21 +110,10 @@ import {
   reopenItemEditor,
   editItemModal,
 } from './modules/item-editor.js';
-import {
-  createDetailPane,
-  syncListSelection,
-  updateDetailPaneVisibility,
-  closeDetail,
-  selectItem,
-  openItemDetail,
-} from './modules/item-detail.js';
-import {
-  renderProjectSummary,
-  cardRenderSignature,
-  renderBoardContent,
-  setupBoard,
-} from './modules/view-board.js';
+import { closeDetail, selectItem, openItemDetail } from './modules/item-detail.js';
+import { renderProjectSummary, renderBoardContent, setupBoard } from './modules/view-board.js';
 import { renderCardListContent, resetArchive, loadArchive } from './modules/view-archive.js';
+import { renderListPresentationContent } from './modules/view-list.js';
 // Late-bound calls from feature modules back into the shell.
 Object.assign(hooks, {
   chooseWorkspace,
@@ -447,234 +418,6 @@ async function refresh(preloaded) {
     }
   }
 }
-function bulkTargets() {
-  return [...state.bulkSelection].map(findItem).filter((item) => item && !item.archived);
-}
-function bulkItemUpdate(item, patch) {
-  return {
-    kind: 'item.update',
-    target: item.id,
-    item: { ...item, project_id: undefined, attachments: undefined, ...patch },
-  };
-}
-async function runBulk(label, plan, undoFor) {
-  const targets = bulkTargets();
-  if (!targets.length) {
-    notice('Select at least one work item first.', true);
-    return;
-  }
-  const commands = targets.map(plan).filter(Boolean);
-  const undo = undoFor?.(targets);
-  state.bulkSelection.clear();
-  const ok = await runSequence(label, commands);
-  if (ok && commands.length && undo)
-    offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
-}
-function openBulkDialog(title, saveText, build, plan, label, undoFor) {
-  state.editorReturn = undefined;
-  $('editor-title').textContent = title;
-  $('editor-form').classList.remove('item-editor-form');
-  $('editor-form')
-    .querySelectorAll('[data-item-footer]')
-    .forEach((node) => node.remove());
-  $('fields').replaceChildren();
-  $('form-error').textContent = '';
-  $('save').hidden = false;
-  $('save').disabled = false;
-  $('save').textContent = saveText;
-  build($('fields'));
-  $('editor-form').onsubmit = async (event) => {
-    event.preventDefault();
-    if (state.busy) return;
-    $('form-error').textContent = '';
-    let apply;
-    try {
-      apply = plan(new FormData($('editor-form')));
-    } catch (error) {
-      $('form-error').textContent = error.message;
-      return;
-    }
-    $('editor').close();
-    await runBulk(label, apply, undoFor);
-  };
-  $('editor').showModal();
-}
-function bulkAssign() {
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Assign selected work',
-    'Assign items',
-    (fields) => {
-      fields.append(
-        helpText(
-          `Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`,
-        ),
-      );
-      field(fields, 'assignee', 'Assignee', '', 'text', [
-        ['', 'Unassigned'],
-        ...state.board.members.map((member) => [member.subject, memberName(member.subject)]),
-      ]);
-    },
-    (data) => {
-      const assignee = String(data.get('assignee') || '');
-      return (item) =>
-        item.assignee === assignee ? undefined : bulkItemUpdate(item, { assignee });
-    },
-    'Assign',
-  );
-}
-function bulkSprint() {
-  const open = state.board.sprints.filter((sprint) => sprint.state !== 'closed');
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Add selected work to a sprint',
-    'Add to sprint',
-    (fields) => {
-      if (!open.length) {
-        fields.append(emptyState('No open sprint is available. Plan a sprint first.'));
-        $('save').hidden = true;
-        return;
-      }
-      fields.append(
-        helpText(
-          `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`,
-        ),
-      );
-      field(
-        fields,
-        'sprint',
-        'Open sprint',
-        open[0].id,
-        'text',
-        open.map((sprint) => [sprint.id, `${sprint.name} (${sprint.state})`]),
-      );
-    },
-    (data) => {
-      const sprint = String(data.get('sprint') || '');
-      if (!open.some((value) => value.id === sprint)) throw new Error('Choose an open sprint.');
-      return (item) =>
-        item.sprint_ids.includes(sprint)
-          ? undefined
-          : bulkItemUpdate(item, { sprint_ids: [...item.sprint_ids, sprint] });
-    },
-    'Add to sprint',
-  );
-}
-function bulkLabel() {
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Add a label to selected work',
-    'Add label',
-    (fields) => {
-      if (!state.board.labels.length) {
-        fields.append(emptyState('No workspace label exists yet. Create one in the Labels view.'));
-        $('save').hidden = true;
-        return;
-      }
-      fields.append(
-        helpText(
-          `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`,
-        ),
-      );
-      styleLabelOptions(
-        field(
-          fields,
-          'label',
-          'Label',
-          state.board.labels[0].name,
-          'text',
-          state.board.labels.map((label) => [label.name, label.name]),
-        ),
-      );
-    },
-    (data) => {
-      const label = String(data.get('label') || '');
-      if (!state.board.labels.some((value) => value.name === label))
-        throw new Error('Choose a workspace label.');
-      return (item) =>
-        item.labels.includes(label)
-          ? undefined
-          : bulkItemUpdate(item, { labels: [...item.labels, label] });
-    },
-    'Add label',
-  );
-}
-function bulkArchive() {
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Archive selected work',
-    'Archive items',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Archive ${count} selected work item${count === 1 ? '' : 's'} and remove them from all open sprints? History is retained and each item can be restored.`,
-        ),
-      );
-      field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
-    },
-    (data) => {
-      const reason = String(data.get('reason') || '');
-      return (item) => ({ kind: 'item.archive', target: item.id, reason });
-    },
-    'Archive',
-    (targets) => ({
-      text: `Archived ${targets.length} work item${targets.length === 1 ? '' : 's'}`,
-      commands: targets.map((item) => ({
-        kind: 'item.restore',
-        target: item.id,
-        restore_sprint_ids: [...(item.sprint_ids || [])],
-      })),
-    }),
-  );
-}
-function bulkSelectableIDs(items) {
-  return items.filter((item) => !item.archived).map((item) => item.id);
-}
-function pruneBulkSelection(items) {
-  const selectable = new Set(bulkSelectableIDs(items));
-  state.bulkSelection.forEach((id) => {
-    if (!selectable.has(id)) state.bulkSelection.delete(id);
-  });
-}
-function renderBulkBar(bar, items) {
-  if (!bar) return;
-  const ids = bulkSelectableIDs(items);
-  if (!state.bulkSelection.size || state.board.role === 'viewer') {
-    bar.hidden = true;
-    bar.replaceChildren();
-    return;
-  }
-  const actions = el('div', undefined, 'actions bulk-actions');
-  actions.append(
-    writeButton('Assign…', bulkAssign),
-    writeButton('Add to sprint…', bulkSprint),
-    writeButton('Add label…', bulkLabel),
-    writeButton('Archive…', bulkArchive, 'danger'),
-  );
-  if (state.bulkSelection.size < ids.length)
-    actions.append(
-      button(`Select all ${ids.length} shown`, () => {
-        ids.forEach((id) => state.bulkSelection.add(id));
-        renderContent();
-      }),
-    );
-  actions.append(
-    button('Clear selection', () => {
-      state.bulkSelection.clear();
-      renderContent();
-    }),
-  );
-  bar.hidden = false;
-  bar.replaceChildren(
-    el('span', `${state.bulkSelection.size} of ${ids.length} shown selected`, 'bulk-count'),
-    actions,
-  );
-}
-function refreshBulkBar() {
-  const bar = document.querySelector('[data-bulk-bar]');
-  if (bar) renderBulkBar(bar, filteredItems());
-}
 document.addEventListener('dragover', (e) => {
   if (isFileTransfer(e.dataTransfer)) e.preventDefault();
 });
@@ -976,270 +719,6 @@ function render() {
   if (state.view !== 'sprints') placeFilters();
   renderFilterChips();
   renderContent();
-}
-function listCell(label, className) {
-  const cell = el('div', undefined, `list-cell ${className || ''}`.trim());
-  cell.dataset.label = label;
-  cell.append(el('span', label, 'list-cell-label'));
-  return cell;
-}
-function listTableHeader() {
-  const header = el('div', undefined, 'list-table-head');
-  ['Title', 'Project', 'Assignee', 'Labels', 'Sprints', 'Links / Status'].forEach((label) =>
-    header.append(el('span', label, 'list-table-heading')),
-  );
-  return header;
-}
-function listRow(item) {
-  const row = el('article', undefined, 'list-row');
-  row.dataset.item = item.id;
-  row.dataset.focusKey = `item:${item.id}:list-row`;
-  row.tabIndex = 0;
-  row.setAttribute('aria-label', `Open work item ${item.title}`);
-  const due = itemDateStatus(item);
-  row.classList.toggle('is-overdue', !!due?.overdue);
-  row.addEventListener('click', (event) => {
-    if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
-      return;
-    selectItem(item.id, row);
-  });
-  row.addEventListener('keydown', (event) => {
-    if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return;
-    event.preventDefault();
-    selectItem(item.id, row);
-  });
-  makeDraggable(row, 'card', item.id, item.title);
-  itemFileDropZone(row, item);
-  row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
-  dropZone(row, 'card', (id, after) => {
-    const current = state.board.items.find((value) => value.id === item.id) || item;
-    const currentPeers = filteredItems().filter((value) => value.column_id === current.column_id);
-    const index = currentPeers.findIndex((value) => value.id === current.id);
-    return {
-      kind: 'item.move',
-      target: id,
-      destination: current.column_id,
-      before: after ? currentPeers[index + 1]?.id || '' : current.id,
-    };
-  });
-  const title = listCell('Title', 'list-cell-title');
-  const titleDetails = el('div', undefined, 'list-row-title-details');
-  const titleLine = el('div', undefined, 'list-row-title-line');
-  const bulkSelected = state.bulkSelection.has(item.id);
-  if (state.board.role !== 'viewer' && !item.archived) {
-    const toggle = el('input');
-    toggle.id = `bulk-select-${item.id}`;
-    toggle.type = 'checkbox';
-    toggle.className = 'list-row-select';
-    toggle.checked = bulkSelected;
-    toggle.disabled = state.busy || state.loading;
-    toggle.dataset.focusKey = `item:${item.id}:bulk-select`;
-    toggle.setAttribute('aria-label', `Select ${item.title} for bulk actions`);
-    toggle.addEventListener('click', (event) => event.stopPropagation());
-    toggle.addEventListener('change', () => {
-      if (toggle.checked) state.bulkSelection.add(item.id);
-      else state.bulkSelection.delete(item.id);
-      row.classList.toggle('is-bulk-selected', toggle.checked);
-      refreshBulkBar();
-    });
-    titleLine.append(toggle);
-  }
-  const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title');
-  titleButton.dataset.focusKey = `item:${item.id}:list-title`;
-  titleLine.append(titleButton);
-  titleDetails.append(titleLine);
-  if (due?.overdue) titleDetails.append(dueDateBadge(item));
-  title.append(titleDetails);
-  const project = listCell('Project', 'list-cell-project');
-  const projectValue = el('span', undefined, 'list-row-project');
-  projectValue.append(...projectBadges(item));
-  project.append(projectValue);
-  const status = listCell('Links / Status', 'list-cell-status');
-  const statusContent = el('div', undefined, 'list-row-status-content');
-  const statusBadges = el('div', undefined, 'list-row-status-badges');
-  if (blocked(item)) statusBadges.append(el('span', 'Blocked', 'badge warning'));
-  if (due && !due.overdue) {
-    const dueBadge = dueDateBadge(item);
-    if (dueBadge) statusBadges.append(dueBadge);
-  }
-  if (item.archived) statusBadges.append(el('span', 'Archived', 'badge'));
-  if (statusBadges.childElementCount || due?.overdue) statusContent.append(statusBadges);
-  const links = state.board.links.filter((link) => link.items.includes(item.id));
-  if (links.length) {
-    const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links');
-    linkIndicator.setAttribute(
-      'aria-label',
-      `${links.length} GitLab link${links.length === 1 ? '' : 's'}`,
-    );
-    const linkHead = el('div', undefined, 'card-links-head');
-    const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label');
-    const observationLink = button(
-      'View observations',
-      () => showLinks(item),
-      'card-link-details list-row-observation-link',
-    );
-    observationLink.dataset.focusKey = `item:${item.id}:list-observations`;
-    observationLink.setAttribute(
-      'aria-label',
-      `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`,
-    );
-    observationLink.title = 'Show linked GitLab observations';
-    linkHead.append(linkLabel, observationLink);
-    linkIndicator.append(linkHead);
-    links.forEach((link) => {
-      const line = el('span', undefined, 'list-row-link-line');
-      if (link.kind === 'mr')
-        line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`));
-      line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`));
-      linkIndicator.append(line);
-    });
-    statusContent.append(linkIndicator);
-  }
-  const attachmentTotal = attachmentCount(item);
-  if (attachmentTotal) {
-    const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments');
-    attachmentIndicator.setAttribute(
-      'aria-label',
-      `${attachmentTotal} attachment${attachmentTotal === 1 ? '' : 's'}`,
-    );
-    attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachmentTotal)));
-    statusContent.append(attachmentIndicator);
-  }
-  if (statusContent.childElementCount) status.append(statusContent);
-  else status.append(el('span', '—', 'list-cell-empty'));
-  // The list shows the same participant aggregate as a card, and keeps the
-  // assignee's name in text so the column stays scannable as a table.
-  const people = listCell('People', 'list-cell-people');
-  const peopleContent = el('div', undefined, 'list-row-people');
-  peopleContent.append(
-    participantStack(item),
-    el('span', memberName(item.assignee), 'list-row-assignee-name'),
-  );
-  people.append(peopleContent);
-  const labels = listCell('Labels', 'list-cell-labels');
-  item.labels.forEach((label) => labels.append(labelBadge(label)));
-  if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
-  const sprints = listCell('Sprints', 'list-cell-sprints');
-  item.sprint_ids.forEach((id) =>
-    sprints.append(
-      el('span', state.board.sprints.find((s) => s.id === id)?.name || id, 'badge badge-sprint'),
-    ),
-  );
-  if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
-  row.append(title, project, people, labels, sprints, status);
-  if (due?.overdue) positionListDueBadge(row.querySelector('.badge-due'), true);
-  row.classList.toggle('is-selected', state.selectedItemID === item.id);
-  row.classList.toggle('is-bulk-selected', bulkSelected);
-  row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${state.selectedItemID === item.id}|bulk:${bulkSelected}`;
-  return row;
-}
-function listSection(column, items) {
-  const section = el('details', undefined, 'list-section');
-  section.dataset.column = column.id;
-  section.open = true;
-  section.setAttribute('aria-label', column.name);
-  const peers = items.filter((item) => item.column_id === column.id);
-  const total = state.board.items.filter(
-    (item) => !item.archived && item.column_id === column.id,
-  ).length;
-  const head = el('summary', undefined, 'list-section-head');
-  head.dataset.renderSignature = JSON.stringify({
-    id: column.id,
-    name: column.name,
-    category: column.category,
-    wip: column.wip,
-    shown: peers.length,
-    total,
-  });
-  const title = el('span', undefined, 'list-section-title');
-  title.append(el('h3', column.name));
-  const summary = el(
-    'span',
-    `${peers.length} shown · ${columnWIPLabel(column, total)}`,
-    'list-section-summary',
-  );
-  head.append(title, summary);
-  makeDraggable(head, 'list', column.id, column.name);
-  dropZone(
-    section,
-    'card',
-    (id) => ({ kind: 'item.move', target: id, destination: column.id }),
-    'end',
-  );
-  dropZone(
-    section,
-    'list',
-    (id, after) => ({
-      kind: 'column.rank',
-      target: id,
-      before: after
-        ? state.board.columns[state.board.columns.findIndex((value) => value.id === column.id) + 1]
-            ?.id || ''
-        : column.id,
-    }),
-    'x',
-  );
-  const body = el('div', undefined, 'list-section-body');
-  body.append(...peers.map((item) => listRow(item)));
-  if (!peers.length) body.append(emptyState('No work here'));
-  section.append(head, body);
-  section.dataset.renderSignature = JSON.stringify({
-    id: column.id,
-    name: column.name,
-    category: column.category,
-    wip: column.wip,
-  });
-  return section;
-}
-function patchListSection(target, next) {
-  const expanded = target.open;
-  syncAttributes(target, next);
-  const currentHead = target.querySelector(':scope > .list-section-head');
-  const nextHead = next.querySelector(':scope > .list-section-head');
-  if (currentHead && nextHead) patchNode(currentHead, nextHead);
-  const currentBody = target.querySelector(':scope > .list-section-body');
-  const nextBody = next.querySelector(':scope > .list-section-body');
-  if (currentBody && nextBody) {
-    syncAttributes(currentBody, nextBody);
-    reconcileKeyedChildren(currentBody, [...nextBody.children], keyedNodeKey, (current, fresh) =>
-      fresh.dataset.item ? patchNode(current, fresh) : patchNode(current, fresh),
-    );
-  }
-  target.open = expanded;
-  return target;
-}
-function renderListPresentationContent(content, items) {
-  const current = content.firstElementChild;
-  let layout, sections;
-  if (!current || current.dataset.contentView !== 'list:board') {
-    layout = contentRoot('div', 'list-detail-layout', 'list:board');
-    const list = el('div', undefined, 'planning-list');
-    list.dataset.contentView = 'planning-list';
-    sections = el('div', undefined, 'list-sections');
-    const bar = el('div', undefined, 'bulk-bar');
-    bar.dataset.bulkBar = 'true';
-    bar.hidden = true;
-    bar.setAttribute('role', 'group');
-    bar.setAttribute('aria-label', 'Bulk actions');
-    list.append(bar, listTableHeader(), sections);
-    const pane = createDetailPane();
-    layout.append(list, pane);
-    content.replaceChildren(layout);
-  } else {
-    layout = current;
-    sections = layout.querySelector(':scope > .planning-list > .list-sections');
-  }
-  pruneBulkSelection(items);
-  const nextSections = state.board.columns.map((column) => listSection(column, items));
-  reconcileKeyedChildren(
-    sections,
-    nextSections,
-    (node) => `column:${node.dataset.column}`,
-    patchListSection,
-  );
-  renderBulkBar(layout.querySelector('[data-bulk-bar]'), items);
-  syncListSelection();
-  updateDetailPaneVisibility();
 }
 function renderSprintRows(list) {
   const search = $('search').value.trim();
