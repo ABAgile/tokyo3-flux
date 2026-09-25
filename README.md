@@ -486,3 +486,15 @@ Verify light/dark at 1440, 768 and 390px and keyboard access.
 `tests/gitlab_fixture.py` provides synthetic loopback observations; use `--evolving` for `background.browser.js`.
 `tests/style-snapshot.browser.js` returns a computed-style snapshot of the main views; diff two same-day runs saved outside the repository to confirm a refactor leaves the UI unchanged.
 Never run these scripts on team data.
+
+`tests/run-browser.sh` runs them through `playwright-cli` against a throwaway server: it creates and drops its own `flux_browser_*` database next to `FLUX_BROWSER_PG`, bootstraps and seeds it, starts the GitLab fixture where needed and serves demo mode on loopback.
+
+```sh
+export FLUX_BROWSER_PG='postgres://USER@127.0.0.1:5432/postgres?sslmode=disable'
+tests/run-browser.sh                    # all behavior tests
+tests/run-browser.sh --soft planning    # report every failed check, not just the first
+tests/run-browser.sh style-snapshot     # writes style-snapshot.txt to the results directory
+```
+
+Demo mode stays loopback-only.
+When the browser runs elsewhere (a remote Playwright service), set `FLUX_BROWSER_HOST` to this machine's address on a private network; the runner then serves the test through `tests/browser-proxy.mjs` for the duration of each test.
