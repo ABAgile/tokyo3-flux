@@ -1012,11 +1012,13 @@ function positionListDueBadge(badge, overdue) {
  else if (!overdue && badge.classList.contains('list-title-due')) { badge.classList.remove('list-title-due'); row.querySelector('.list-row-status-badges')?.append(badge); }
 }
 function editorDueBadgeHost(form) {
- return form.classList.contains('item-editor-form') ? form.querySelector('.dialog-head') : form.querySelector('.item-title-label');
+ if (form.classList.contains('item-editor-form')) return form.querySelector('.dialog-head');
+ if (form.classList.contains('item-detail-form')) return form.querySelector('.item-detail-head');
+ return form.querySelector('.item-title-label');
 }
 function appendEditorDueBadge(form, badge) {
  const host = editorDueBadgeHost(form);
- const close = form.classList.contains('item-editor-form') ? host?.querySelector('#dismiss') : undefined;
+ const close = form.classList.contains('item-editor-form') ? host?.querySelector('#dismiss') : form.classList.contains('item-detail-form') ? host?.querySelector('.item-detail-head-actions') : undefined;
  if (close) close.before(badge); else host?.append(badge);
 }
 function positionEditorDueBadge(badge, overdue) {
@@ -1084,7 +1086,9 @@ function cardObservationIcon(link, focusKey) {
 function card(item, peers) {
  const c = el('article', undefined, 'card'); const top = el('div', undefined, 'card-top'); const title = button(item.title, () => editItem(item), 'card-title'); title.dataset.focusKey = `item:${item.id}:title`; top.append(title);
  c.dataset.item = item.id; const due = itemDateStatus(item); c.classList.toggle('is-overdue', !!due?.overdue);
- makeDraggable(c, 'card', item.id, item.title); itemFileDropZone(c, item);
+ makeDraggable(c, 'card', item.id, item.title); c.tabIndex = 0; c.setAttribute('aria-label', `Open work item ${item.title}; draggable`); itemFileDropZone(c, item);
+ c.addEventListener('click', event => { if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary')) return; editItem(item); });
+ c.addEventListener('keydown', event => { if (event.target !== c || (event.key !== 'Enter' && event.key !== ' ')) return; event.preventDefault(); editItem(item); });
  dropZone(c, 'card', (id, after) => { const current = board.items.find(value => value.id === item.id) || item; const currentPeers = filteredItems().filter(value => value.column_id === current.column_id); const index = currentPeers.findIndex(value => value.id === current.id); return {kind: 'item.move', target: id, destination: current.column_id, before: after ? currentPeers[index + 1]?.id || '' : current.id}; });
  const meta = el('div', undefined, 'card-meta'); const projects = el('div', undefined, 'card-projects'); projects.append(...projectBadges(item)); meta.append(projects, participantStack(item));
  c.append(top, meta);
@@ -1653,7 +1657,7 @@ function closeEditor() {
 }
 function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
  editorReturn = afterClose;
- $('editor-title').textContent = title; $('editor-form').classList.toggle('item-editor-form', ['Work item', 'Create work item'].includes(title)); $('editor-form').querySelectorAll('[data-item-footer]').forEach(e => e.remove()); $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
+ $('editor-title').textContent = title; $('editor-form').querySelectorAll('.dialog-head .badge-due[data-due-date-badge]').forEach(e => e.remove()); $('editor-form').classList.toggle('item-editor-form', ['Work item', 'Create work item'].includes(title)); $('editor-form').querySelectorAll('[data-item-footer]').forEach(e => e.remove()); $('fields').replaceChildren(); $('form-error').textContent = ''; $('save').textContent = 'Save changes'; $('save').hidden = readOnly; $('save').disabled = false;
  const revision = board.workspace.revision; let pending, key; build($('fields'));
  if (readOnly) {
   $('fields').querySelectorAll('input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])').forEach(e => { e.disabled = true; });
@@ -2548,7 +2552,7 @@ $('search').onchange = () => { if (flushSearch() && board) renderContent(); };
 $('search').addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); if (flushSearch() && board) renderContent(); } });
 $('error-dismiss').onclick = clearError;
 $('shortcuts-dismiss').onclick = $('shortcuts-close').onclick = () => $('shortcuts').close();
-document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); });
+document.addEventListener('keydown', event => { if (event.key !== 'Escape' || !detailState?.pane?.contains(event.target) || $('editor').open) return; const menu = event.target.closest?.('.multi-select-menu'); if (menu && !menu.hidden) return; if (closeDetail()) event.preventDefault(); event.stopImmediatePropagation(); });
 // Escape leaves a page-level control so shortcuts become available without
 // reaching for the pointer. Focus moves to the main region rather than being
 // dropped, and contexts that already own Escape — dialogs, the detail pane and

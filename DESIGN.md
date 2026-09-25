@@ -96,7 +96,9 @@ a validated HTTPS Gravatar avatar URL.
   `minmax(420px, 520px)` so the selected editor has more room. At 480px and below, cells become
   labeled stacked fields without page-level horizontal scrolling. With no selected item, desktop
   List uses a `minmax(0, 1fr) minmax(360px, 440px)` work-list/detail-pane split; below the desktop
-  breakpoint, the detail pane becomes a full-width stacked section. Project management uses the
+  breakpoint, the detail pane becomes a full-width stacked section. The sticky detail pane fits within
+  the viewport with a 32px vertical gutter; its fields scroll independently and its footer stays visible.
+  Project management uses the
   existing dialog/controls, not a new component variant. Repeated secondary maintenance actions use compact
   icon buttons on wide layouts with accessible labels and native tooltips; labels return at narrow touch
   widths. This applies to project/sprint/member/label row and panel actions, including lifecycle and
@@ -110,7 +112,7 @@ a validated HTTPS Gravatar avatar URL.
   project badge (`badge-project`) is `▤` on the inset surface with a 1px border-toned hairline, a sprint badge
   (`badge-sprint`) is `◷` on the same inset surface with no outline and body ink, and a label badge (`badge-label`) is `▥`
   on its own palette swatch with a faint hairline of its contrasting ink. Hairlines are inset shadows, so all badges keep
-  one height, and the glyphs carry empty alternative text so screen readers read only the name. Work items may carry optional `start_date`, `end_date` and `due_date` values in `YYYY-MM-DD` form; start may not follow end, and due is independent. Cards and List rows show only the due date. A date earlier than the viewer's local today gets a visible `⚠ Overdue · date` danger badge and a static danger border while the card is live and outside a Done-category column; the browser recalculates this at local midnight. On cards the overdue badge sits centered beneath the title; other card due dates remain in the tag row. In List it sits below the title and is centered within its grid cell; in the modal editor, the overdue badge is centered in the dialog header between the title and close button, while a non-overdue due date remains in the status summary. There is no due-soon state or date filter. Start and end dates appear in the editor only. Participants are a read-only aggregate of
+  one height, and the glyphs carry empty alternative text so screen readers read only the name. Work items may carry optional `start_date`, `end_date` and `due_date` values in `YYYY-MM-DD` form; start may not follow end, and due is independent. Cards and List rows show only the due date. A date earlier than the viewer's local today gets a visible `⚠ Overdue · date` danger badge and a static danger border while the card is live and outside a Done-category column; the browser recalculates this at local midnight. On cards the overdue badge sits centered beneath the title; other card due dates remain in the tag row. In List rows it sits below the title and is centered within its grid cell. In both the modal and List detail editors, the overdue badge sits in the header between the title and close button; a non-overdue due date remains in the status summary. There is no due-soon state or date filter. Start and end dates appear in the editor only. Participants are a read-only aggregate of
   who is involved with a card: the assignee, the reviewers of its cached merge-request observations, and its comment
   authors. The same person appears once with every role merged, ordered assignee, reviewers, then most recent
   commenters, and at most twelve are carried per card so a long thread never turns a board read into a roster dump.
