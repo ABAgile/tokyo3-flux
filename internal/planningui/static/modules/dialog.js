@@ -1,0 +1,78 @@
+// The shared editor dialog used by every create/edit flow.
+import { $ } from './dom.js';
+import { requestKey } from './api.js';
+import { state } from './state.js';
+import { change } from './commands.js';
+import { hideAttachmentTooltip } from './item-attachments.js';
+
+export function closeEditor() {
+  if (state.busy) return;
+  const returnTo = state.editorReturn;
+  state.editorReturn = undefined;
+  hideAttachmentTooltip();
+  $('editor').close();
+  if (returnTo) returnTo();
+}
+export function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
+  state.editorReturn = afterClose;
+  $('editor-title').textContent = title;
+  $('editor-form')
+    .querySelectorAll('.dialog-head .badge-due[data-due-date-badge]')
+    .forEach((e) => e.remove());
+  $('editor-form').classList.toggle(
+    'item-editor-form',
+    ['Work item', 'Create work item'].includes(title),
+  );
+  $('editor-form')
+    .querySelectorAll('[data-item-footer]')
+    .forEach((e) => e.remove());
+  $('fields').replaceChildren();
+  $('form-error').textContent = '';
+  $('save').textContent = 'Save changes';
+  $('save').hidden = readOnly;
+  $('save').disabled = false;
+  const revision = state.board.workspace.revision;
+  let pending, key;
+  build($('fields'));
+  if (readOnly) {
+    $('fields')
+      .querySelectorAll(
+        'input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])',
+      )
+      .forEach((e) => {
+        e.disabled = true;
+      });
+    $('fields')
+      .querySelectorAll('[data-multi-edit],[data-multi-remove]')
+      .forEach((e) => {
+        e.disabled = true;
+      });
+  }
+  $('editor-form').onsubmit = async (e) => {
+    e.preventDefault();
+    if (readOnly || state.busy) return;
+    $('form-error').textContent = '';
+    $('save').disabled = true;
+    $('cancel').disabled = true;
+    $('dismiss').disabled = true;
+    try {
+      const command = { revision, ...submit(new FormData($('editor-form'))) };
+      const serialized = JSON.stringify(command);
+      if (pending !== serialized) {
+        key = requestKey();
+        pending = serialized;
+      }
+      await change(command, key);
+      if (afterSave) await afterSave(command);
+      closeEditor();
+    } catch (err) {
+      $('form-error').textContent =
+        `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`;
+    } finally {
+      $('save').disabled = false;
+      $('cancel').disabled = false;
+      $('dismiss').disabled = false;
+    }
+  };
+  $('editor').showModal();
+}
