@@ -155,13 +155,14 @@ a validated HTTPS Gravatar avatar URL.
   Add link opens the quick-scope and search fallback. Static field guidance uses an opaque ? popover
   with a line-colored shadow; the work-item header popover shows Card ID and Revision on separate
   lines. Modal cards close when clicking outside them.
-  Closed-sprint membership is displayed read-only. Descriptions and comments use a GitLab-like
-  Markdown editor with a compact single-row icon bar fused to the top of its input. Preview mode
-  has only a text Edit control; edit mode starts with text Preview followed by flat, denser
-  formatting icons with 28px hit areas. Related tools are separated by vertical rules. The bar
-  stays on one line, fits the standard editor width and may scroll on very narrow screens.
-  Descriptions open in Preview;
-  comments open in Write. Safe rendered HTML is used for previews; raw HTML is never executed.
+  Closed-sprint membership is displayed read-only. Descriptions, comments and sprint goals use a
+  GitLab-like Markdown editor with a compact single-row icon bar fused to the top of its input.
+  Preview mode has only a text Edit control; edit mode starts with text Preview followed by flat,
+  denser formatting icons with 28px hit areas. Related tools are separated by vertical rules. The
+  bar stays on one line, fits the standard editor width and may scroll on very narrow screens.
+  Descriptions open in Preview; comments and sprint goals open in Write. Sprint goals remain
+  required and keep the 4,000-byte limit. Safe rendered HTML is used for previews; raw HTML is
+  never executed, and unsafe links stay text.
   Item context uses a flat append-only comment list with the author and creation time; members
   and admins can add comments, viewers can read them, and no comment can be edited or deleted.
   Comment entries use a compact GitLab-like activity timeline:
@@ -267,11 +268,14 @@ a validated HTTPS Gravatar avatar URL.
   filters apply to it. With no closed sprint it says so rather than plotting an empty chart. Archived
   sprints are excluded from this live trend; their immutable closure summaries appear in a paginated
   history section below planning.
-- Sprint panel has goal, dates, lifecycle and scope counts, explicit start/close/re-open/archive actions,
-  and a read-only burn-down toggle. Re-opening a closed sprint restores its preserved scope as an
-  active sprint while retaining any other open sprint assignments. The chart expands inside the same
-  panel on the Kanban board and Sprint
-  planning displays; collapse state does not alter planning data. Archiving is available only for a
+- Sprint panel has a safely rendered Markdown goal, dates, lifecycle and scope counts, explicit
+  start/close/re-open/archive actions, and a read-only burn-down toggle. Goal headings scale from
+  14–18px so they remain subordinate to the sprint title; tables and code blocks scroll within the
+  goal, and long links wrap. Goals longer than about eight lines are clipped behind a native Show
+  more/Show less button; expansion has no animation. Re-opening a closed sprint restores its
+  preserved scope as an active sprint while retaining any other open sprint assignments. The chart
+  expands inside the same panel on the Kanban board and Sprint planning displays; collapse state
+  does not alter planning data. Archiving is available only for a
   closed sprint, removes it from working sprint selectors, never deletes its cards, and leaves its
   closure snapshot and metadata read-only in sprint history. Selecting a closed sprint in the board
   Scope filter shows its corresponding read-only panel. At constrained content widths, the goal

@@ -31,6 +31,10 @@ let sprintHistory = [], sprintHistoryOffset = 0, sprintHistoryMore = false, spri
 let bulkSelection = new Set(), undoOffer, undoTimer;
 let integrationFormOpen = false, integrationCatalog = [], integrationCatalogLoaded = false, integrationCatalogError = '', integrationCatalogLoading = false, integrationCatalogRequest = 0;
 let burndownData = new Map(), burndownRequests = new Map(), burndownErrors = new Map(), burndownExpanded = new Set(), burndownGeneration = 0;
+const sprintGoalLayouts = new Map();
+const sprintGoalResizeObserver = new ResizeObserver(() => {
+ for (const [content, update] of sprintGoalLayouts) { if (!content.isConnected) { sprintGoalLayouts.delete(content); sprintGoalResizeObserver.unobserve(content); } else update(); }
+});
 // Planning filters hold a set of accepted values each. An empty set means "all",
 // and the exclusive `none` value means "records with no association at all".
 // The toolbar selects add one value at a time; chips below the toolbar are the
@@ -869,8 +873,15 @@ function done(item) { return board.columns.find(c => c.id === item.column_id)?.c
 function findItem(id) { return board?.items.find(value => value.id === id) || archiveItems.find(value => value.id === id); }
 function blocked(item) { return item.dependencies.some(id => { const dep = findItem(id); return dep && !done(dep); }); }
 function scopeItems(sprint) { return sprint.state === 'closed' ? board.items.filter(i => board.closed_scope.some(s => s.sprint_id === sprint.id && s.item_id === i.id)) : board.items.filter(i => !i.archived && i.sprint_ids.includes(sprint.id)); }
+function sprintGoal(value) {
+ const goal = el('div', undefined, 'sprint-goal'); const content = el('div', undefined, 'sprint-goal-content'); content.id = uid('sprint-goal'); content.inert = true; renderMarkdown(content, value); let expanded = false;
+ const updateDisclosure = () => { const clipped = content.scrollHeight > content.clientHeight + 1; toggle.hidden = !expanded && !clipped; content.inert = !expanded && clipped; };
+ const toggle = button('Show more', () => { expanded = !expanded; toggle.textContent = expanded ? 'Show less' : 'Show more'; toggle.setAttribute('aria-expanded', String(expanded)); content.classList.toggle('is-expanded', expanded); updateDisclosure(); }, 'sprint-goal-toggle'); toggle.hidden = true; toggle.setAttribute('aria-controls', content.id); toggle.setAttribute('aria-expanded', 'false'); goal.append(content, toggle);
+ requestAnimationFrame(() => { if (!content.isConnected) return; updateDisclosure(); sprintGoalLayouts.set(content, updateDisclosure); sprintGoalResizeObserver.observe(content); });
+ return goal;
+}
 function sprintPanel(s, items = scopeItems(s)) {
- const card = panel('sprint-panel', 'article'); card.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); const titleRow = el('div', undefined, 'sprint-title-row'); const titleCopy = el('div', undefined, 'sprint-title-copy'); titleCopy.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name)); titleRow.append(titleCopy); info.append(titleRow, el('p', s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
+ const card = panel('sprint-panel', 'article'); card.dataset.sprintId = s.id; const info = el('div', undefined, 'sprint-info'); const titleRow = el('div', undefined, 'sprint-title-row'); const titleCopy = el('div', undefined, 'sprint-title-copy'); titleCopy.append(el('p', `${s.state.toUpperCase()} SPRINT`, 'eyebrow'), el('h2', s.name)); titleRow.append(titleCopy); info.append(titleRow, sprintGoal(s.goal), el('small', `${s.start} → ${s.end}`, 'muted'));
  const metrics = metricList([[items.length, 'In scope'], [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'], [items.filter(blocked).length, 'Blocked']]);
  const actions = el('div', undefined, 'actions sprint-actions');
  const expanded = burndownExpanded.has(s.id); const toggle = actionIconButton(expanded ? 'Hide burn down' : 'Show burn down', '▥', () => { if (expanded) burndownExpanded.delete(s.id); else burndownExpanded.add(s.id); render(); [...document.querySelectorAll('[data-burndown-toggle]')].find(element => element.dataset.burndownToggle === s.id)?.focus(); }, 'quiet'); toggle.dataset.burndownToggle = s.id; toggle.setAttribute('aria-expanded', String(expanded)); if (expanded) toggle.setAttribute('aria-controls', `burndown-${s.id}`); toggle.disabled = busy || loading; actions.append(toggle);
@@ -2119,10 +2130,13 @@ function editSprint(sprint) {
  const existing = !!sprint; sprint ||= { name: '', goal: '', start: new Date().toISOString().slice(0, 10), end: new Date(Date.now() + 13 * 86400000).toISOString().slice(0, 10) };
  openEditor(existing ? 'Edit sprint' : 'Plan a sprint', fields => {
   const name = field(fields, 'name', 'Sprint name', sprint.name); name.required = true; name.maxLength = 120;
-  const goal = field(fields, 'goal', 'Sprint goal · what outcome matters?', sprint.goal, 'textarea'); goal.required = true; goal.maxLength = 4000;
+  markdownEditor(fields, 'goal', 'Sprint goal · what outcome matters?', sprint.goal, 4000, false, false, 'sprint goal');
   const grid = el('div', undefined, 'form-grid'); fields.append(grid); field(grid, 'start', 'Start date', sprint.start, 'date').required = true; field(grid, 'end', 'End date', sprint.end, 'date').required = true;
   fields.append(helpText('Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.'));
- }, data => ({ kind: 'sprint.save', target: sprint.id || '', sprint: { ...sprint, name: data.get('name').trim(), goal: data.get('goal').trim(), start: data.get('start'), end: data.get('end') } }));
+ }, data => {
+  const goal = String(data.get('goal') || '').trim(); if (!goal) throw new Error('Sprint goal is required.');
+  return { kind: 'sprint.save', target: sprint.id || '', sprint: { ...sprint, name: data.get('name').trim(), goal, start: data.get('start'), end: data.get('end') } };
+ });
 }
 function closeSprint(sprint) {
  const items = scopeItems(sprint); const unfinished = items.filter(i => !done(i));

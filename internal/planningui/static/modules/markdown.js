@@ -84,10 +84,10 @@ function renderMarkdown(parent, source) {
   const paragraph = el('p'); paragraphLines.forEach((line, lineIndex) => { if (lineIndex) paragraph.append(el('br')); appendMarkdownInline(paragraph, line); }); parent.append(paragraph);
  }
 }
-function markdownEditor(parent, name, title, value = '', maxLength = 4000, readOnly = false, previewByDefault = false) {
+function markdownEditor(parent, name, title, value = '', maxLength = 4000, readOnly = false, previewByDefault = false, subject = title === 'Description' ? 'description' : 'comment') {
  const group = el('div', undefined, 'markdown-field'); const inputID = 'markdown-' + requestKey(); const label = el('label', undefined, 'markdown-label'); label.htmlFor = inputID; label.append(el('span', title)); group.append(label);
  if (readOnly) { const preview = el('div', undefined, 'markdown-preview'); renderMarkdown(preview, value); if (!String(value || '').trim()) preview.append(el('p', 'No content.', 'help')); group.append(preview); parent.append(group); return {input: null, refresh: () => {}}; }
- const editor = el('div', undefined, 'markdown-editor'); const toolbar = el('div', undefined, 'markdown-toolbar'); const subject = title === 'Description' ? 'description' : 'comment'; let previewing = previewByDefault;
+ const editor = el('div', undefined, 'markdown-editor'); const toolbar = el('div', undefined, 'markdown-toolbar'); let previewing = previewByDefault;
  const modeButton = button(previewByDefault ? 'Edit' : 'Preview', () => setMode(!previewing), 'markdown-mode'); modeButton.setAttribute('aria-label', `Preview ${subject}`); modeButton.title = `Preview ${subject}`; toolbar.append(modeButton);
  const input = noAutofill(el('textarea')); input.id = inputID; input.name = name; input.value = value || ''; input.maxLength = maxLength; input.placeholder = 'Write Markdown…'; input.spellcheck = true; input.dataset.markdownControl = 'true'; const preview = el('div', undefined, 'markdown-preview'); preview.hidden = true; preview.tabIndex = 0;
  function replaceSelection(transform, placeholder = 'text') { const start = input.selectionStart ?? input.value.length; const end = input.selectionEnd ?? start; const selected = input.value.slice(start, end) || placeholder; input.setRangeText(transform(selected), start, end, 'select'); input.dispatchEvent(new Event('input', {bubbles: true})); input.focus(); }

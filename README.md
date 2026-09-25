@@ -22,10 +22,12 @@ planning evidence and draft suggestions for a human to review and approve.
   memberships and optionally assigns unfinished work to another open sprint. Closed sprints can
   be re-opened, restoring their preserved scope while retaining other memberships; closing a
   reopened sprint replaces that preserved scope with its current memberships.
-  Closed-scope metrics describe current cards, not historical completion. Closed sprints can be
-  archived after closure; archiving removes them from working selectors without deleting them and
-  preserves an immutable closure summary in paginated sprint history. Archived sprints cannot be
-  reopened or edited and do not count toward the 200 non-archived sprint limit.
+  Sprint goals use the shared Markdown editor in Write mode and the same safe renderer as items
+  and comments. Existing plain-text goals continue to display as paragraphs; raw HTML and unsafe
+  links stay text. Closed-scope metrics describe current cards, not historical completion. Closed
+  sprints can be archived after closure; archiving removes them from working selectors without
+  deleting them and preserves an immutable closure summary in paginated sprint history. Archived
+  sprints cannot be reopened or edited and do not count toward the 200 non-archived sprint limit.
 - Item comments are a separate flat, append-only stream. Each comment retains its
   author and creation time; members and admins can add comments, viewers can read
   them, and comments never alter planning revisions, audit snapshots or burn-down
