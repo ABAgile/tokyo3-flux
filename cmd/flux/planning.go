@@ -322,7 +322,9 @@ func runPlan(args []string, stdout, stderr io.Writer) error {
 		routes.ServeHTTP(w, r)
 	})
 	// Probes stay exempt so throttling never makes an instance look unhealthy.
-	handler := apiLimiter.Middleware(limited, "/healthz", "/readyz")
+	// Embedded shell assets are exempt too: a page load fetches every ES module,
+	// which would otherwise exhaust the burst on a reload.
+	handler := apiLimiter.Middleware(limited, append([]string{"/healthz", "/readyz"}, planningui.Paths()...)...)
 	// Body read/write bounds must cover a full attachment transfer; slow-start
 	// header attacks stay bounded by ReadHeaderTimeout, and each handler applies
 	// its own, tighter request deadline.

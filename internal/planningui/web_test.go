@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/fs"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,26 @@ func TestStylesheetJoinsFeatureFiles(t *testing.T) {
 	}
 	if !strings.HasPrefix(names[0], "static/styles/010-tokens") {
 		t.Fatalf("tokens must load first, got %s", names[0])
+	}
+}
+
+func TestPathsAreServedAssets(t *testing.T) {
+	paths := Paths()
+	for _, want := range []string{"/", "/app.js", "/styles.css", "/modules/state.js"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("Paths() lacks %s: %v", want, paths)
+		}
+	}
+	h := Handler()
+	for _, path := range paths {
+		if strings.HasPrefix(path, "/styles/") || path == "/index.html" {
+			t.Fatalf("Paths() lists an unserved path %s", path)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"time"
 )
@@ -69,6 +70,20 @@ func loadAssets() map[string]asset {
 		panic("planningui: no stylesheets under static/styles")
 	}
 	out["/styles.css"] = newAsset("styles.css", styles)
+	return out
+}
+
+// Paths lists every browser-reachable asset path, sorted. The shell loads one
+// request per ES module and every asset is served from memory, so the server
+// exempts exactly these paths from per-client request limits.
+func Paths() []string {
+	out := make([]string, 0, len(assets))
+	for name := range assets {
+		if servedAsset(name) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
 	return out
 }
 
