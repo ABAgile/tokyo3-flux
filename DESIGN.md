@@ -17,13 +17,10 @@ Spacing scale: 4, 8, 12, 16, 24, 32px.
 Radius: 8px controls, 12px cards/panels.
 Borders are 1px; focus ring is 3px with 2px offset.
 
-Light colors: background #f4f6f1, panel #ffffff, inset #edf1eb, border #cfd8cc, text #15241d, muted
-#53645a, accent #145a42, accent surface #dcefe4, warning #80500a, danger #a53228. Dark colors:
-background #111713, panel #1a241d, inset #222f26, border #3a4a3e, text #e7efe8, muted #aabaad, accent #9be0b8, accent surface #1b3c2d, warning #e0aa55, danger #ffaca0.
+Light colors: background #f4f6f1, panel #ffffff, inset #edf1eb, border #cfd8cc, text #15241d, muted #53645a, accent #145a42, accent surface #dcefe4, warning #80500a, danger #a53228.
+Dark colors: background #111713, panel #1a241d, inset #222f26, border #3a4a3e, text #e7efe8, muted #aabaad, accent #9be0b8, accent surface #1b3c2d, warning #e0aa55, danger #ffaca0.
 Label colors use a fixed 64-swatch palette: eight hue families with eight opaque, high-saturation swatches each.
-Include
-#dcefe4, #145a42, and #ffcc00 for the default and common accent choices; use dark ink on light
-swatches and white on dark swatches.
+Include #dcefe4, #145a42, and #ffcc00 for the default and common accent choices; use dark ink on light swatches and white on dark swatches.
 Use semantic tokens for all other UI colors.
 Motion is optional decoration: any transition, animation, or smooth scrolling must be neutralised under `prefers-reduced-motion: reduce`.
 No external fonts or assets are required for the base UI; optional GitLab avatar images use the configured instance or a validated HTTPS Gravatar avatar URL.
@@ -120,8 +117,7 @@ No external fonts or assets are required for the base UI; optional GitLab avatar
   Multi-select values remain removable chips while editing, with a token-based shadow.
   GitLab links have a paste-URL field below the picker; Enter or Get resolves and appends an approved MR link.
   Add link opens the quick-scope and search fallback.
-  Static field guidance uses an opaque ?
-  popover with a line-colored shadow; the work-item header popover shows Card ID and Revision on separate lines.
+  Static field guidance uses an opaque `?` popover with a line-colored shadow; the work-item header popover shows Card ID and Revision on separate lines.
   Modal cards close when clicking outside them.
   Closed-sprint membership is displayed read-only.
   Descriptions, comments and sprint goals use a GitLab-like Markdown editor with a compact single-row icon bar fused to the top of its input.
