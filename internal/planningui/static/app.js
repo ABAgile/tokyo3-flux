@@ -295,8 +295,8 @@ function mountPage(showPageRoot, keepView) {
 // The busy flag belongs to the region that is actually rebuilt, so the filter
 // bar and the summaries above it stay available while work loads.
 let contentBusy = true;
-function setContentBusy(state) {
-  contentBusy = !!state;
+function setContentBusy(value) {
+  contentBusy = !!value;
   const region = $('planning-frame').hidden ? $('page-root') : $('planning-body');
   ($('page-root') === region ? $('planning-body') : $('page-root')).removeAttribute('aria-busy');
   region.setAttribute('aria-busy', String(contentBusy));
@@ -637,22 +637,22 @@ async function openSharedItem(itemID) {
 // Unsaved editor input is protected first: a refused close leaves the view and
 // the address bar exactly as they were.
 async function applyHistoryNavigation() {
-  const state = planningURLState();
+  const urlState = planningURLState();
   const workspace = workspaceURLState();
   if (board && workspace && workspace !== board.workspace.id) {
-    pendingPlanningURLState = state;
+    pendingPlanningURLState = urlState;
     await chooseWorkspace(workspace);
     return;
   }
   if (!board) return;
-  const target = String(state.item || '');
+  const target = String(urlState.item || '');
   if (detailState && detailState.itemID !== target && !closeDetail({ focus: false })) {
     sharedItemID = detailState.itemID;
     persistPlanningURL();
     return;
   }
   if ($('editor').open && editorItemID !== target && !busy) closeEditor();
-  applyPlanningURLState(state);
+  applyPlanningURLState(urlState);
 }
 window.addEventListener('popstate', () => {
   void applyHistoryNavigation();
@@ -663,12 +663,12 @@ function knownFilterValue(name, value) {
   if (name === 'assignee') return board.members.some((member) => member.subject === value);
   return board.labels.some((label) => label.name === value);
 }
-function applyPlanningURLState(state = planningURLState()) {
+function applyPlanningURLState(urlState = planningURLState()) {
   if (!board) return;
   FILTER_NAMES.forEach((name) =>
     setFilterValues(
       name,
-      String(state[name] || '')
+      String(urlState[name] || '')
         .split(',')
         .map((value) => value.trim())
         .filter((value) => value && value !== 'all' && knownFilterValue(name, value)),
@@ -676,10 +676,10 @@ function applyPlanningURLState(state = planningURLState()) {
   );
   const project = singleFilterValue('project');
   presentation =
-    state.mode === 'list' || (!state.mode && project !== 'all' && project !== 'none')
+    urlState.mode === 'list' || (!urlState.mode && project !== 'all' && project !== 'none')
       ? 'list'
       : 'board';
-  const requestedScope = state.scope;
+  const requestedScope = urlState.scope;
   const validScope =
     requestedScope &&
     (['active', 'backlog', 'all'].includes(requestedScope) ||
@@ -691,7 +691,7 @@ function applyPlanningURLState(state = planningURLState()) {
       : 'active';
   // The requested card is kept in the URL while it resolves, so a reload of a
   // shared link never drops the card it names before the details open.
-  sharedItemID = String(state.item || '');
+  sharedItemID = String(urlState.item || '');
   render();
   persistPlanningURL();
   if (sharedItemID) void openSharedItem(sharedItemID);
@@ -3595,14 +3595,14 @@ function listRow(item) {
   project.append(projectValue);
   const status = listCell('Links / Status', 'list-cell-status');
   const statusContent = el('div', undefined, 'list-row-status-content');
-  const state = el('div', undefined, 'list-row-status-badges');
-  if (blocked(item)) state.append(el('span', 'Blocked', 'badge warning'));
+  const statusBadges = el('div', undefined, 'list-row-status-badges');
+  if (blocked(item)) statusBadges.append(el('span', 'Blocked', 'badge warning'));
   if (due && !due.overdue) {
     const dueBadge = dueDateBadge(item);
-    if (dueBadge) state.append(dueBadge);
+    if (dueBadge) statusBadges.append(dueBadge);
   }
-  if (item.archived) state.append(el('span', 'Archived', 'badge'));
-  if (state.childElementCount || due?.overdue) statusContent.append(state);
+  if (item.archived) statusBadges.append(el('span', 'Archived', 'badge'));
+  if (statusBadges.childElementCount || due?.overdue) statusContent.append(statusBadges);
   const links = board.links.filter((link) => link.items.includes(item.id));
   if (links.length) {
     const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links');
@@ -6118,21 +6118,21 @@ function closeDetail({ force = false, focus = true } = {}) {
     return true;
   }
   if (!force && !detailDiscardAllowed()) return false;
-  const state = detailState;
+  const detail = detailState;
   detailState = undefined;
   selectedItemID = '';
   setSharedItem('');
-  if (state.pane) {
-    state.pane.hidden = true;
-    state.pane.replaceChildren();
-    state.pane.parentElement?.classList.remove('has-detail');
+  if (detail.pane) {
+    detail.pane.hidden = true;
+    detail.pane.replaceChildren();
+    detail.pane.parentElement?.classList.remove('has-detail');
   }
   syncListSelection();
   if (focus) {
-    const target = state.origin?.isConnected
-      ? state.origin
+    const target = detail.origin?.isConnected
+      ? detail.origin
       : [...document.querySelectorAll('.list-row')].find(
-          (row) => row.dataset.item === state.itemID,
+          (row) => row.dataset.item === detail.itemID,
         );
     if (target) target.focus({ preventScroll: true });
   }
@@ -6209,18 +6209,18 @@ function openItemDetail(item, draft, origin) {
     dirty: false,
     initialDraft: null,
   };
-  const state = detailState;
+  const detail = detailState;
   setSharedItem(item.id);
   const updateDirty = () => {
-    if (detailState === state) state.dirty = detailDraftIsDirty(state);
+    if (detailState === detail) detail.dirty = detailDraftIsDirty(detail);
   };
   form.addEventListener('input', updateDirty);
   form.addEventListener('change', updateDirty);
-  state.initialDraft = itemEditorDraft(form);
+  detail.initialDraft = itemEditorDraft(form);
   updateDetailPaneVisibility();
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (readOnly || busy || detailState !== state) return;
+    if (readOnly || busy || detailState !== detail) return;
     setErrorText(error, '');
     save.disabled = true;
     cancel.disabled = true;
@@ -6228,12 +6228,12 @@ function openItemDetail(item, draft, origin) {
     revision = board.workspace.revision;
     const data = new FormData(form);
     const desired = data.getAll('link_ids');
-    state.desiredLinkIDs = desired;
+    detail.desiredLinkIDs = desired;
     const command = {
       revision,
       kind: 'item.update',
       target: item.id,
-      item: { ...itemPayloadFromForm(data, state.item), revision: state.itemRevision },
+      item: { ...itemPayloadFromForm(data, detail.item), revision: detail.itemRevision },
     };
     const serialized = JSON.stringify(command);
     if (pending !== serialized) {
@@ -6247,32 +6247,32 @@ function openItemDetail(item, draft, origin) {
           'Changes were saved, but the board could not be refreshed. Refresh before continuing.',
         );
       revision = receiptRevision(result.receipt, revision + 1);
-      await reconcileItemLinks(item.id, state.desiredLinkIDs || []);
-      if (detailState !== state || !board) return;
+      await reconcileItemLinks(item.id, detail.desiredLinkIDs || []);
+      if (detailState !== detail || !board) return;
       const latest = board.items.find((value) => value.id === item.id);
       if (!latest) {
         closeDetail({ force: true });
         return;
       }
-      state.item = latest;
-      state.itemRevision = latest.revision;
+      detail.item = latest;
+      detail.itemRevision = latest.revision;
       revision = board.workspace.revision;
-      state.initialDraft = itemEditorDraft(form);
-      state.dirty = false;
+      detail.initialDraft = itemEditorDraft(form);
+      detail.dirty = false;
       updateDetailHeader(latest);
       refreshItemStatusSummary(form, latest);
       refreshEditorDueBadge(form, latest);
       notice('Changes saved.');
     } catch (err) {
-      if (detailState === state) {
-        state.dirty = true;
+      if (detailState === detail) {
+        detail.dirty = true;
         setErrorText(
           error,
           `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
         );
       }
     } finally {
-      if (detailState === state && form.isConnected) {
+      if (detailState === detail && form.isConnected) {
         save.disabled = false;
         cancel.disabled = false;
         close.disabled = false;
@@ -7848,7 +7848,7 @@ setInterval(async () => {
     path = root;
   observationPoll = true;
   try {
-    const state = await api(path + '/revision');
+    const revisionState = await api(path + '/revision');
     if (
       board !== current ||
       root !== path ||
@@ -7859,17 +7859,21 @@ setInterval(async () => {
       $('editor').open
     )
       return;
-    if (!state || !Number.isSafeInteger(state.revision) || typeof state.role !== 'string')
+    if (
+      !revisionState ||
+      !Number.isSafeInteger(revisionState.revision) ||
+      typeof revisionState.role !== 'string'
+    )
       throw new Error('Workspace state response is invalid.');
-    if (state.revision !== board.workspace.revision || state.role !== board.role) {
+    if (revisionState.revision !== board.workspace.revision || revisionState.role !== board.role) {
       showPlanningChangeNotice(
-        state.role !== board.role
+        revisionState.role !== board.role
           ? 'Workspace permissions changed elsewhere · Refresh to review'
           : undefined,
       );
       return;
     }
-    const digest = String(state.links_digest || '');
+    const digest = String(revisionState.links_digest || '');
     if (
       observationDigest &&
       digest === observationDigest &&
