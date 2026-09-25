@@ -42,18 +42,16 @@ async function run(page) {
   }
   await nav('Members');
   await page.getByRole('heading', { name: 'Members', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Edit name', exact: true }).click();
-  await page.getByLabel('Display name', { exact: true }).fill('Alex Planner');
-  await save();
+  await page.getByRole('button', { name: 'Edit member', exact: true }).click();
+  await page.getByLabel('Workspace name', { exact: true }).fill('Alex Planner');
+  await page.getByRole('button', { name: 'Save member', exact: true }).click();
+  await saved();
   await nav('Kanban board');
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   for (const name of ['Drag first', 'Drag second']) {
     await page.getByRole('button', { name: '＋ New item', exact: true }).click();
     await page.getByLabel('Title', { exact: true }).fill(name);
-    await page
-      .getByRole('dialog')
-      .getByRole('combobox', { name: 'Assignee', exact: true })
-      .selectOption({ label: 'Alex Planner' });
+    await chooseMulti('Assignee', ['Alex Planner']);
     await chooseMulti('Labels', ['Bug', 'Delivery']);
     await save();
   }
@@ -66,7 +64,10 @@ async function run(page) {
   const column = (id) => page.locator(`[data-column="${id}"]`);
   const handle = (id) => card(id);
   check(
-    (await card(first.id).getByText('Alex Planner', { exact: true }).count()) === 1,
+    // Cards name people through the participant stack's accessible labels.
+    (await card(first.id)
+      .getByRole('img', { name: 'Alex Planner · Assignee', exact: true })
+      .count()) === 1,
     'raw subject shown instead of name',
   );
   await page
@@ -105,7 +106,7 @@ async function run(page) {
   await page.getByLabel('WIP limit · 0 means unlimited').fill('1');
   await save();
   await drag(handle(second.id), column(doing.id).locator('.column-head'), { x: 16, y: 8 });
-  await page.getByRole('status').filter({ hasText: 'WIP limit' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'WIP limit' }).waitFor();
   check(
     (await column(ready.id).locator(`[data-item="${second.id}"]`).count()) === 1,
     'rejected drop rearranged local card',
@@ -154,7 +155,7 @@ async function run(page) {
   await other.getByRole('status').filter({ hasText: 'Changes saved.' }).waitFor();
   await other.close();
   await drag(handle(second.id), column(doing.id), { x: 16, y: 100 });
-  await page.getByRole('status').filter({ hasText: 'planning changed' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'planning changed' }).waitFor();
   check(
     (await board()).items.find((i) => i.id === second.id).column_id === ready.id,
     'stale drop persisted',
@@ -200,6 +201,8 @@ async function run(page) {
   );
   await nav('Kanban board');
   await page.getByRole('button', { name: 'Drag second', exact: true }).click();
+  // Chips become removable once the field is in edit mode.
+  await page.getByRole('button', { name: 'Edit Labels', exact: true }).click();
   await page
     .getByRole('group', { name: 'Labels', exact: true })
     .getByRole('button', { name: 'Remove Delivery', exact: true })
