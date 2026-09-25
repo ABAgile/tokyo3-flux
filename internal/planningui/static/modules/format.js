@@ -1,49 +1,122 @@
 // Presentation formatting. Pure functions from planning values to display
 // strings; none of them read application state or touch the DOM.
-function initials(name) { const words = name.trim().split(/\s+/).filter(Boolean); return words.length ? words.slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase() : '—'; }
+function initials(name) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return words.length
+    ? words
+        .slice(0, 2)
+        .map((word) => Array.from(word)[0])
+        .join('')
+        .toUpperCase()
+    : '—';
+}
 function attachmentSize(size) {
- if (!Number.isFinite(size) || size < 0) return 'unknown size';
- if (size < 1024) return `${size} B`;
- const units = ['KiB', 'MiB', 'GiB']; let value = size; let index = -1;
- while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
- return `${value >= 10 || Number.isInteger(value) ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
+  if (!Number.isFinite(size) || size < 0) return 'unknown size';
+  if (size < 1024) return `${size} B`;
+  const units = ['KiB', 'MiB', 'GiB'];
+  let value = size;
+  let index = -1;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index++;
+  }
+  return `${value >= 10 || Number.isInteger(value) ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
 }
 function attachmentKind(attachment) {
- const type = String(attachment.content_type || '');
- if (type.startsWith('image/')) return 'IMG';
- if (type.startsWith('video/')) return 'VID';
- if (type.startsWith('audio/')) return 'AUD';
- if (type === 'application/pdf') return 'PDF';
- if (type.includes('zip') || type.includes('tar') || type.includes('gzip')) return 'ZIP';
- const extension = String(attachment.name || '').split('.').at(-1)?.replace(/[^a-z0-9]/gi, '').slice(0, 4).toUpperCase();
- return extension || 'FILE';
+  const type = String(attachment.content_type || '');
+  if (type.startsWith('image/')) return 'IMG';
+  if (type.startsWith('video/')) return 'VID';
+  if (type.startsWith('audio/')) return 'AUD';
+  if (type === 'application/pdf') return 'PDF';
+  if (type.includes('zip') || type.includes('tar') || type.includes('gzip')) return 'ZIP';
+  const extension = String(attachment.name || '')
+    .split('.')
+    .at(-1)
+    ?.replace(/[^a-z0-9]/gi, '')
+    .slice(0, 4)
+    .toUpperCase();
+  return extension || 'FILE';
 }
 function attachmentTypeDescription(attachment) {
- const type = String(attachment.content_type || '').trim(); return type ? `${attachmentKind(attachment)} file · ${type}` : `${attachmentKind(attachment)} file`;
+  const type = String(attachment.content_type || '').trim();
+  return type
+    ? `${attachmentKind(attachment)} file · ${type}`
+    : `${attachmentKind(attachment)} file`;
 }
 function labelForeground(color) {
- const match = /^#([0-9a-f]{6})$/i.exec(color || ''); if (!match) return 'var(--ink)';
- const value = Number.parseInt(match[1], 16); const channels = [value >> 16 & 255, value >> 8 & 255, value & 255].map(channel => { channel /= 255; return channel <= .03928 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4; });
- const luminance = channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
- return luminance > .21 ? 'var(--label-ink)' : 'var(--label-contrast)';
+  const match = /^#([0-9a-f]{6})$/i.exec(color || '');
+  if (!match) return 'var(--ink)';
+  const value = Number.parseInt(match[1], 16);
+  const channels = [(value >> 16) & 255, (value >> 8) & 255, value & 255].map((channel) => {
+    channel /= 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  return luminance > 0.21 ? 'var(--label-ink)' : 'var(--label-contrast)';
 }
-function burndownDateLabel(date) { const value = new Date(`${date}T00:00:00Z`); return Number.isNaN(value.getTime()) ? date : value.toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'}); }
+function burndownDateLabel(date) {
+  const value = new Date(`${date}T00:00:00Z`);
+  return Number.isNaN(value.getTime())
+    ? date
+    : value.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
 function parseDateOnly(value) {
- const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '')); if (!match) return undefined;
- const [year, month, day] = match.slice(1).map(Number); if (year < 1) return undefined;
- const date = new Date(0); date.setUTCHours(12, 0, 0, 0); date.setUTCFullYear(year, month - 1, day);
- return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : undefined;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!match) return undefined;
+  const [year, month, day] = match.slice(1).map(Number);
+  if (year < 1) return undefined;
+  const date = new Date(0);
+  date.setUTCHours(12, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+    ? date
+    : undefined;
 }
-function formatDateOnly(value) { const date = parseDateOnly(value); return date ? date.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric', timeZone:'UTC'}) : ''; }
+function formatDateOnly(value) {
+  const date = parseDateOnly(value);
+  return date
+    ? date.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC',
+      })
+    : '';
+}
 function dueDatePresentation(value, category, archived, now = new Date()) {
- const date = parseDateOnly(value); if (!date) return undefined;
- const today = `${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
- const overdue = !archived && category !== 'done' && value < today;
- const label = date.toLocaleDateString(undefined, {month:'short', day:'numeric', timeZone:'UTC'});
- return {label:overdue ? `⚠ Overdue · ${label}` : `Due · ${label}`, overdue};
+  const date = parseDateOnly(value);
+  if (!date) return undefined;
+  const today = `${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const overdue = !archived && category !== 'done' && value < today;
+  const label = date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+  return { label: overdue ? `⚠ Overdue · ${label}` : `Due · ${label}`, overdue };
 }
-function workspaceLabel(workspace) { return workspace.name; }
-function workspaceHistoryLabel(workspace) { return `${workspace.name} (${workspace.id})`; }
-function columnWIPLabel(column, total) { return column.wip ? `${total}/${column.wip} WIP` : 'No limit'; }
+function workspaceLabel(workspace) {
+  return workspace.name;
+}
+function workspaceHistoryLabel(workspace) {
+  return `${workspace.name} (${workspace.id})`;
+}
+function columnWIPLabel(column, total) {
+  return column.wip ? `${total}/${column.wip} WIP` : 'No limit';
+}
 
-export {initials, attachmentSize, attachmentKind, attachmentTypeDescription, labelForeground, burndownDateLabel, formatDateOnly, dueDatePresentation, workspaceLabel, workspaceHistoryLabel, columnWIPLabel};
+export {
+  initials,
+  attachmentSize,
+  attachmentKind,
+  attachmentTypeDescription,
+  labelForeground,
+  burndownDateLabel,
+  formatDateOnly,
+  dueDatePresentation,
+  workspaceLabel,
+  workspaceHistoryLabel,
+  columnWIPLabel,
+};

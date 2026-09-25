@@ -1,11 +1,14 @@
 # Markdown lint/format for Flux docs; `make fmt-md` rewrites to one sentence per line.
 [global]
-include = ["README.md", "DESIGN.md", "docs/**/*.md", ".pi/skills/**/SKILL.md"]
+# Wrapped paragraph lines can begin with a hex color such as #145a42; that is not a heading.
+disable = ["MD018"]
+include = ["README.md", "DESIGN.md", "AGENTS.md", "docs/**/*.md", ".pi/skills/**/SKILL.md"]
 
 [MD013]
 reflow = true
 reflow-mode = "sentence-per-line"
 abbreviations = []
-# Sentence-per-line lines are as long as their sentence; tables are not wrapped.
+# Sentence-per-line lines are as long as their sentence; tables and code are not wrapped.
 paragraphs = false
 tables = false
+code-blocks = false

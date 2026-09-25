@@ -86,8 +86,7 @@ async function run(page) {
       };
       const read = (style) => {
         const values = {};
-        for (let i = 0; i < style.length; i++)
-          values[style[i]] = style.getPropertyValue(style[i]);
+        for (let i = 0; i < style.length; i++) values[style[i]] = style.getPropertyValue(style[i]);
         return values;
       };
       const delta = (values, base) =>
@@ -179,7 +178,10 @@ async function run(page) {
     await nav('labels', 'Labels');
     await capture(`${prefix}/labels`);
     await nav('history', 'History');
-    await page.locator('#page-root .history-list, #page-root li, #page-root .empty').first().waitFor();
+    await page
+      .locator('#page-root .history-list, #page-root li, #page-root .empty')
+      .first()
+      .waitFor();
     await capture(`${prefix}/history`);
 
     await nav('board', 'Kanban board');
@@ -211,7 +213,10 @@ async function run(page) {
   await page.locator('#workspace-name').fill('Style snapshot empty');
   await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
   await page.locator('.first-run').waitFor();
-  check((await page.locator('#workspace').inputValue()) !== workspace, 'empty workspace not opened');
+  check(
+    (await page.locator('#workspace').inputValue()) !== workspace,
+    'empty workspace not opened',
+  );
   for (const themeName of THEMES) {
     await setTheme(themeName);
     for (const width of WIDTHS) {
@@ -223,6 +228,10 @@ async function run(page) {
 
   return JSON.stringify({
     captures,
-    styles: Object.fromEntries(Object.keys(styles).sort().map((key) => [key, styles[key]])),
+    styles: Object.fromEntries(
+      Object.keys(styles)
+        .sort()
+        .map((key) => [key, styles[key]]),
+    ),
   });
 }
