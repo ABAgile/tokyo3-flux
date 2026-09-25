@@ -1,0 +1,187 @@
+.markdown-field {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.markdown-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.markdown-editor {
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--panel);
+}
+.markdown-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding: var(--s1) var(--s2);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r1) var(--r1) 0 0;
+  background: var(--inset);
+}
+.markdown-mode,
+.markdown-tool {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+  font-weight: 600;
+}
+.markdown-mode {
+  flex: 0 0 auto;
+  width: auto;
+  height: var(--s8);
+  padding: var(--s1) var(--s2);
+  color: var(--accent);
+}
+.markdown-tool {
+  flex: 0 0 calc(var(--s8) - var(--s1));
+  width: calc(var(--s8) - var(--s1));
+  height: calc(var(--s8) - var(--s1));
+  padding: 0;
+}
+.markdown-mode:hover,
+.markdown-tool:hover {
+  background: var(--inset);
+}
+.markdown-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  height: var(--s4);
+  margin: 0 var(--s1);
+  background: var(--line);
+}
+.markdown-editor > textarea {
+  width: 100%;
+  border: 0;
+  border-radius: 0 0 var(--r1) var(--r1);
+  background: transparent;
+}
+.markdown-editor > textarea:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 3px var(--accent);
+}
+.markdown-editor > .markdown-preview {
+  border: 0;
+  border-radius: 0 0 var(--r1) var(--r1);
+  background: transparent;
+}
+.markdown-preview {
+  min-width: 0;
+  min-height: 120px;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--inset);
+  overflow-wrap: anywhere;
+}
+.markdown-preview > :first-child,
+.comment-body > :first-child {
+  margin-top: 0;
+}
+.markdown-preview > :last-child,
+.comment-body > :last-child {
+  margin-bottom: 0;
+}
+.markdown-preview h1,
+.markdown-preview h2,
+.markdown-preview h3,
+.markdown-preview h4,
+.markdown-preview h5,
+.markdown-preview h6,
+.markdown-preview p,
+.comment-body h1,
+.comment-body h2,
+.comment-body h3,
+.comment-body h4,
+.comment-body h5,
+.comment-body h6,
+.comment-body p {
+  margin: 0 0 var(--s3);
+}
+.markdown-preview ul,
+.markdown-preview ol,
+.comment-body ul,
+.comment-body ol {
+  margin: 0 0 var(--s3);
+  padding-left: var(--s6);
+}
+.markdown-preview blockquote,
+.comment-body blockquote {
+  margin: 0 0 var(--s3);
+  padding-left: var(--s3);
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+.markdown-preview pre,
+.comment-body pre {
+  margin: 0 0 var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--panel);
+  white-space: pre-wrap;
+  overflow: auto;
+}
+.markdown-inline-code {
+  padding: 0 var(--s1);
+  border-radius: var(--r1);
+  background: var(--soft);
+  font-family: ui-monospace, monospace;
+}
+.markdown-preview hr,
+.comment-body hr {
+  margin: 0 0 var(--s3);
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.markdown-preview table,
+.comment-body table {
+  width: 100%;
+  margin: 0 0 var(--s3);
+  border-collapse: collapse;
+  overflow-wrap: anywhere;
+}
+.markdown-preview th,
+.markdown-preview td,
+.comment-body th,
+.comment-body td {
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-task {
+  list-style: none;
+  margin-left: calc(-1 * var(--s6));
+}
+.markdown-task input {
+  width: auto;
+  min-width: 0;
+  margin: 0 var(--s2) 0 0;
+  padding: 0;
+  vertical-align: middle;
+}
+.markdown-preview a,
+.comment-body a {
+  overflow-wrap: anywhere;
+}

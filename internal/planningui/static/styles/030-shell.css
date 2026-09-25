@@ -1,0 +1,196 @@
+.sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 208px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: var(--s6) var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+  overflow-y: auto;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 28px;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--ink);
+}
+.brand small {
+  font-size: 12px;
+  font-weight: 400;
+}
+.mark {
+  font-size: 18px;
+  background: var(--accent);
+  color: var(--panel);
+  border-radius: var(--r1);
+  padding: var(--s1) var(--s2);
+}
+nav {
+  display: grid;
+  gap: var(--s2);
+}
+nav button {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+}
+.nav-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--s6);
+  width: var(--s6);
+  text-align: center;
+}
+.workspace-field {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+}
+.workspace-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.workspace-label-row label {
+  display: block;
+}
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  flex: 0 0 auto;
+}
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: var(--s8);
+  height: var(--s8);
+  padding: 0;
+}
+nav button[aria-current="page"] {
+  color: var(--accent);
+  background: var(--soft);
+  font-weight: 600;
+}
+.sidebar-foot {
+  margin-top: auto;
+  display: grid;
+  gap: var(--s3);
+  align-items: end;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sidebar-session {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s3);
+  min-width: 0;
+}
+.theme-toggle {
+  flex: 0 0 var(--s8);
+}
+.sidebar-account {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+}
+.sidebar-account span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sidebar-account a {
+  white-space: nowrap;
+  justify-self: end;
+}
+main {
+  margin-left: 208px;
+  padding: var(--s6) var(--s8);
+  min-width: 0;
+}
+.heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s4);
+}
+.actions {
+  display: flex;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.actions > label {
+  min-width: 0;
+}
+.gitlab-paste-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s2);
+  align-items: end;
+}
+.gitlab-paste-row input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+#notice {
+  min-height: 24px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: var(--s3);
+}
+#notice.error,
+#form-error,
+.error {
+  color: var(--danger);
+}
+.notice-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  margin: calc(-1 * var(--s1)) 0 var(--s4);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--inset);
+  color: var(--ink);
+}
+.notice-bar > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.notice-bar > button {
+  flex: 0 0 auto;
+  color: var(--ink);
+}
+.notice-bar-accent {
+  background: var(--soft);
+}
+.notice-bar-warning {
+  border-color: var(--warning);
+}
+.notice-bar-warning > button {
+  border-color: var(--warning);
+}
+.notice-bar-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.notice-bar-danger > button {
+  border-color: var(--danger);
+}

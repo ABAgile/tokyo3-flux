@@ -1,0 +1,44 @@
+.date-field {
+  container-type: inline-size;
+}
+.date-field-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s3);
+  min-width: 0;
+}
+.date-field-inputs label {
+  min-width: 0;
+}
+.date-field-inputs input {
+  width: 100%;
+  min-width: 0;
+}
+.date-range-part {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.date-range-separator {
+  color: var(--muted);
+}
+@container (min-width: 280px) {
+  .date-field-inputs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.badge-due {
+  background: var(--inset);
+  color: var(--muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.badge-due.is-overdue {
+  background: var(--panel);
+  color: var(--danger);
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+.card.is-overdue,
+.list-row.is-overdue {
+  border-color: var(--danger);
+}

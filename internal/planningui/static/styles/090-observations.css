@@ -1,0 +1,74 @@
+.card-observation-icon {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 var(--s6);
+  width: var(--s6);
+  height: var(--s6);
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+}
+.card-observation-icon[data-status="open"],
+.card-observation-icon[data-status="merged"],
+.card-observation-icon[data-status="draft"] {
+  color: var(--accent);
+}
+.card-observation-icon[data-status="pending"],
+.card-observation-icon[data-status="warning"],
+.card-observation-icon[data-stale="true"] {
+  color: var(--warning);
+}
+.card-observation-icon::after {
+  content: attr(data-tooltip);
+  position: fixed;
+  z-index: 6;
+  top: var(--observation-tooltip-top, 0px);
+  left: var(--observation-tooltip-left, 0px);
+  width: min(320px, calc(100vw - var(--s8)));
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: 0 var(--s2) var(--s4) var(--line);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.card-observation-icon:hover::after,
+.card-observation-icon:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+}
+.drag-source .card-observation-icon::after {
+  display: none;
+}
+.attachment-tooltip {
+  position: fixed;
+  z-index: 10;
+  display: block;
+  width: max-content;
+  max-width: min(320px, calc(100vw - var(--s8)));
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: 0 var(--s2) var(--s4) var(--line);
+  pointer-events: none;
+}

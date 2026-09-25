@@ -1,0 +1,73 @@
+.project-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s6);
+  width: 100%;
+  flex-wrap: wrap;
+}
+.project-summary-head {
+  display: flex;
+  align-items: flex-start;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.project-summary-title {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+}
+.project-summary-title h2,
+.project-summary-title p {
+  overflow-wrap: anywhere;
+}
+.project-summary-metrics {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s6);
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.project-sprint-coverage {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.project-sprint-coverage-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.sprints {
+  display: grid;
+  gap: var(--s4);
+}
+.history-row {
+  padding: var(--s4);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.history-row p {
+  margin-top: var(--s2);
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+  overflow-wrap: anywhere;
+}
+.label-maintenance-row .maintenance-row-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  flex-wrap: wrap;
+  flex: 1;
+}

@@ -1,0 +1,99 @@
+.panel {
+  min-width: 0;
+  padding: var(--s6);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.sprint-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  /* biome-ignore lint/correctness/noInvalidGridAreas: "info" spans two rows as one valid rectangle. */
+  grid-template-areas: "info actions" "info metrics";
+  column-gap: var(--s6);
+  row-gap: var(--s4);
+  align-items: start;
+  min-width: 0;
+}
+.sprint-info {
+  grid-area: info;
+  min-width: 0;
+  display: grid;
+  gap: var(--s2);
+}
+.sprint-info p {
+  overflow-wrap: anywhere;
+}
+.sprint-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.sprint-title-copy {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+  flex: 1 1 260px;
+}
+.sprint-title-copy h2 {
+  overflow-wrap: anywhere;
+}
+.sprint-actions {
+  grid-area: actions;
+  justify-self: end;
+  align-self: start;
+  min-width: 0;
+}
+.sprint-panel > .metrics {
+  grid-area: metrics;
+  display: flex;
+  align-items: flex-start;
+  align-self: center;
+  justify-self: end;
+  gap: var(--s6);
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.metric {
+  display: grid;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metric strong {
+  font-size: 28px;
+  color: var(--ink);
+}
+.filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  min-width: 0;
+  margin: var(--s6) 0;
+}
+.filter-slot {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+}
+section > .filter-bar,
+.filter-slot > .filter-bar {
+  margin: 0;
+}
+.filter-slot > .filter-chips {
+  margin: 0;
+}
+.filter-bar > .actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.filter-bar .actions > label {
+  flex: 0 1 auto;
+  min-width: 0;
+}

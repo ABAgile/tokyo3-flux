@@ -1,0 +1,106 @@
+.sprint-goal {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.sprint-goal-content {
+  max-height: 12em;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.sprint-goal-content.is-expanded {
+  max-height: none;
+  overflow: visible;
+}
+.sprint-goal-content h1,
+.sprint-goal-content h2,
+.sprint-goal-content h3,
+.sprint-goal-content h4,
+.sprint-goal-content h5,
+.sprint-goal-content h6,
+.sprint-goal-content p {
+  margin: 0 0 var(--s3);
+  line-height: 1.5;
+}
+.sprint-goal-content h1 {
+  font-size: 18px;
+}
+.sprint-goal-content h2 {
+  font-size: 17px;
+}
+.sprint-goal-content h3 {
+  font-size: 16px;
+}
+.sprint-goal-content h4 {
+  font-size: 15px;
+}
+.sprint-goal-content h5,
+.sprint-goal-content h6 {
+  font-size: 14px;
+}
+.sprint-goal-content > :first-child {
+  margin-top: 0;
+}
+.sprint-goal-content > :last-child {
+  margin-bottom: 0;
+}
+.sprint-goal-content ul,
+.sprint-goal-content ol {
+  margin: 0 0 var(--s3);
+  padding-left: var(--s6);
+}
+.sprint-goal-content blockquote {
+  margin: 0 0 var(--s3);
+  padding-left: var(--s3);
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+.sprint-goal-content pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0 0 var(--s3);
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--inset);
+  white-space: pre;
+  overflow: auto;
+}
+.sprint-goal-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 var(--s3);
+  border-collapse: collapse;
+  overflow-x: auto;
+}
+.sprint-goal-content th,
+.sprint-goal-content td {
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.sprint-goal-content hr {
+  margin: 0 0 var(--s3);
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.sprint-goal-content a {
+  overflow-wrap: anywhere;
+}
+.sprint-goal-toggle {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+}
+.sprint-goal-toggle:hover {
+  background: transparent;
+  color: var(--ink);
+}
