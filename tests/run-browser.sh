@@ -90,7 +90,13 @@ run_one() {
     if [ $mode = seeded ]; then project=Project; fi
     workspace=$("$OUT/flux" bootstrap --name 'Browser test' ${project:+--project "$project"} \
       --subject fixture-user | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
-    if [ $mode = seeded ]; then "$OUT/flux" seed --workspace "$workspace" --subject fixture-user; fi
+    # integration expects its seeded work assigned to fixture GitLab user 7.
+    seed_subject=fixture-user
+    if [ $name = integration ]; then
+      seed_subject=7
+      "$OUT/flux" member --workspace "$workspace" --subject 7 --role member
+    fi
+    if [ $mode = seeded ]; then "$OUT/flux" seed --workspace "$workspace" --subject $seed_subject; fi
     if [ $name = proposals ]; then
       "$OUT/flux" member --workspace "$workspace" --subject pi-reader --role viewer
     fi

@@ -1,6 +1,6 @@
-// Run on a disposable seeded workspace with a loopback GitLab fixture:
-// approved project 42; MR 7 = current-head success, MR 8 = old-head success,
-// MR 9 = 503. Never run against team planning data.
+// Run on a disposable workspace seeded for GitLab user 7 (a member), with a
+// loopback GitLab fixture: approved project 42; MR 7 = current-head success,
+// MR 8 = old-head success, MR 9 = 503. Never run against team planning data.
 // biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
 async function run(page) {
   const check = (ok, message) => {
@@ -40,10 +40,19 @@ async function run(page) {
   const card = (item) => page.locator(`[data-item="${item.id}"]`);
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   await card(a).waitFor();
+  // Seeded work is assigned to GitLab user 7, so the card carries the fixture's
+  // profile name, and its avatar when the browser can reach the loopback
+  // fixture (a remote browser cannot, and the page drops a failed image).
   check(
-    (await card(a).locator('.avatar img').count()) === 1,
-    'GitLab profile avatar not displayed',
+    (await card(a).getByRole('img', { name: 'Fixture User 7 · Assignee', exact: true }).count()) ===
+      1,
+    'GitLab profile name not displayed',
   );
+  if (await page.evaluate(() => ['127.0.0.1', 'localhost'].includes(location.hostname)))
+    check(
+      (await card(a).locator('.avatar img').count()) === 1,
+      'GitLab profile avatar not displayed',
+    );
   const openEditor = (item) =>
     card(item).getByRole('button', { name: item.title, exact: true }).click();
   const openObservations = (item) =>
@@ -53,47 +62,45 @@ async function run(page) {
   const close = () => page.getByRole('button', { name: 'Close editor', exact: true }).click();
   const attach = async (item, number, usePaste = false) => {
     await openEditor(item);
-    await page.getByRole('button', { name: '＋ Add GitLab link', exact: true }).click();
-    const scope = page.getByRole('combobox', { name: 'Quick scope', exact: true });
-    check((await scope.locator('option').count()) === 3, 'quick MR scopes missing');
     if (usePaste) {
+      // The editor's inline paste field attaches the link at once and reopens
+      // the card.
       const base = initial.connector_instance.replace(/\/+$/, '');
       await page
-        .getByLabel('Paste GitLab MR Link', { exact: true })
+        .getByLabel('GitLab MR URL', { exact: true })
         .fill(`${base}/team/flux/-/merge_requests/${number}`);
       await page.getByRole('button', { name: 'Get', exact: true }).click();
-      await page
-        .getByRole('status')
-        .filter({ hasText: `Resolved team/flux · MR !${number}` })
-        .waitFor();
+      await saved();
     } else {
+      await page.getByRole('button', { name: 'Add link', exact: true }).click();
+      const scope = page.getByRole('combobox', { name: 'Quick scope', exact: true });
+      await scope.waitFor();
+      check((await scope.locator('option').count()) === 3, 'quick MR scopes missing');
       const projectPicker = page.getByRole('group', {
         name: 'Approved GitLab project',
         exact: true,
       });
-      await projectPicker
-        .getByRole('button', { name: 'Edit Approved GitLab project', exact: true })
-        .click();
+      await page.getByRole('button', { name: 'Edit Approved GitLab project', exact: true }).click();
       await projectPicker
         .getByRole('checkbox', { name: 'Flux · team/flux (#42)', exact: true })
         .check();
       await page.keyboard.press('Escape');
       const mrPicker = page.getByRole('group', { name: 'Merge request', exact: true });
-      await mrPicker.getByRole('button', { name: 'Edit Merge request', exact: true }).click();
+      await page.getByRole('button', { name: 'Edit Merge request', exact: true }).click();
       await mrPicker
-        .getByRole('searchbox', { name: 'Filter merge request', exact: true })
+        .getByRole('searchbox', { name: 'Filter Merge request', exact: true })
         .fill(String(number));
       await mrPicker.getByRole('checkbox', { name: new RegExp(`^MR !${number} ·`) }).check();
       await page.keyboard.press('Escape');
+      await save();
     }
-    await save();
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   };
   const refresh = async (number) => {
     const row = page
       .getByRole('dialog')
       .locator('.setup-row')
-      .filter({ has: page.getByText(new RegExp(`^(MR !|Pipeline #)${number} · project`)) });
+      .filter({ has: page.getByText(new RegExp(`^(MR !|Pipeline #)${number}( · |$)`)) });
     await row.getByRole('button', { name: 'Refresh observation', exact: true }).click();
     await saved();
   };
@@ -115,10 +122,12 @@ async function run(page) {
   await save();
   await nav('Kanban board');
   await openEditor(a);
-  await page.getByRole('button', { name: '＋ Add GitLab link', exact: true }).click();
+  await page.getByRole('button', { name: 'Add link', exact: true }).click();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   check(
-    (await page.getByRole('heading', { name: 'Work item', exact: true }).count()) === 1,
+    // The editor heading also holds its help popover, so compare the title text.
+    (await page.locator('#editor-title').evaluate((title) => title.firstChild?.nodeValue)) ===
+      'Work item',
     'closing MR dialog did not return to card editor',
   );
   await close();
@@ -181,7 +190,11 @@ async function run(page) {
         isolated: image.parentElement === document.body && !image.querySelector('.card,.list-row'),
         hasMR: !!image.querySelector('.card-links-section'),
         hasAttachments: !!imageAttachments,
-        attachmentsOpen: imageAttachments?.open === originalAttachments?.open,
+        // The preview's open state, when it matches the source card's.
+        attachmentsOpen:
+          imageAttachments?.open === originalAttachments?.open
+            ? imageAttachments?.open
+            : 'mismatch',
         dragSource: image.classList.contains('drag-source'),
         sameSize:
           !!originalBounds &&
@@ -205,11 +218,11 @@ async function run(page) {
     }
     return route.continue();
   });
-  const verifyDragImage = async (expectedOpen) => {
+  const verifyDragImage = async (expectedOpen, source = mrIcon, sourcePosition) => {
     const rejection = page.waitForResponse(
       (response) => response.url().endsWith('/changes') && response.status() === 409,
     );
-    await mrIcon.dragTo(card(b));
+    await source.dragTo(card(b), { sourcePosition });
     await rejection;
     await page
       .getByRole('alert')
@@ -227,10 +240,12 @@ async function run(page) {
         dragImage.sameSize &&
         dragImage.offsetValid &&
         dragImage.tooltipDisplay === 'none',
-      'drag preview was not an isolated, correctly sized snapshot of the source card',
+      `drag preview was not an isolated, correctly sized snapshot of the source card: ${JSON.stringify(dragImage)}`,
     );
   };
-  await verifyDragImage(true);
+  // Pressing outside an open attachment list closes it, so drag the expanded
+  // card from the list's own top padding.
+  await verifyDragImage(true, cardAttachments.locator('.card-attachment-list'), { x: 24, y: 3 });
   check(rejectedMoves === 1, 'dragging the expanded card did not issue a move');
   await cardAttachments.locator('summary').click();
   await verifyDragImage(false);
@@ -254,14 +269,14 @@ async function run(page) {
   check(
     (await page
       .getByRole('dialog')
-      .getByText(/pipeline success/)
+      .getByText(/^Latest MR pipeline status: success · /)
       .count()) === 1,
     'latest MR pipeline status missing',
   );
   check(
     (await page
       .getByRole('dialog')
-      .getByText(/pipeline unknown \(not current head\)/)
+      .getByText(/^Latest MR pipeline status: unknown · SHA old-head · /)
       .count()) === 1,
     'old success represented current head',
   );
@@ -325,7 +340,7 @@ async function run(page) {
   check(
     (await page
       .getByRole('dialog')
-      .getByText(/pipeline success/)
+      .getByText(/^Latest MR pipeline status: success · /)
       .count()) === 1,
     'shared observation missing',
   );
@@ -384,8 +399,10 @@ async function run(page) {
     .getByRole('button', { name: /^View GitLab details/ })
     .waitFor({ timeout: 10000 });
   await openEditor(a);
+  // A read-only editor offers no link actions at all.
   check(
-    await page.getByRole('button', { name: '＋ Add GitLab link', exact: true }).isDisabled(),
+    (await page.getByRole('button', { name: 'Add link', exact: true }).count()) === 0 &&
+      (await page.getByLabel('GitLab MR URL', { exact: true }).count()) === 0,
     'viewer linking enabled',
   );
   check(
@@ -409,6 +426,8 @@ async function run(page) {
     .getByRole('button', { name: /^View GitLab details/ })
     .waitFor({ timeout: 10000 });
   await openEditor(b);
+  // Chips become removable once the field is in edit mode.
+  await page.getByRole('button', { name: 'Edit GitLab links', exact: true }).click();
   await page.getByRole('button', { name: /^Remove MR !7 · project 42/ }).click();
   await save();
   check(
@@ -444,7 +463,7 @@ async function run(page) {
   );
   await page.getByRole('button', { name: '＋ Add member', exact: true }).click();
   const userPicker = page.getByRole('group', { name: 'GitLab user', exact: true });
-  await userPicker.getByRole('button', { name: 'Edit GitLab user', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit GitLab user', exact: true }).click();
   await userPicker
     .getByRole('checkbox', { name: 'Fixture User 42 · @fixture-42 (#42)', exact: true })
     .check();
@@ -481,7 +500,11 @@ async function run(page) {
     'GitLab username is missing from the member listing',
   );
   await memberRow.getByRole('button', { name: 'Remove member', exact: true }).click();
-  await page.getByRole('button', { name: 'Remove member', exact: true }).click();
+  // Confirm in the dialog; each member row has its own Remove member action.
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Remove member', exact: true })
+    .click();
   await saved();
   check(
     (await page.locator('.maintenance-row').filter({ hasText: 'Fixture User 42' }).count()) === 0,
