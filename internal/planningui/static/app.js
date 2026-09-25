@@ -1653,14 +1653,6 @@ function participantStack(item) {
   }
   return stack;
 }
-function assigneeView(subject) {
-  const info = memberInfo(subject);
-  const node = el('span', undefined, 'assignee');
-  node.setAttribute('aria-label', `Assignee: ${info.name}`);
-  node.title = info.name;
-  node.append(avatarView(info.name, info.avatarURL), el('span', info.name));
-  return node;
-}
 function linkDisplayName(link, includeTitle = true) {
   const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
   return includeTitle && link.observation?.title ? `${name} · ${link.observation.title}` : name;
