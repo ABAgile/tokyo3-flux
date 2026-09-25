@@ -142,10 +142,47 @@
 .card-controls button {
   padding: var(--s2);
 }
-.empty {
-  padding: var(--s6);
-  color: var(--muted);
-  border: 1px dashed var(--line);
-  border-radius: var(--r2);
-  text-align: center;
+.card[draggable="true"],
+.column-head[draggable="true"] {
+  cursor: grab;
+}
+.card[draggable="true"]:active,
+.column-head[draggable="true"]:active {
+  cursor: grabbing;
+}
+.drop-before {
+  box-shadow: inset 0 3px var(--accent);
+}
+.drop-after {
+  box-shadow: inset 0 -3px var(--accent);
+}
+.column.drop-before {
+  box-shadow: inset 3px 0 var(--accent);
+}
+.column.drop-after {
+  box-shadow: inset -3px 0 var(--accent);
+}
+.drop-end {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.column-head h3 {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.card-top .card-title {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+}
+.card-top-overdue {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s1);
+}
+.card-top-overdue .card-title {
+  width: 100%;
+}
+.card-title-due {
+  justify-self: center;
 }

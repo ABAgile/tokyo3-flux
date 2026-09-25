@@ -68,32 +68,50 @@
   font-size: 28px;
   color: var(--ink);
 }
-.filter-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
-  gap: var(--s4);
-  flex-wrap: wrap;
-  min-width: 0;
-  margin: var(--s6) 0;
-}
-.filter-slot {
+.sprints {
   display: grid;
-  gap: var(--s3);
-  min-width: 0;
+  gap: var(--s4);
 }
-section > .filter-bar,
-.filter-slot > .filter-bar {
-  margin: 0;
+@media (max-width: 899px) {
+  .sprint-panel {
+    padding: var(--s4);
+  }
+  .sprint-info {
+    flex-basis: 100%;
+  }
+  .metrics {
+    gap: var(--s4);
+  }
 }
-.filter-slot > .filter-chips {
-  margin: 0;
+@media (max-width: 1199px) {
+  .sprint-panel {
+    grid-template-columns: minmax(0, 1fr);
+    /* biome-ignore lint/correctness/noInvalidGridAreas: one column per row is consistent; false positive. */
+    grid-template-areas: "info" "actions" "metrics";
+    gap: var(--s4);
+  }
+  .sprint-panel > .metrics {
+    width: 100%;
+    align-self: start;
+    justify-self: stretch;
+    gap: var(--s4);
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  .sprint-title-row {
+    gap: var(--s3);
+  }
+  .sprint-actions {
+    justify-self: end;
+  }
 }
-.filter-bar > .actions {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-.filter-bar .actions > label {
-  flex: 0 1 auto;
-  min-width: 0;
+@media (max-width: 480px) {
+  .sprint-title-row {
+    align-items: flex-start;
+  }
+  .sprint-actions {
+    width: 100%;
+    justify-self: stretch;
+    justify-content: flex-end;
+  }
 }

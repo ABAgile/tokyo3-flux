@@ -100,3 +100,15 @@
 .item-detail-footer .archive-footer {
   margin-right: auto;
 }
+@media (max-width: 999px) {
+  .item-detail-pane {
+    position: static;
+    max-height: none;
+  }
+  .item-detail-form {
+    max-height: none;
+  }
+  .item-detail-fields {
+    overflow: visible;
+  }
+}

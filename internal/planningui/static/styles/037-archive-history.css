@@ -1,0 +1,20 @@
+.list {
+  display: grid;
+  gap: var(--s3);
+  overflow-wrap: anywhere;
+}
+.list .card {
+  margin: 0;
+}
+.history-row {
+  padding: var(--s4);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.history-row p {
+  margin-top: var(--s2);
+}
+.history-list {
+  display: grid;
+}

@@ -10,79 +10,6 @@
   flex: 0 0 auto;
   margin: var(--s1) 0;
 }
-.proposal-text {
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
-.proposal-data {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  min-width: 0;
-  font-size: 12px;
-  margin: var(--s2) 0;
-}
-.card[draggable="true"],
-.column-head[draggable="true"] {
-  cursor: grab;
-}
-.card[draggable="true"]:active,
-.column-head[draggable="true"]:active {
-  cursor: grabbing;
-}
-.assignee {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-.assignee > span:last-child {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.avatar {
-  position: relative;
-  display: grid;
-  place-items: center;
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  overflow: hidden;
-  border-radius: 50%;
-  background: var(--soft);
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 600;
-}
-.avatar img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.drop-before {
-  box-shadow: inset 0 3px var(--accent);
-}
-.drop-after {
-  box-shadow: inset 0 -3px var(--accent);
-}
-.column.drop-before {
-  box-shadow: inset 3px 0 var(--accent);
-}
-.column.drop-after {
-  box-shadow: inset -3px 0 var(--accent);
-}
-.drop-end {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-}
-.column-head h3 {
-  overflow-wrap: anywhere;
-  min-width: 0;
-}
 .multi-select-field {
   display: grid;
   gap: var(--s1);
@@ -145,20 +72,6 @@
   line-height: 1.5;
   white-space: pre-line;
   box-shadow: 0 var(--s2) var(--s4) var(--line);
-}
-.item-editor-form .dialog-head,
-.item-editor-form .multi-select-header {
-  position: relative;
-}
-.item-editor-form .dialog-head .help-popover,
-.item-editor-form .multi-select-header .help-popover {
-  position: static;
-}
-.item-editor-form .dialog-head .help-popover-content,
-.item-editor-form .multi-select-header .help-popover-content {
-  left: 0;
-  right: auto;
-  width: min(320px, calc(100vw - 32px), 100%);
 }
 .multi-select {
   position: relative;

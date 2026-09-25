@@ -42,32 +42,25 @@
   font-size: 12px;
   font-weight: 600;
 }
-.sprints {
-  display: grid;
-  gap: var(--s4);
+@media (max-width: 1199px) {
+  .project-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s4);
+  }
+  .project-summary-head,
+  .project-summary-metrics,
+  .project-sprint-coverage {
+    width: 100%;
+  }
+  .project-summary-metrics {
+    gap: var(--s4);
+  }
 }
-.history-row {
-  padding: var(--s4);
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  overflow-wrap: anywhere;
-}
-.history-row p {
-  margin-top: var(--s2);
-}
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--s3);
-  margin-bottom: var(--s4);
-  overflow-wrap: anywhere;
-}
-.label-maintenance-row .maintenance-row-info {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s3);
-  flex-wrap: wrap;
-  flex: 1;
+@media (max-width: 899px) {
+  .project-summary,
+  .sprint-panel {
+    padding: var(--s4);
+  }
 }

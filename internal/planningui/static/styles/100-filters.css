@@ -1,0 +1,136 @@
+.filter-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  min-width: 0;
+  margin: var(--s6) 0;
+}
+.filter-slot {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+}
+section > .filter-bar,
+.filter-slot > .filter-bar {
+  margin: 0;
+}
+.filter-slot > .filter-chips {
+  margin: 0;
+}
+.filter-bar > .actions {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.filter-bar .actions > label {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.filter-bar > .actions > label {
+  flex: 0 1 auto;
+}
+.filter-bar input,
+.filter-bar select {
+  width: auto;
+  max-width: 100%;
+}
+.filter-bar-end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s4);
+  min-width: 0;
+}
+.filter-bar-count {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.presentation-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  overflow: hidden;
+}
+.presentation-toggle button {
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+  padding: var(--s2) var(--s3);
+  font-size: 12px;
+}
+.presentation-toggle button + button {
+  border-left: 1px solid var(--line);
+}
+.presentation-toggle button[aria-pressed="true"] {
+  background: var(--soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.filter-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-bottom: var(--s4);
+  min-width: 0;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--soft);
+  color: var(--accent);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.filter-chip-text {
+  min-width: 0;
+}
+.filter-chip-remove {
+  flex: 0 0 auto;
+  padding: 0 var(--s1);
+  border: 0;
+  border-radius: var(--r1);
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+.filter-chip-remove:hover {
+  background: transparent;
+  color: var(--ink);
+}
+.filter-chip-clear {
+  padding: var(--s1) var(--s2);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+}
+.filter-chip-clear:hover {
+  background: transparent;
+  color: var(--ink);
+}
+@media (max-width: 999px) {
+  .filter-bar-end {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+@media (max-width: 480px) {
+  .filter-bar-end {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .presentation-toggle {
+    order: 0;
+  }
+}

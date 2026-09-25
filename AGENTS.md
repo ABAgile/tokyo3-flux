@@ -34,29 +34,35 @@ Feature modules export functions and constants only; any document listeners or t
 
 `static/styles/NNN-*.css` are joined in name order into `/styles.css`; order is cascade order, so moving a rule can change which rule wins.
 Insert new files in the numbering gaps and compare the style snapshot after any move.
+Each file holds one feature, including its media queries; a feature's responsive rules sit at the end of its own file unless the cascade needs them later (`106-list-responsive` follows `104-item-detail`).
 
 | JS module | CSS files |
 |---|---|
-| `app.js`, `mount` | `010-tokens`, `020-base`, `030-shell`, `031-panels`, `036-summaries`, `130-motion` |
-| `view-board`, `drag` | `032-board` |
-| `view-gate` | `033-workspace-gate`, `150-first-run` |
+| `app.js`, `mount`, `layout` | `010-tokens`, `020-base`, `030-shell` (sidebar, notices, section heads, page stack, empty state, skip link), `130-motion` |
+| `view-sprints` | `031-panels` (panels, sprint panel, metrics), `210-sprint-goal` |
+| `view-board`, `drag` | `032-board` (columns, cards, drag cursors, drop marks), `036-summaries` (project lens) |
+| `view-gate` | `033-workspace-gate` (workspace choice and first run) |
 | `item-comments` | `034-comments` |
 | `markdown` | `035-markdown` |
-| `dialog`, `item-editor`, `multi-select` | `040-dialog`, `050-forms`, `060-item-editor`, `220-dates` |
+| `view-archive`, `view-history` | `037-archive-history` |
+| `dialog` | `040-dialog` (dialog chrome, form grid, help and error lines) |
+| `view-projects`, `view-members`, `view-labels` | `045-maintenance` (maintenance rows, member roles, label palette, integration chips) |
+| `multi-select`, `view-integration` | `050-forms` (consent, multi-select, help popovers) |
+| `view-proposals` | `055-proposals` |
+| `item-editor` | `060-item-editor` (layout, head, status summary), `220-dates` |
 | `view-burndown` | `070-burndown` |
-| `item-attachments` | `080-attachments`, `170-attachment-progress` |
-| `gitlab` | `090-observations` |
-| `filters`, `view-list` | `100-filter-list`, `106-list-responsive`, `140-filter-chips` |
+| `gitlab`, `item-links` | `090-gitlab` (MR paste row, observation icons) |
+| `filters` | `100-filters` (filter bar, presentation toggle, chips) |
+| `view-list` | `102-list`, `106-list-responsive` |
 | `item-detail` | `104-item-detail` |
+| `item-attachments` | `108-attachments` (tiles, tooltip, progress, drop targets) |
 | `permissions` | `110-action-icons` |
 | `bulk` | `120-bulk` |
 | `view-velocity` | `160-velocity` |
 | `shortcuts` | `180-shortcuts` |
 | `url-state` | `190-card-link` |
-| `people` | `200-participants` |
-| `view-sprints` | `210-sprint-goal` |
-
-Several files still mix features (for example maintenance rows in `040-dialog.css`); consolidate them only with an unchanged style snapshot.
+| `people` | `200-participants` (avatars, assignee, participant stacks) |
+| `due-dates` | `220-dates` (due badges, overdue marks) |
 
 ## Checks
 

@@ -1,21 +1,7 @@
 @media (max-width: 999px) {
-  .filter-bar-end {
-    width: 100%;
-    justify-content: space-between;
-  }
   .list-detail-layout,
   .list-detail-layout.has-detail {
     grid-template-columns: 1fr;
-  }
-  .item-detail-pane {
-    position: static;
-    max-height: none;
-  }
-  .item-detail-form {
-    max-height: none;
-  }
-  .item-detail-fields {
-    overflow: visible;
   }
 }
 @media (max-width: 480px) {
@@ -67,54 +53,5 @@
     margin-left: 0;
     justify-content: flex-start;
     text-align: left;
-  }
-  .filter-bar-end {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-  .presentation-toggle {
-    order: 0;
-  }
-}
-@media (max-width: 1199px) {
-  .project-summary {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: var(--s4);
-  }
-  .project-summary-head,
-  .project-summary-metrics,
-  .project-sprint-coverage {
-    width: 100%;
-  }
-  .project-summary-metrics {
-    gap: var(--s4);
-  }
-  .sprint-panel {
-    grid-template-columns: minmax(0, 1fr);
-    /* biome-ignore lint/correctness/noInvalidGridAreas: one column per row is consistent; false positive. */
-    grid-template-areas: "info" "actions" "metrics";
-    gap: var(--s4);
-  }
-  .sprint-panel > .metrics {
-    width: 100%;
-    align-self: start;
-    justify-self: stretch;
-    gap: var(--s4);
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .sprint-title-row {
-    gap: var(--s3);
-  }
-  .sprint-actions {
-    justify-self: end;
-  }
-}
-@media (max-width: 899px) {
-  .project-summary,
-  .sprint-panel {
-    padding: var(--s4);
   }
 }

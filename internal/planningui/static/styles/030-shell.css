@@ -135,17 +135,6 @@ main {
 .actions > label {
   min-width: 0;
 }
-.gitlab-paste-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--s2);
-  align-items: end;
-}
-.gitlab-paste-row input {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-}
 #notice {
   min-height: 24px;
   font-size: 12px;
@@ -193,4 +182,87 @@ main {
 }
 .notice-bar-danger > button {
   border-color: var(--danger);
+}
+.empty {
+  padding: var(--s6);
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: var(--r2);
+  text-align: center;
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s3);
+  margin-bottom: var(--s4);
+  overflow-wrap: anywhere;
+}
+.page-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+  align-items: start;
+}
+.page-stack > .section-head {
+  margin-bottom: 0;
+}
+#sprint-summary:empty,
+#planning-body:empty {
+  display: none;
+}
+.skip {
+  position: fixed;
+  top: var(--s2);
+  left: var(--s2);
+  padding: var(--s2);
+  background: var(--panel);
+  z-index: 2;
+  transform: translateY(-200%);
+}
+.skip:focus {
+  transform: none;
+}
+@media (max-width: 899px) {
+  .sidebar {
+    position: static;
+    width: auto;
+    padding: var(--s4);
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    gap: var(--s3);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .brand,
+  .workspace-field,
+  nav,
+  .sidebar-foot {
+    grid-column: 1 / -1;
+  }
+  .workspace-field {
+    min-width: 0;
+  }
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+  }
+  .sidebar-foot {
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .sidebar-foot p {
+    display: none;
+  }
+  .sidebar-session {
+    flex: 1 1 180px;
+    min-width: 180px;
+  }
+  main {
+    margin-left: 0;
+    padding: var(--s4);
+  }
 }

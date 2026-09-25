@@ -1,3 +1,14 @@
+.gitlab-paste-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s2);
+  align-items: end;
+}
+.gitlab-paste-row input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 .card-observation-icon {
   position: relative;
   display: inline-grid;
@@ -52,23 +63,4 @@
 }
 .drag-source .card-observation-icon::after {
   display: none;
-}
-.attachment-tooltip {
-  position: fixed;
-  z-index: 10;
-  display: block;
-  width: max-content;
-  max-width: min(320px, calc(100vw - var(--s8)));
-  padding: var(--s2);
-  border: 1px solid var(--line);
-  border-radius: var(--r1);
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.5;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  box-shadow: 0 var(--s2) var(--s4) var(--line);
-  pointer-events: none;
 }

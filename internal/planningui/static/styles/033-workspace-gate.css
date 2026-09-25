@@ -52,11 +52,68 @@
 .workspace-create-status.error {
   color: var(--danger);
 }
-.list {
+.first-run {
+  display: grid;
+  gap: var(--s4);
+  width: min(720px, 100%);
+  margin: var(--s4) auto;
+}
+.first-run-steps {
   display: grid;
   gap: var(--s3);
-  overflow-wrap: anywhere;
-}
-.list .card {
   margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.first-run-step {
+  display: grid;
+  grid-template-columns: var(--s6) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+  padding: var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--inset);
+}
+.first-run-step.is-done {
+  color: var(--muted);
+}
+.first-run-mark {
+  display: grid;
+  place-items: center;
+  width: var(--s6);
+  height: var(--s6);
+  border-radius: 50%;
+  background: var(--soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.first-run-step.is-done .first-run-mark {
+  background: var(--accent);
+  color: var(--panel);
+}
+.first-run-copy {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+}
+.first-run-step > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+@media (max-width: 480px) {
+  .first-run {
+    padding: var(--s4);
+  }
+  .first-run-step {
+    grid-template-columns: var(--s6) minmax(0, 1fr);
+    row-gap: var(--s2);
+  }
+  .first-run-step > button {
+    grid-column: 2;
+    justify-self: start;
+    white-space: normal;
+  }
 }

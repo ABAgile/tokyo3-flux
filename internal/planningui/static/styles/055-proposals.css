@@ -1,0 +1,11 @@
+.proposal-text {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.proposal-data {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  font-size: 12px;
+  margin: var(--s2) 0;
+}
