@@ -4,6 +4,7 @@
 export const hooks = {
   persistPlanningURL: undefined,
   placeFilters: undefined,
+  refresh: undefined,
   render: undefined,
   renderContent: undefined,
   resetBurndown: undefined,
