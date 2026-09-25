@@ -63,6 +63,29 @@ import {
   showPlanningChangeNotice,
   clearPlanningChangeNotice,
 } from './modules/notices.js';
+import {
+  activeSprints,
+  projectName,
+  itemProjectIDs,
+  projectBadges,
+  labelInfo,
+  labelBadge,
+  styleLabelOptions,
+  done,
+  findItem,
+  blocked,
+  scopeItems,
+} from './modules/items.js';
+import { renderControls } from './modules/controls.js';
+import {
+  memberInfo,
+  memberName,
+  memberListingInfo,
+  avatarView,
+  itemParticipants,
+  participantInfo,
+  participantStack,
+} from './modules/people.js';
 // The Projects bar uses the same multi-value filter rules as the planning bar.
 const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
 const projectFilters = { assignee: new Set(), label: new Set() };
@@ -1244,51 +1267,6 @@ function refreshBulkBar() {
   const bar = document.querySelector('[data-bulk-bar]');
   if (bar) renderBulkBar(bar, filteredItems());
 }
-function renderControls() {
-  document.querySelectorAll('[data-write]').forEach((b) => {
-    b.disabled = !writable() || state.integrationFormOpen;
-  });
-  document.querySelectorAll('[data-admin-write]').forEach((b) => {
-    b.disabled = !adminWritable() || state.integrationFormOpen;
-  });
-  document.querySelectorAll('[data-gitlab-write]').forEach((b) => {
-    b.disabled = !gitLabWritable();
-  });
-  document.querySelectorAll('[data-comment-write]').forEach((b) => {
-    b.disabled = !canComment();
-  });
-  document.querySelectorAll('[data-drag-type]').forEach((e) => {
-    const item = e.dataset.dragType === 'card' ? findItem(e.dataset.item) : undefined;
-    e.draggable = writable() && !item?.archived;
-  });
-  document.querySelectorAll('[data-view]').forEach((b) => {
-    b.disabled = state.busy || state.loading || state.integrationFormOpen;
-  });
-  $('presentation-toggle').hidden = !state.board || state.view !== 'board';
-  $('presentation-board').disabled =
-    !state.board || state.busy || state.loading || state.integrationFormOpen;
-  $('presentation-list').disabled =
-    !state.board || state.busy || state.loading || state.integrationFormOpen;
-  $('presentation-board').setAttribute('aria-pressed', String(state.presentation === 'board'));
-  $('presentation-list').setAttribute('aria-pressed', String(state.presentation === 'list'));
-  $('refresh').disabled = state.busy || state.loading || state.integrationFormOpen;
-  $('planning-refresh').disabled = state.busy || state.loading || state.integrationFormOpen;
-  $('new-workspace').disabled =
-    !state.session || state.busy || state.loading || state.integrationFormOpen;
-  $('workspace-field').hidden = !state.board && state.workspaceGate !== 'loading';
-  $('workspace').disabled =
-    !state.board || state.busy || state.loading || state.integrationFormOpen;
-  document.querySelector('nav').hidden = !state.board;
-  document.querySelector('.heading .actions').hidden = !state.board;
-  $('planning-filters').hidden = !state.board;
-  $('project').disabled = !state.board || state.busy || state.loading;
-  $('assignee').disabled = !state.board || state.busy || state.loading;
-  $('label').disabled = !state.board || state.busy || state.loading;
-  $('undo').disabled = !writable();
-  document.querySelectorAll('.list-row-select').forEach((input) => {
-    input.disabled = state.busy || state.loading;
-  });
-}
 function isFileTransfer(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes('Files');
 }
@@ -1397,130 +1375,6 @@ function dropZone(node, type, command, axis = 'y') {
     clearDropMarks();
     if (c && c.target !== c.before) quick({ ...c, revision });
   });
-}
-function memberInfo(subject) {
-  const member = state.board.members.find((m) => m.subject === subject);
-  const name =
-    member?.name ||
-    (subject === state.session?.subject && state.session.name) ||
-    (subject ? `Unnamed member (${subject})` : 'Unassigned');
-  return {
-    name,
-    avatarURL:
-      member?.avatar_url || (subject === state.session?.subject && state.session.avatar_url) || '',
-  };
-}
-function memberName(subject) {
-  return memberInfo(subject).name;
-}
-function memberListingInfo(member) {
-  const name =
-    String(member.name || '').trim() ||
-    (member.subject === state.session?.subject && String(state.session.name || '').trim()) ||
-    String(member.username || '').trim() ||
-    'Unnamed member';
-  return {
-    name,
-    avatarURL:
-      member.avatar_url ||
-      (member.subject === state.session?.subject && state.session.avatar_url) ||
-      '',
-  };
-}
-function avatarView(name, avatarURL) {
-  const avatar = el('span', undefined, 'avatar');
-  avatar.setAttribute('aria-hidden', 'true');
-  avatar.append(el('span', initials(name), 'avatar-fallback'));
-  if (avatarURL) {
-    const image = el('img');
-    image.src = avatarURL;
-    image.alt = '';
-    image.decoding = 'async';
-    image.referrerPolicy = 'no-referrer';
-    image.onerror = () => image.remove();
-    avatar.append(image);
-  }
-  return avatar;
-}
-// Participants are derived server-side from assignment, cached reviewers and
-// comment authors, so a card states who is involved without one request per
-// card. A reviewer who is not a workspace member carries its own provider
-// identity; everyone else resolves against the workspace roster.
-const PARTICIPANT_ROLE_LABELS = Object.freeze({
-  assignee: 'Assignee',
-  reviewer: 'Reviewer',
-  commenter: 'Commenter',
-});
-const PARTICIPANT_STACK_LIMIT = 4;
-function itemParticipants(item) {
-  return (state.board.participants || []).filter((participant) => participant.item_id === item.id);
-}
-function participantInfo(participant) {
-  const member = state.board.members.find((value) => value.subject === participant.subject);
-  // An admin-maintained workspace name wins over the provider's, so a card and
-  // the roster never disagree about the same person.
-  const name =
-    member?.name ||
-    String(participant.name || '').trim() ||
-    (participant.subject === state.session?.subject && state.session.name) ||
-    (participant.username ? `@${participant.username}` : `Unnamed member (${participant.subject})`);
-  const roles = (participant.roles || []).map((role) => PARTICIPANT_ROLE_LABELS[role] || role);
-  return {
-    name,
-    roles,
-    avatarURL:
-      participant.avatar_url ||
-      member?.avatar_url ||
-      (participant.subject === state.session?.subject && state.session.avatar_url) ||
-      '',
-    assignee: (participant.roles || []).includes('assignee'),
-  };
-}
-function participantDescription(participant) {
-  const info = participantInfo(participant);
-  return info.roles.length ? `${info.name} \u00b7 ${info.roles.join(', ')}` : info.name;
-}
-function participantStack(item) {
-  const participants = itemParticipants(item);
-  const stack = el('div', undefined, 'participant-stack');
-  stack.dataset.cardSection = 'participants';
-  if (!participants.length) {
-    stack.append(el('span', 'Unassigned', 'participant-empty'));
-    stack.setAttribute('aria-label', 'No participants \u00b7 unassigned');
-    return stack;
-  }
-  stack.setAttribute('role', 'group');
-  stack.setAttribute(
-    'aria-label',
-    `Participants: ${participants.map(participantDescription).join('; ')}`,
-  );
-  participants.slice(0, PARTICIPANT_STACK_LIMIT).forEach((participant) => {
-    const info = participantInfo(participant);
-    const description = participantDescription(participant);
-    const avatar = avatarView(info.name, info.avatarURL);
-    avatar.classList.add('participant-avatar');
-    // The assignee keeps a static accent ring so the planning owner is legible
-    // without colour alone and without motion.
-    if (info.assignee) {
-      avatar.classList.add('is-assignee');
-      avatar.dataset.participantRole = 'assignee';
-    }
-    avatar.title = description;
-    avatar.removeAttribute('aria-hidden');
-    avatar.setAttribute('role', 'img');
-    avatar.setAttribute('aria-label', description);
-    stack.append(avatar);
-  });
-  const overflow = participants.length - PARTICIPANT_STACK_LIMIT;
-  if (overflow > 0) {
-    const more = el('span', `+${overflow}`, 'participant-more');
-    const rest = participants.slice(PARTICIPANT_STACK_LIMIT).map(participantDescription).join('; ');
-    more.title = rest;
-    more.setAttribute('role', 'img');
-    more.setAttribute('aria-label', `${overflow} more: ${rest}`);
-    stack.append(more);
-  }
-  return stack;
 }
 function linkDisplayName(link, includeTitle = true) {
   const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
@@ -1914,24 +1768,6 @@ function pipelineLinkView(link) {
   }
   return node;
 }
-function activeSprints() {
-  return state.board.sprints.filter((s) => s.state === 'active');
-}
-function projectName(id) {
-  return state.board.projects.find((p) => p.id === id)?.name || 'No project';
-}
-function itemProjectIDs(item) {
-  if (Array.isArray(item?.project_ids)) return item.project_ids.filter(Boolean).map(String);
-  return item?.project_id ? [String(item.project_id)] : [];
-}
-function projectBadges(item, className = 'card-project') {
-  const names = itemProjectIDs(item).map(projectName);
-  if (!names.length) names.push('No project');
-  return names.map((name) => el('span', name, `badge badge-project ${className}`));
-}
-function labelInfo(name) {
-  return state.board.labels.find((label) => label.name === name) || { name, color: '#dcefe4' };
-}
 function renderProjectSummary() {
   const summary = $('project-summary');
   const projectID = singleFilterValue('project');
@@ -1980,45 +1816,6 @@ function renderProjectSummary() {
   summary.hidden = false;
   summary.setAttribute('aria-label', `${project.name} project summary`);
   summary.replaceChildren(head, metrics, coverage);
-}
-function labelBadge(name) {
-  const label = labelInfo(name);
-  const badge = el('span', name, 'badge badge-label label-badge');
-  badge.dataset.label = name;
-  badge.style.backgroundColor = label.color;
-  badge.style.color = labelForeground(label.color);
-  return badge;
-}
-function styleLabelOptions(select) {
-  [...select.options].forEach((option) => {
-    const label = labelInfo(option.value);
-    option.style.backgroundColor = label.color;
-    option.style.color = labelForeground(label.color);
-  });
-}
-function done(item) {
-  return state.board.columns.find((c) => c.id === item.column_id)?.category === 'done';
-}
-// Dependency targets may be archived, so resolution spans the board payload and
-// the loaded archive page.
-function findItem(id) {
-  return (
-    state.board?.items.find((value) => value.id === id) ||
-    state.archiveItems.find((value) => value.id === id)
-  );
-}
-function blocked(item) {
-  return item.dependencies.some((id) => {
-    const dep = findItem(id);
-    return dep && !done(dep);
-  });
-}
-function scopeItems(sprint) {
-  return sprint.state === 'closed'
-    ? state.board.items.filter((i) =>
-        state.board.closed_scope.some((s) => s.sprint_id === sprint.id && s.item_id === i.id),
-      )
-    : state.board.items.filter((i) => !i.archived && i.sprint_ids.includes(sprint.id));
 }
 function sprintGoal(value) {
   const goal = el('div', undefined, 'sprint-goal');
