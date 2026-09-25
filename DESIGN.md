@@ -295,6 +295,8 @@ a validated HTTPS Gravatar avatar URL.
 - Modal dialogs have a 640px maximum width and a 16px viewport margin; the item editor expands to
   960px on wide screens. Dialog content always sits on an opaque panel surface over the dimmed
   backdrop, whether that content is a form or a plain panel. Textareas start at 120px high.
+  The item editor's scrolling fields extend 16px into the dialog's right padding, so their content
+  aligns with the header close button and footer actions while the scrollbar sits in that gutter.
 - Use native labeled forms and modal dialogs with focus return. All controls have visible focus.
   Every form control carries a name when its value is submitted and a unique id otherwise, so a
   control rendered twice — the item editor and the detail pane — never collides; text-like controls
