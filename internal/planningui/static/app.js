@@ -7910,7 +7910,7 @@ setInterval(async () => {
     const previousLinks = board.links;
     board.links = next.links;
     if (patchObservationUI(previousLinks, board.links)) restoreUIState(uiState);
-  } catch (e) {
+  } catch {
     if (board === current && !busy && !integrationFormOpen && !$('editor').open)
       notice('Observation cache could not be reloaded. Use Refresh to retry.', true);
   } finally {
@@ -7947,7 +7947,7 @@ setInterval(async () => {
     }
     if (workspaceListSignature(next) !== before)
       showPlanningChangeNotice('Workspace membership changed · Refresh to review');
-  } catch (e) {
+  } catch {
     if (board === current && !busy && !integrationFormOpen)
       notice('Workspace access could not be reloaded. Use Refresh to retry.', true);
   } finally {
