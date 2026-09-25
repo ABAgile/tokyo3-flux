@@ -3253,6 +3253,7 @@ async function requestBurndown(sprintID, force = false) {
     burndownErrors.set(key, e.message);
   } finally {
     if (burndownRequests.get(key) === token) burndownRequests.delete(key);
+    // biome-ignore lint/correctness/noUnsafeFinally: a stale response must not render; try/catch never rethrow.
     if (generation !== burndownGeneration || board !== currentBoard || root !== currentRoot) return;
     if (!burndownRequests.size) setContentBusy(false);
     if (view === 'board' || view === 'sprints') render();
@@ -4289,6 +4290,7 @@ async function createWorkspace(event) {
   const submit = form.querySelector('button[type="submit"]');
   const name = String(input.value || '').trim();
   const setStatus = (text, error = false) => setStatusText(status, text, error);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL and line breaks are rejected on purpose.
   if (!name || name.length > 120 || /[\u0000\r\n]/.test(name)) {
     setStatus('Workspace name must be between 1 and 120 characters.', true);
     input.focus();
@@ -7166,6 +7168,7 @@ async function loadIntegrationCatalog() {
     integrationCatalogError = error.message;
     integrationCatalogLoaded = true;
   } finally {
+    // biome-ignore lint/correctness/noUnsafeFinally: a superseded request must not render; try/catch never rethrow.
     if (request !== integrationCatalogRequest) return;
     integrationCatalogLoading = false;
     if (board === currentBoard && root === currentRoot && view === 'projects') {

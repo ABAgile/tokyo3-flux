@@ -6,6 +6,7 @@ import { requestKey } from './api.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: URLs with control characters are rejected on purpose.
   if (!raw || /[\u0000-\u001f\u007f]/.test(raw)) return '';
   try {
     const url = new URL(raw, location.href);

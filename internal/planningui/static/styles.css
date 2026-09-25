@@ -413,6 +413,7 @@ main {
 .sprint-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  /* biome-ignore lint/correctness/noInvalidGridAreas: "info" spans two rows as one valid rectangle. */
   grid-template-areas: "info actions" "info metrics";
   column-gap: var(--s6);
   row-gap: var(--s4);
@@ -2722,6 +2723,7 @@ dialog > form.item-editor-form {
   }
   .sprint-panel {
     grid-template-columns: minmax(0, 1fr);
+    /* biome-ignore lint/correctness/noInvalidGridAreas: one column per row is consistent; false positive. */
     grid-template-areas: "info" "actions" "metrics";
     gap: var(--s4);
   }
