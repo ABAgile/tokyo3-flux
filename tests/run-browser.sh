@@ -6,7 +6,8 @@
 # Usage: tests/run-browser.sh [--soft] [name ...]
 #   name     planning, drag-labels, integration, background, proposals or
 #            style-snapshot (default: every test except style-snapshot)
-#   --soft   record every failed check() instead of stopping at the first
+#   --soft   record every failed check() instead of stopping at the first;
+#            reported stack lines are one past the test file's line numbers
 #
 # Environment:
 #   FLUX_BROWSER_PG     required; URL of any database the role can connect to.
@@ -23,6 +24,7 @@
 set -eu
 
 cd "$(dirname "$0")/.."
+ROOT=$(pwd)
 SOFT=
 if [ "${1:-}" = --soft ]; then SOFT=1; shift; fi
 TESTS=${*:-planning drag-labels integration background proposals}
@@ -35,6 +37,7 @@ OUT=${FLUX_BROWSER_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/flux-browser.XXXXXX")}
 SESSION=${PLAYWRIGHT_CLI_SESSION:-flux-browser}
 CONFIG=${PLAYWRIGHT_CLI_CONFIG:-$HOME/.playwright/cli.config.json}
 mkdir -p "$OUT"
+OUT=$(cd "$OUT" && pwd)
 PIDS=
 DB=
 
@@ -46,6 +49,10 @@ stop() {
   DB=
 }
 trap stop EXIT INT TERM
+
+# playwright-cli writes page snapshots to its working directory, so keep them
+# in the results directory rather than the repository.
+pw() { (cd "$OUT" && playwright-cli -s="$SESSION" "$@"); }
 
 wait_http() {
   for _ in $(seq 1 50); do
@@ -65,9 +72,9 @@ run_one() {
   gitlab=
   case $name in
     drag-labels) mode=empty ;;
-    integration) gitlab=static ;;
+    integration | planning) gitlab=static ;;
     background) gitlab=evolving ;;
-    planning | proposals | style-snapshot) ;;
+    proposals | style-snapshot) ;;
     *) echo "unknown browser test: $name" >&2; return 2 ;;
   esac
   DB="flux_browser_$(date +%s)_$$"
@@ -80,7 +87,7 @@ run_one() {
       FLUX_GITLAB_WEBHOOK_SECRET FLUX_API_TOKEN FLUX_API_SUBJECT FLUX_NATS_URL
     "$OUT/flux" migrate
     project=
-    if [ $mode = seeded ]; then project=Platform; fi
+    if [ $mode = seeded ]; then project=Project; fi
     workspace=$("$OUT/flux" bootstrap --name 'Browser test' ${project:+--project "$project"} \
       --subject fixture-user | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
     if [ $mode = seeded ]; then "$OUT/flux" seed --workspace "$workspace" --subject fixture-user; fi
@@ -103,7 +110,8 @@ run_one() {
     if [ -n "$gitlab" ]; then
       export FLUX_GITLAB_URL=http://127.0.0.1:$GITLAB_PORT FLUX_GITLAB_SERVICE_TOKEN=fixture-read-secret
     fi
-    if [ $name = background ]; then export FLUX_GITLAB_REFRESH_INTERVAL=30s; fi
+    # The idle poll (planning notices, observations) runs only with automatic refresh.
+    case $name in background | planning) export FLUX_GITLAB_REFRESH_INTERVAL=30s ;; esac
     if [ $name = proposals ]; then
       export FLUX_API_TOKEN=fixture-native-machine-token-0000000000 FLUX_API_SUBJECT=pi-reader
     fi
@@ -122,7 +130,7 @@ run_one() {
       ;;
   esac
 
-  code=tests/$name.browser.js
+  code=$ROOT/tests/$name.browser.js
   if [ -n "$SOFT" ] && [ $name != style-snapshot ]; then
     code=$OUT/$name.soft.js
     node -e '
@@ -130,15 +138,21 @@ run_one() {
       const src = fs.readFileSync(process.argv[1], "utf8").replace(/throw new Error\(message\)/g, "__fails.push(message)");
       fs.writeFileSync(process.argv[2], `async (page) => { const __fails = [];\n${src}\n` +
         "try { const result = await run(page); return JSON.stringify({ fails: __fails, result }); }\n" +
-        "catch (error) { return JSON.stringify({ fails: __fails, error: String(error?.message ?? error).split(\"\\n\").slice(0, 3).join(\" | \") }); } }\n");
+        "catch (error) { return JSON.stringify({ fails: __fails, error: String(error?.message ?? error).split(\"\\n\").slice(0, 3).join(\" | \"), stack: String(error?.stack ?? \"\").split(\"\\n\").filter((l) => /:\\d+:\\d+/.test(l)).slice(0, 4) }); } }\n");
     ' "tests/$name.browser.js" "$code"
   fi
-  playwright-cli -s="$SESSION" close >/dev/null 2>&1 || true
-  playwright-cli -s="$SESSION" open "$base/auth/login" --config="$CONFIG" >/dev/null
-  playwright-cli -s="$SESSION" resize 1440 1000 >/dev/null
+  pw close >/dev/null 2>&1 || true
+  pw open "$base/auth/login" --config="$CONFIG" >/dev/null
+  pw resize 1440 1000 >/dev/null
   status=0
-  playwright-cli -s="$SESSION" --raw run-code --filename="$code" >"$OUT/$name.result" 2>&1 || status=$?
-  playwright-cli -s="$SESSION" close >/dev/null 2>&1 || true
+  pw --raw run-code --filename="$code" >"$OUT/$name.result" 2>&1 || status=$?
+  pw close >/dev/null 2>&1 || true
+  if [ $status = 0 ] && ! grep -q . "$OUT/$name.result"; then
+    # playwright-cli returns without a result when the page opens a native
+    # dialog or file chooser; treat that as a failure.
+    echo "no result: the page opened a native dialog or file chooser" >"$OUT/$name.result"
+    status=1
+  fi
   if [ -n "$SOFT" ] && [ $status = 0 ] && [ $name != style-snapshot ]; then
     node -e '
       const fs = require("node:fs");
