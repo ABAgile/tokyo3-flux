@@ -4,8 +4,9 @@
 # Nothing outside the created flux_browser_* database is touched.
 #
 # Usage: tests/run-browser.sh [--soft] [name ...]
-#   name     planning, drag-labels, integration, background, proposals or
-#            style-snapshot (default: every test except style-snapshot)
+#   name     planning, drag-labels, integration, background, proposals,
+#            style-snapshot or board-perf (default: every test except
+#            style-snapshot and board-perf)
 #   --soft   record every failed check() instead of stopping at the first;
 #            reported stack lines are one past the test file's line numbers
 #
@@ -74,7 +75,7 @@ run_one() {
     drag-labels) mode=empty ;;
     integration | planning) gitlab=static ;;
     background) gitlab=evolving ;;
-    proposals | style-snapshot) ;;
+    proposals | style-snapshot | board-perf) ;;
     *) echo "unknown browser test: $name" >&2; return 2 ;;
   esac
   DB="flux_browser_$(date +%s)_$$"
@@ -140,7 +141,7 @@ run_one() {
   esac
 
   code=$ROOT/tests/$name.browser.js
-  if [ -n "$SOFT" ] && [ $name != style-snapshot ]; then
+  if [ -n "$SOFT" ] && [ $name != style-snapshot ] && [ $name != board-perf ]; then
     code=$OUT/$name.soft.js
     node -e '
       const fs = require("node:fs");
@@ -162,7 +163,7 @@ run_one() {
     echo "no result: the page opened a native dialog or file chooser" >"$OUT/$name.result"
     status=1
   fi
-  if [ -n "$SOFT" ] && [ $status = 0 ] && [ $name != style-snapshot ]; then
+  if [ -n "$SOFT" ] && [ $status = 0 ] && [ $name != style-snapshot ] && [ $name != board-perf ]; then
     node -e '
       const fs = require("node:fs");
       let value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
