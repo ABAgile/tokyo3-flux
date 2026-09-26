@@ -1,17 +1,19 @@
 // The Labels page and label dialogs.
-import { $, el, field } from './dom.js';
+import { $ } from './dom.js';
 import {
-  pageStack,
-  sectionHead,
-  helpText,
-  emptyState,
-  maintenanceList,
-  maintenanceRow,
+  renderPage,
+  fieldTemplate,
+  sectionHeadTemplate,
+  helpTextTemplate,
+  emptyStateTemplate,
+  maintenanceListTemplate,
+  maintenanceRowTemplate,
 } from './layout.js';
+import { html, keyedList } from './preact.js';
 import { state } from './state.js';
-import { writeIconButton, writeButton } from './permissions.js';
-import { labelInfo, labelBadge } from './items.js';
-import { labelColorPicker } from './multi-select.js';
+import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
+import { labelInfo, labelBadgeTemplate } from './items.js';
+import { labelColorPickerTemplate } from './multi-select.js';
 import { openEditor } from './dialog.js';
 
 function editLabel(label) {
@@ -21,17 +23,14 @@ function editLabel(label) {
     typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
   openEditor(
     originalName ? 'Rename label' : 'Create label',
-    (fields) => {
-      const input = field(fields, 'name', 'Label name', originalName);
-      input.required = true;
-      input.maxLength = 60;
-      labelColorPicker(fields, originalColor);
-      fields.append(
-        helpText(
-          'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
-        ),
-      );
-    },
+    () => html`${fieldTemplate('name', 'Label name', originalName, 'text', undefined, {
+      required: true,
+      maxLength: 60,
+    })}
+      ${labelColorPickerTemplate(originalColor)}
+      ${helpTextTemplate(
+        'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
+      )}`,
     (data) => ({
       kind: 'label.save',
       target: originalName,
@@ -42,55 +41,52 @@ function editLabel(label) {
 }
 function deleteLabel(label) {
   $('editor').close();
+  const count = state.board.items.filter((i) => i.labels.includes(label.name)).length;
   openEditor(
     'Delete label',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Remove “${label.name}” from the workspace and all ${state.board.items.filter((i) => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`,
-        ),
-      );
-    },
+    () =>
+      html`<p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>`,
     () => ({ kind: 'label.delete', target: label.name }),
   );
   $('save').textContent = 'Delete label';
 }
-export function renderLabels(content) {
-  $('count').textContent = state.board.labels.length
-    ? `${state.board.labels.length} label${state.board.labels.length === 1 ? '' : 's'}`
-    : '';
-  const page = pageStack('labels');
-  const newLabel = writeButton('＋ New label', () => editLabel(), 'primary');
-  newLabel.dataset.write = 'true';
-  page.append(
-    sectionHead('Workspace labels', newLabel),
-    helpText(
-      'Create, rename and remove the reusable labels used to classify work in this workspace.',
-    ),
-  );
-  content.append(page);
-  if (!state.board.labels.length) {
-    page.append(emptyState('No labels yet. Create reusable labels for this workspace.'));
-    return;
-  }
-  const list = maintenanceList('label-maintenance-list');
-  state.board.labels.forEach((label) => {
-    const usage = state.board.items.filter((item) => item.labels.includes(label.name)).length;
-    list.append(
-      maintenanceRow({
-        tag: 'article',
-        className: 'label-maintenance-row',
-        content: [
-          labelBadge(label.name),
-          el('small', `${usage} card${usage === 1 ? '' : 's'}`, 'muted'),
-        ],
-        actions: [
-          writeIconButton('Rename', '✎', () => editLabel(label)),
-          writeIconButton('Delete…', '×', () => deleteLabel(label), 'danger'),
-        ],
-      }),
-    );
+function labelRowTemplate(label) {
+  const usage = state.board.items.filter((item) => item.labels.includes(label.name)).length;
+  return maintenanceRowTemplate({
+    tag: 'article',
+    className: 'label-maintenance-row',
+    content: [
+      labelBadgeTemplate(label.name),
+      html`<small class="muted">${`${usage} card${usage === 1 ? '' : 's'}`}</small>`,
+    ],
+    actions: [
+      writeIconTemplate('Rename', '✎', () => editLabel(label)),
+      writeIconTemplate('Delete…', '×', () => deleteLabel(label), 'danger'),
+    ],
   });
-  page.append(list);
+}
+export function renderLabels(content) {
+  const labels = state.board.labels;
+  $('count').textContent = labels.length
+    ? `${labels.length} label${labels.length === 1 ? '' : 's'}`
+    : '';
+  renderPage(
+    content,
+    'labels',
+    html`${sectionHeadTemplate(
+      'Workspace labels',
+      accessButtonTemplate('＋ New label', () => editLabel(), { className: 'primary' }),
+    )}
+    ${helpTextTemplate(
+      'Create, rename and remove the reusable labels used to classify work in this workspace.',
+    )}
+    ${
+      labels.length
+        ? maintenanceListTemplate(
+            'label-maintenance-list',
+            keyedList(labels, (label) => label.name, labelRowTemplate),
+          )
+        : emptyStateTemplate('No labels yet. Create reusable labels for this workspace.')
+    }`,
+  );
 }

@@ -1,5 +1,6 @@
 // The shared editor dialog used by every create/edit flow.
 import { $ } from './dom.js';
+import { mount, replaceContent, unmountIsland } from './preact.js';
 import { requestKey } from './api.js';
 import { state } from './state.js';
 import { change } from './commands.js';
@@ -30,6 +31,7 @@ export function restoreEditorFocus() {
 export function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
   state.editorReturn = afterClose;
   state.editorOpener = document.activeElement;
+  unmountIsland($('editor-title'));
   $('editor-title').textContent = title;
   $('editor-form')
     .querySelectorAll('.dialog-head .badge-due[data-due-date-badge]')
@@ -41,14 +43,17 @@ export function openEditor(title, build, submit, readOnly = false, afterSave, af
   $('editor-form')
     .querySelectorAll('[data-item-footer]')
     .forEach((e) => e.remove());
-  $('fields').replaceChildren();
   $('form-error').textContent = '';
   $('save').textContent = 'Save changes';
   $('save').hidden = readOnly;
   $('save').disabled = false;
   const revision = state.board.workspace.revision;
   let pending, key;
-  build($('fields'));
+  // A builder returns the dialog's template, or renders into the fields itself
+  // (the item editor) and returns nothing.
+  replaceContent($('fields'));
+  const content = build($('fields'));
+  if (content !== undefined) mount($('fields'), content);
   if (readOnly) {
     $('fields')
       .querySelectorAll(

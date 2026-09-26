@@ -480,18 +480,20 @@ Run `make fmt-web lint-web` after JS/CSS edits and `make fmt-md` after Markdown 
 
 ### Preact + HTM experiment
 
-The `preact-htm` branch starts an incremental migration from the imperative DOM implementation on `main`.
-Workspace selection, workspace creation markup and the first-run checklist now use Preact components with HTM templates; other views and the workspace submission controller remain unchanged.
-This is an initial migration slice, not yet a feature-complete alternative to the `lit-html` branch.
+The `preact-htm` branch replaces the handwritten renderer with Preact and HTM across Board/List, summaries, maintenance views, Markdown, selectors, comments, attachments and all dialog markup.
+The static shell, domain state and revision-checked command controllers remain plain ES modules; this is a rendering migration, not a rewrite of the API or application state model.
+View/template boundaries from the `lit-html` experiment were reused where applicable so the comparison does not introduce unrelated layout or feature changes.
 
 The application still serves plain ES modules without an application build step, CDN access or relaxed CSP.
 The checked-in Preact/HTM bundle is rebuilt with `make vendor-web`; exact package versions and integrity hashes live in `tools/vendor/package-lock.json`, alongside the upstream licenses.
 Only rebuilding that bundle requires npm installation.
-Components receive data and callbacks explicitly; island hosts provide an ownership boundary and unmount hooks before legacy code removes them.
+Components receive data and callbacks explicitly; render hosts provide an ownership boundary, with Preact effect cleanup for controller lifetimes and stale-update protection for replaced forms.
+Native form drafts remain uncontrolled where appropriate; busy controls, focus and cross-column attachment disclosures retain their existing behavior.
 
 For API-free browser regression tests, run `node tests/preact-fixture.mjs <private-host> 18195`, open that address with the configured remote `playwright-cli`, then use `run-code --filename=tests/preact.browser.js` (an absolute filename also works).
-The test covers escaping, keyed identity/focus, native forms, event callbacks, cleanup, disabled-state updates and light/dark responsive overflow under the existing CSP.
-It does not replace the database-backed planning tests or establish Board/List performance parity with lit-html.
+The test covers escaping, safe Markdown, keyed identity/focus, native forms, callbacks, nested-root cleanup, stale updates, outside-listener cleanup and light/dark responsive overflow under the existing CSP.
+Database-backed browser suites additionally exercise permissions, conflict recovery, uploads, comments, GitLab operations, proposals and keyboard workflows.
+See [the renderer comparison](docs/preact-comparison.md) for measured rendering costs, validation coverage and remaining architectural tradeoffs.
 The stylesheet is authored as ordered files under `internal/planningui/static/styles/` and served joined, in name order, as `/styles.css`.
 
 Use a disposable test DB; PostgreSQL tests skip without its URL.
@@ -509,6 +511,8 @@ export FLUX_BROWSER_PG='postgres://USER@127.0.0.1:5432/postgres?sslmode=disable'
 tests/run-browser.sh                    # all behavior tests
 tests/run-browser.sh --soft planning    # report every failed check, not just the first
 tests/run-browser.sh style-snapshot     # writes style-snapshot.txt to the results directory
+tests/run-browser.sh rendering          # root lifecycle and cross-column UI state
+tests/run-browser.sh board-perf         # synthetic board rendering probe
 ```
 
 Demo mode stays loopback-only.

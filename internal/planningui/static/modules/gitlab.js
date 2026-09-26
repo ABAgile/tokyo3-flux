@@ -1,9 +1,11 @@
 // GitLab links and cached observations on cards, rows and the observations dialog.
-import { $, el, syncAttributes } from './dom.js';
+import { $, syncAttributes } from './dom.js';
 import { requestKey } from './api.js';
-import { helpText, emptyState } from './layout.js';
+import { helpTextTemplate, emptyStateTemplate } from './layout.js';
+import { hooks } from './hooks.js';
+import { html, nodeOf, nothing } from './preact.js';
 import { state } from './state.js';
-import { writable, writeButton } from './permissions.js';
+import { writable } from './permissions.js';
 import { change } from './commands.js';
 import { openEditor } from './dialog.js';
 
@@ -32,19 +34,31 @@ function mergeRequestLinkURL(link) {
     return '';
   }
 }
-export function cardLinkView(link, focusKey) {
+export function cardLinkTemplate(link, focusKey) {
   const url = link.kind === 'mr' ? mergeRequestLinkURL(link) : link.observation?.url;
-  const node = el(url ? 'a' : 'span', linkLabel(link), 'card-link');
-  node.dataset.linkId = link.id;
-  node.dataset.observation = 'link';
-  node.dataset.focusKey = focusKey || `link:${link.id}`;
-  node.title = link.observation?.title || linkDisplayName(link, false);
-  if (url) {
-    node.href = url;
-    node.target = '_blank';
-    node.rel = 'noopener noreferrer';
-  }
-  return node;
+  const key = focusKey || `link:${link.id}`;
+  const title = link.observation?.title || linkDisplayName(link, false);
+  if (!url)
+    return html`<span
+      class="card-link"
+      data-link-id=${link.id}
+      data-observation="link"
+      data-focus-key=${key}
+      title=${title}
+    >${linkLabel(link)}</span>`;
+  return html`<a
+    class="card-link"
+    data-link-id=${link.id}
+    data-observation="link"
+    data-focus-key=${key}
+    title=${title}
+    href=${url}
+    target="_blank"
+    rel="noopener noreferrer"
+  >${linkLabel(link)}</a>`;
+}
+export function cardLinkView(link, focusKey) {
+  return nodeOf(cardLinkTemplate(link, focusKey));
 }
 function pipelineLinkURL(link, pipeline) {
   if (typeof pipeline?.url === 'string' && pipeline.url) return pipeline.url;
@@ -64,18 +78,17 @@ function pipelineLinkURL(link, pipeline) {
     return '';
   }
 }
-function pipelineLinkView(link) {
+function pipelineLinkTemplate(link) {
   const pipeline = link.observation?.pipeline;
-  if (!pipeline) return null;
+  if (!pipeline) return nothing;
   const url = pipelineLinkURL(link, pipeline);
-  const node = el(url ? 'a' : 'span', `Pipeline #${pipeline.id}`, 'card-link');
-  node.title = link.kind === 'mr' ? 'Latest pipeline for this merge request' : 'GitLab pipeline';
-  if (url) {
-    node.href = url;
-    node.target = '_blank';
-    node.rel = 'noopener noreferrer';
-  }
-  return node;
+  const title = link.kind === 'mr' ? 'Latest pipeline for this merge request' : 'GitLab pipeline';
+  const text = `Pipeline #${pipeline.id}`;
+  return url
+    ? html`<a class="card-link" title=${title} href=${url} target="_blank" rel="noopener noreferrer"
+        >${text}</a
+      >`
+    : html`<span class="card-link" title=${title}>${text}</span>`;
 }
 function observationOutcomeText(link) {
   const outcomes = {
@@ -160,20 +173,24 @@ function observationIconState(link) {
   if (state === 'opened') return { symbol: '●', status: 'open', stale: observationIsStale(link) };
   return { symbol: '?', status: 'unknown', stale: observationIsStale(link) };
 }
-export function cardObservationIcon(link, focusKey) {
-  const state = observationIconState(link);
-  const icon = el('span', state.symbol, 'card-observation-icon');
+export function cardObservationIconTemplate(link, focusKey) {
+  const icon = observationIconState(link);
   const tooltip = observationTooltip(link);
-  icon.dataset.linkId = link.id;
-  icon.dataset.observation = 'status-icon';
-  icon.dataset.status = state.status;
-  icon.dataset.stale = String(state.stale);
-  icon.dataset.focusKey = focusKey || `link:${link.id}:observation`;
-  icon.dataset.tooltip = tooltip;
-  icon.setAttribute('role', 'img');
-  icon.setAttribute('aria-label', `Card observation: ${tooltip}`);
-  icon.tabIndex = 0;
-  return icon;
+  return html`<span
+    class="card-observation-icon"
+    data-link-id=${link.id}
+    data-observation="status-icon"
+    data-status=${icon.status}
+    data-stale=${String(icon.stale)}
+    data-focus-key=${focusKey || `link:${link.id}:observation`}
+    data-tooltip=${tooltip}
+    role="img"
+    aria-label=${`Card observation: ${tooltip}`}
+    tabindex="0"
+  >${icon.symbol}</span>`;
+}
+export function cardObservationIcon(link, focusKey) {
+  return nodeOf(cardObservationIconTemplate(link, focusKey));
 }
 export function linkIdentitySignature(link) {
   return JSON.stringify({
@@ -242,17 +259,28 @@ export function patchObservationUI(previousLinks, nextLinks) {
       observationSignature(previous.get(link.id)) !== observationSignature(link),
   );
   if (!changed.length) return false;
+  // Cards and list rows are Preact templates: re-render them rather than patching
+  // their nodes.
+  let cards = false;
+  const patch = (node, link, patcher) => {
+    if (node.dataset.linkId !== link.id) return;
+    if (node.closest('.card,.list-row')) cards = true;
+    else patcher(node, link);
+  };
   changed.forEach((link) => {
-    document.querySelectorAll('[data-observation="status-icon"]').forEach((node) => {
-      if (node.dataset.linkId === link.id) patchObservationIcon(node, link);
-    });
-    document.querySelectorAll('[data-observation="link"]').forEach((node) => {
-      if (node.dataset.linkId === link.id) patchObservationLink(node, link);
-    });
+    for (const node of document.querySelectorAll('[data-observation="status-icon"]'))
+      patch(node, link, patchObservationIcon);
+    for (const node of document.querySelectorAll('[data-observation="link"]'))
+      patch(node, link, patchObservationLink);
     document.querySelectorAll('[data-refresh-link]').forEach((node) => {
       if (node.dataset.refreshLink === link.id) patchRefreshControl(node, link);
     });
   });
+  if (cards) {
+    hooks.renderContent();
+    if (state.observationTooltipTarget?.isConnected)
+      positionObservationTooltip(state.observationTooltipTarget);
+  }
   return true;
 }
 function observationTiming(link) {
@@ -263,103 +291,103 @@ function observationTiming(link) {
   };
   return `Last successful refresh: ${timestamp(link.last_success)} · Latest refresh attempt: ${timestamp(link.last_attempt)}`;
 }
+const LINK_OUTCOMES = {
+  unobserved: 'Not refreshed',
+  ok: 'Last attempt succeeded',
+  inaccessible: 'GitLab denied access',
+  not_found: 'Not found or hidden by GitLab',
+  unavailable: 'GitLab unavailable',
+  invalid_response: 'Invalid GitLab response',
+  rate_limited: 'GitLab rate limited',
+  busy: 'Connector busy',
+  disabled: 'Connector disabled',
+  outdated: 'Older provider version ignored; cached data retained',
+  refreshing: 'Refresh requested; retry after cooldown if interrupted',
+};
+async function refreshObservation(item, link, key) {
+  if (!writable()) return;
+  try {
+    await change(
+      { kind: 'link.refresh', target: link.id, revision: state.board.workspace.revision },
+      key,
+    );
+    $('editor').close();
+    showLinks(state.board.items.find((i) => i.id === item.id));
+  } catch (e) {
+    $('form-error').textContent =
+      `${e.message} Refresh the board to see current status; cooldowns prevent duplicate requests.`;
+  }
+}
+// The dialog is a snapshot rendered once per opening and never re-rendered,
+// so after creation its refresh controls and next-refresh lines belong to
+// patchRefreshControl, which the observation poll calls. Observation links
+// are rendered once too; Board/List instead re-render their current VNodes.
+function linkObservationTemplate(item, link, ready) {
+  const obs = link.observation;
+  const next = link.next_refresh && Date.parse(link.next_refresh) > Date.now();
+  const key = requestKey();
+  return html`<article class="setup-row" data-link-id=${link.id}>
+    <div class="card-links">${cardLinkTemplate(link)}${pipelineLinkTemplate(link)}</div>
+    ${obs?.title ? html`<p>${obs.title}</p>` : nothing}
+    ${
+      obs?.mr_state
+        ? helpTextTemplate(
+            `${obs.draft ? 'Draft · ' : ''}Review/mergeability: ${obs.review || 'unknown'} · Head SHA ${obs.head_sha || 'unknown'}`,
+          )
+        : nothing
+    }
+    ${
+      obs?.pipeline
+        ? helpTextTemplate(
+            `${link.kind === 'mr' ? 'Latest MR pipeline status' : 'Pipeline status'}: ${obs.pipeline.state || 'unknown'} · SHA ${obs.pipeline.sha || 'unknown'} · Provider state ${obs.pipeline.provider_state || 'unknown'}`,
+          )
+        : nothing
+    }
+    ${helpTextTemplate(LINK_OUTCOMES[link.outcome] || 'Unknown outcome')}
+    ${helpTextTemplate(observationTiming(link))}
+    ${
+      link.next_refresh
+        ? html`<p class="help" data-observation="next-refresh" hidden=${!next}
+            >${next ? `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.` : ''}</p
+          >`
+        : nothing
+    }
+    <div class="actions">
+      <button
+        type="button"
+        data-refresh-link=${link.id}
+        disabled=${refreshLinkDisabled(link) || !ready}
+        onClick=${() => refreshObservation(item, link, key)}
+      >Refresh observation</button>
+    </div>
+  </article>`;
+}
 export function showLinks(item) {
   const ready =
     state.board.connector_instance &&
     state.board.connector_instance === state.board.integration.instance;
+  const links = state.board.links.filter((l) => l.items.includes(item.id));
   openEditor(
     'Linked GitLab observations',
-    (fields) => {
-      fields.append(
-        helpText(
-          `${item.title} · ${state.board.integration.instance || 'No approved integration'}`,
-        ),
-      );
-      fields.append(
-        helpText(
-          `Engineering observations only. Refresh does not move cards or change sprint scope. ${state.board.refresh_seconds ? `Background refresh: about every ${state.board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
-        ),
-      );
-      const links = state.board.links.filter((l) => l.items.includes(item.id));
-      if (!links.length)
-        fields.append(
-          emptyState('Unlinked. Add an approved MR; never infer links from card titles.'),
-        );
-      links.forEach((link) => {
-        const row = el('article', undefined, 'setup-row');
-        row.dataset.linkId = link.id;
-        const obs = link.observation;
-        const linkRow = el('div', undefined, 'card-links');
-        linkRow.append(cardLinkView(link));
-        const pipelineLink = pipelineLinkView(link);
-        if (pipelineLink) linkRow.append(pipelineLink);
-        row.append(linkRow);
-        if (obs?.title) row.append(el('p', obs.title));
-        if (obs?.mr_state)
-          row.append(
-            helpText(
-              `${obs.draft ? 'Draft · ' : ''}Review/mergeability: ${obs.review || 'unknown'} · Head SHA ${obs.head_sha || 'unknown'}`,
-            ),
-          );
-        if (obs?.pipeline)
-          row.append(
-            helpText(
-              `${link.kind === 'mr' ? 'Latest MR pipeline status' : 'Pipeline status'}: ${obs.pipeline.state || 'unknown'} · SHA ${obs.pipeline.sha || 'unknown'} · Provider state ${obs.pipeline.provider_state || 'unknown'}`,
-            ),
-          );
-        const outcomes = {
-          unobserved: 'Not refreshed',
-          ok: 'Last attempt succeeded',
-          inaccessible: 'GitLab denied access',
-          not_found: 'Not found or hidden by GitLab',
-          unavailable: 'GitLab unavailable',
-          invalid_response: 'Invalid GitLab response',
-          rate_limited: 'GitLab rate limited',
-          busy: 'Connector busy',
-          disabled: 'Connector disabled',
-          outdated: 'Older provider version ignored; cached data retained',
-          refreshing: 'Refresh requested; retry after cooldown if interrupted',
-        };
-        row.append(helpText(outcomes[link.outcome] || 'Unknown outcome'));
-        row.append(helpText(observationTiming(link)));
-        const actions = el('div', undefined, 'actions');
-        const key = requestKey();
-        const refreshButton = writeButton('Refresh observation', async () => {
-          if (!writable()) return;
-          try {
-            await change(
-              { kind: 'link.refresh', target: link.id, revision: state.board.workspace.revision },
-              key,
-            );
-            $('editor').close();
-            showLinks(state.board.items.find((i) => i.id === item.id));
-          } catch (e) {
-            $('form-error').textContent =
-              e.message +
-              ' Refresh the board to see current status; cooldowns prevent duplicate requests.';
-          }
-        });
-        refreshButton.dataset.refreshLink = link.id;
-        refreshButton.disabled = refreshLinkDisabled(link) || !ready;
-        actions.append(refreshButton);
-        if (link.next_refresh) {
-          const nextRefresh = helpText('');
-          nextRefresh.dataset.observation = 'next-refresh';
-          nextRefresh.hidden = Date.parse(link.next_refresh) <= Date.now();
-          if (!nextRefresh.hidden)
-            nextRefresh.textContent = `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`;
-          row.append(nextRefresh);
-        }
-        row.append(actions);
-        fields.append(row);
-      });
-      if (!ready)
-        fields.append(
-          helpText(
-            'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
-          ),
-        );
-    },
+    () => html`${helpTextTemplate(
+      `${item.title} · ${state.board.integration.instance || 'No approved integration'}`,
+    )}
+      ${helpTextTemplate(
+        `Engineering observations only. Refresh does not move cards or change sprint scope. ${state.board.refresh_seconds ? `Background refresh: about every ${state.board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
+      )}
+      ${
+        links.length
+          ? nothing
+          : emptyStateTemplate('Unlinked. Add an approved MR; never infer links from card titles.')
+      }
+      ${links.map((link) => linkObservationTemplate(item, link, ready))}
+      ${
+        ready
+          ? nothing
+          : helpTextTemplate(
+              'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
+            )
+      }`,
     () => ({}),
     true,
   );

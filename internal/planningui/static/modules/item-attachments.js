@@ -1,15 +1,15 @@
 // Card attachments: loading, uploads, drops, tiles and the tooltip.
-import { el, button } from './dom.js';
+import { el } from './dom.js';
 import { api, apiUpload, requestKey } from './api.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
-import { statusLine, setStatusText, emptyState } from './layout.js';
+import { emptyStateTemplate } from './layout.js';
+import { Controller, html, nothing, render, keyedList, syncDisabled } from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
 import { notice } from './notices.js';
 import { renderControls } from './controls.js';
 import { memberName } from './people.js';
-import { reconcileKeyedChildren } from './reconcile.js';
 
 export function isFileTransfer(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes('Files');
@@ -166,12 +166,15 @@ async function dropFilesOntoItem(item, files) {
 // Cards and list rows accept file drops. Planning drags are unaffected because
 // only transfers that carry files are intercepted.
 export function itemFileDropZone(node, item) {
+  // The element can outlive the board payload that created it. Resolve the
+  // current record at event time so permissions, names and counts stay fresh.
+  const currentItem = () => state.board?.items.find((value) => value.id === item.id) || item;
   const clear = () => node.classList.remove('attachment-drop-active');
   const show = (event) => {
     if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (writable() && !state.uploadBusy && !item.archived) {
+    if (writable() && !state.uploadBusy && !currentItem().archived) {
       event.dataTransfer.dropEffect = 'copy';
       node.classList.add('attachment-drop-active');
     } else {
@@ -189,44 +192,36 @@ export function itemFileDropZone(node, item) {
     event.preventDefault();
     event.stopPropagation();
     clear();
-    if (writable() && !state.uploadBusy && !item.archived)
-      void dropFilesOntoItem(item, event.dataTransfer.files);
+    const current = currentItem();
+    if (writable() && !state.uploadBusy && !current.archived)
+      void dropFilesOntoItem(current, event.dataTransfer.files);
   });
 }
-function attachmentFileMark(attachment) {
-  const mark = el('span', attachmentKind(attachment), 'attachment-file-mark');
-  mark.setAttribute('aria-hidden', 'true');
-  return mark;
+export function attachmentPaperclipTemplate() {
+  return html`<span class="attachment-paperclip" aria-hidden="true">📎</span>`;
 }
-export function attachmentPaperclip() {
-  const icon = el('span', '📎', 'attachment-paperclip');
-  icon.setAttribute('aria-hidden', 'true');
-  return icon;
-}
-function attachmentLinkView(item, attachment, base = state.root) {
-  const link = el('a', attachment.name, 'attachment-link');
-  link.href = attachmentHref(item, attachment, base);
-  link.setAttribute('aria-label', attachment.name);
-  link.setAttribute('download', '');
-  link.dataset.attachmentTooltip = attachmentTypeDescription(attachment);
-  return link;
-}
-export function attachmentTileLink(
+// `extraClass` adds a placement class, for example on a card's attachment list.
+export function attachmentTileLinkTemplate(
   item,
   attachment,
   base = state.root,
   metadata = attachmentSize(attachment.size),
+  extraClass = '',
 ) {
-  const link = attachmentLinkView(item, attachment, base);
-  link.dataset.attachmentId = String(attachment.id);
-  link.classList.add('attachment-tile-link');
-  const copy = el('span', undefined, 'attachment-tile-copy');
-  copy.append(
-    el('span', attachment.name, 'attachment-name'),
-    el('span', metadata, 'attachment-meta'),
-  );
-  link.replaceChildren(attachmentFileMark(attachment), copy);
-  return link;
+  return html`<a
+    class="attachment-link attachment-tile-link${extraClass}"
+    href=${attachmentHref(item, attachment, base)}
+    aria-label=${attachment.name}
+    download=""
+    data-attachment-tooltip=${attachmentTypeDescription(attachment)}
+    data-attachment-id=${String(attachment.id)}
+  >
+    <span class="attachment-file-mark" aria-hidden="true">${attachmentKind(attachment)}</span>
+    <span class="attachment-tile-copy">
+      <span class="attachment-name">${attachment.name}</span>
+      <span class="attachment-meta">${metadata}</span>
+    </span>
+  </a>`;
 }
 function attachmentTooltipHost() {
   return document.querySelector('dialog[open]') || document.body;
@@ -290,27 +285,31 @@ function repositionAttachmentTooltip() {
     showAttachmentTooltip(state.attachmentTooltipTarget);
   else hideAttachmentTooltip();
 }
-function attachmentTile(item, attachment, base, metadata, onRemove) {
-  const tile = el('div', undefined, 'attachment-tile');
-  tile.dataset.attachmentId = String(attachment.id);
-  tile.dataset.renderSignature = JSON.stringify({ attachment, metadata });
-  tile.append(attachmentTileLink(item, attachment, base, metadata));
-  if (onRemove) {
-    const actions = el('details', undefined, 'attachment-actions');
-    actions.dataset.stateKey = `attachment:${attachment.id}:actions`;
-    const toggle = el('summary', '⋯', 'attachment-actions-toggle');
-    toggle.setAttribute('aria-label', `Attachment actions for ${attachment.name}`);
-    toggle.title = 'Attachment actions';
-    const menu = el('div', undefined, 'attachment-actions-menu');
-    menu.setAttribute('role', 'menu');
-    const remove = button('Remove attachment', onRemove, 'attachment-remove');
-    remove.setAttribute('role', 'menuitem');
-    remove.dataset.write = 'true';
-    menu.append(remove);
-    actions.append(toggle, menu);
-    tile.append(actions);
-  }
-  return tile;
+function attachmentTileTemplate(item, attachment, base, metadata, onRemove) {
+  return html`<div class="attachment-tile" data-attachment-id=${String(attachment.id)}>
+    ${attachmentTileLinkTemplate(item, attachment, base, metadata)}
+    ${
+      onRemove
+        ? html`<details class="attachment-actions" data-state-key=${`attachment:${attachment.id}:actions`}>
+            <summary
+              class="attachment-actions-toggle"
+              aria-label=${`Attachment actions for ${attachment.name}`}
+              title="Attachment actions"
+            >⋯</summary>
+            <div class="attachment-actions-menu" role="menu">
+              <button
+                type="button"
+                class="attachment-remove"
+                role="menuitem"
+                data-write="true"
+                ref=${syncDisabled(!writable() || state.integrationFormOpen)}
+                onClick=${onRemove}
+              >Remove attachment</button>
+            </div>
+          </details>`
+        : nothing
+    }
+  </div>`;
 }
 function validAttachments(data) {
   return (
@@ -336,54 +335,33 @@ function validAttachments(data) {
     )
   );
 }
-export function renderItemAttachments(fields, item, readOnly) {
+// Attachments are a stateful widget: loading, upload progress and drop state
+// live in a local object and the widget renders itself with Preact into its
+// section. The section's `attachment-drop-active` class belongs to the drop
+// handlers, and the file input's value to the upload code.
+function mountAttachments(section, item, readOnly) {
   const currentRoot = state.root;
-  const section = el('section', undefined, 'item-attachments');
-  section.setAttribute('aria-label', 'Attachments');
-  const heading = el('div', undefined, 'section-head');
-  const headingTitle = el('div', undefined, 'attachment-heading');
-  const count = el('span', '0', 'attachment-count');
-  count.setAttribute('aria-hidden', 'true');
-  headingTitle.append(attachmentPaperclip(), el('h3', 'Attachments'), count);
-  const status = statusLine();
-  const list = el('div', undefined, 'attachment-grid');
-  let attachmentBusy = false;
-  const setStatus = (text, error = false) => setStatusText(status, text, error);
+  const local = { busy: false, status: '', error: false, progress: undefined, dropping: false };
+  let progressShown = false;
+  const setStatus = (text, error = false) => {
+    local.status = text || '';
+    local.error = error;
+    update();
+  };
   const onAttachmentsLoaded = (id) => {
     if (id !== item.id) return;
     if (!section.isConnected) {
       attachmentListeners.delete(onAttachmentsLoaded);
       return;
     }
-    renderList();
+    update();
   };
   attachmentListeners.add(onAttachmentsLoaded);
-  function renderList() {
-    count.textContent = String(attachmentCount(item));
-    if (!attachmentsLoaded(item)) {
-      list.replaceChildren(emptyState('Loading attachments…'));
-      void ensureAttachments(item);
-      return;
-    }
-    const attachments = item.attachments;
-    if (!attachments.length) {
-      list.replaceChildren(emptyState('No attachments yet.'));
-      return;
-    }
-    const next = attachments.map((attachment) =>
-      attachmentTile(
-        item,
-        attachment,
-        currentRoot,
-        `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`,
-        readOnly ? undefined : () => removeAttachment(attachment),
-      ),
-    );
-    reconcileKeyedChildren(list, next, (node) => `attachment:${node.dataset.attachmentId}`);
-  }
+  const fileInput = () => section.querySelector('.attachment-file-input');
+  const addButton = () => section.querySelector('.attachment-add');
   async function removeAttachment(attachment) {
-    if (attachmentBusy || !writable()) return;
-    attachmentBusy = true;
+    if (local.busy || !writable()) return;
+    local.busy = true;
     setStatus(`Removing ${attachment.name}…`);
     try {
       await api(attachmentHref(item, attachment, currentRoot), {
@@ -395,151 +373,199 @@ export function renderItemAttachments(fields, item, readOnly) {
         item,
         (item.attachments || []).filter((value) => value.id !== attachment.id),
       );
-      renderList();
       hooks.renderContent();
       setStatus(item.attachments.length ? 'Attachment removed.' : 'No attachments yet.');
     } catch (error) {
       if (section.isConnected) setStatus(error.message, true);
     } finally {
-      attachmentBusy = false;
-      if (section.isConnected) renderControls();
+      local.busy = false;
+      if (section.isConnected) {
+        update();
+        renderControls();
+      }
     }
   }
+  async function uploadFile(file) {
+    addButton()?.focus();
+    if (local.busy || state.uploadBusy || !writable()) return false;
+    const rejection = attachmentRejection(item, file);
+    if (rejection) {
+      setStatus(rejection, true);
+      return false;
+    }
+    local.busy = true;
+    state.uploadBusy = true;
+    progressShown = true;
+    local.progress = 0;
+    setStatus(`Uploading ${file.name}…`);
+    let uploaded = false;
+    try {
+      await uploadItemFile(item, file, (fraction) => {
+        if (!section.isConnected) return;
+        local.progress = fraction;
+        if (fraction !== undefined)
+          setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`);
+        else update();
+      });
+      if (state.root !== currentRoot || !section.isConnected) return false;
+      hooks.renderContent();
+      setStatus('Attachment uploaded.');
+      uploaded = true;
+    } catch (error) {
+      if (section.isConnected) setStatus(error.message, true);
+    } finally {
+      local.busy = false;
+      state.uploadBusy = false;
+      progressShown = false;
+      local.progress = 0;
+      if (section.isConnected) {
+        update();
+        renderControls();
+        const add = addButton();
+        if (add && !add.disabled) add.focus();
+      }
+    }
+    return uploaded;
+  }
+  async function uploadFiles(files) {
+    if (local.busy || state.uploadBusy || !writable()) return;
+    const selected = Array.from(files || []).filter(Boolean);
+    fileInput().value = '';
+    if (!selected.length) {
+      setStatus('Choose a file first.', true);
+      addButton()?.focus();
+      return;
+    }
+    let uploaded = 0;
+    for (const file of selected) {
+      if (!(await uploadFile(file))) break;
+      uploaded++;
+    }
+    if (uploaded > 1 && section.isConnected) setStatus(`${uploaded} attachments uploaded.`);
+  }
+  const clearDrop = () => {
+    section.classList.remove('attachment-drop-active');
+    local.dropping = false;
+    update();
+  };
+  const showDrop = (event) => {
+    if (!isFileTransfer(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (writable() && !local.busy && !state.uploadBusy) {
+      event.dataTransfer.dropEffect = 'copy';
+      section.classList.add('attachment-drop-active');
+      local.dropping = true;
+      update();
+    } else {
+      event.dataTransfer.dropEffect = 'none';
+      clearDrop();
+    }
+  };
   if (!readOnly) {
-    const upload = el('div', undefined, 'attachment-upload');
-    const hint = el('span', 'Drop files here', 'attachment-drop-hint');
-    hint.hidden = true;
-    const progress = el('progress', undefined, 'attachment-progress');
-    progress.max = 1;
-    progress.hidden = true;
-    progress.setAttribute('aria-label', 'Upload progress');
-    const showProgress = (fraction) => {
-      if (fraction === undefined) {
-        progress.removeAttribute('value');
-      } else {
-        progress.value = fraction;
-      }
-      progress.hidden = false;
-    };
-    const hideProgress = () => {
-      progress.hidden = true;
-      progress.value = 0;
-    };
-    const input = el('input');
-    input.type = 'file';
-    input.className = 'attachment-file-input';
-    input.id = `attachment-file-${requestKey()}`;
-    input.tabIndex = -1;
-    input.setAttribute('aria-label', 'Attachment file');
-    const add = button('Add attachment', () => input.click(), 'attachment-add');
-    add.dataset.write = 'true';
-    add.setAttribute('aria-controls', input.id);
-    add.title = 'Choose a file to attach';
-    upload.append(add, hint, progress, input);
-    heading.append(headingTitle, upload);
-    async function uploadFile(file) {
-      add.focus();
-      if (attachmentBusy || state.uploadBusy || !writable()) return false;
-      const rejection = attachmentRejection(item, file);
-      if (rejection) {
-        setStatus(rejection, true);
-        return false;
-      }
-      attachmentBusy = true;
-      state.uploadBusy = true;
-      add.disabled = true;
-      setStatus(`Uploading ${file.name}…`);
-      showProgress(0);
-      let uploaded = false;
-      try {
-        await uploadItemFile(item, file, (fraction) => {
-          if (!section.isConnected) return;
-          showProgress(fraction);
-          if (fraction !== undefined)
-            setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`);
-        });
-        if (state.root !== currentRoot || !section.isConnected) return false;
-        renderList();
-        hooks.renderContent();
-        setStatus('Attachment uploaded.');
-        uploaded = true;
-      } catch (error) {
-        if (section.isConnected) setStatus(error.message, true);
-      } finally {
-        attachmentBusy = false;
-        state.uploadBusy = false;
-        hideProgress();
-        if (section.isConnected) {
-          add.disabled = !writable();
-          renderControls();
-          if (!add.disabled) add.focus();
-        }
-      }
-      return uploaded;
-    }
-    async function uploadFiles(files) {
-      if (attachmentBusy || state.uploadBusy || !writable()) return;
-      const selected = Array.from(files || []).filter(Boolean);
-      input.value = '';
-      if (!selected.length) {
-        setStatus('Choose a file first.', true);
-        add.focus();
-        return;
-      }
-      let uploaded = 0;
-      for (const file of selected) {
-        if (!(await uploadFile(file))) break;
-        uploaded++;
-      }
-      if (uploaded > 1 && section.isConnected) setStatus(`${uploaded} attachments uploaded.`);
-    }
-    input.addEventListener('change', () => {
-      void uploadFiles(input.files ? [input.files[0]] : []);
-    });
-    input.addEventListener('cancel', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (section.isConnected) add.focus();
-    });
-    const clearAttachmentDrop = () => {
-      section.classList.remove('attachment-drop-active');
-      hint.hidden = true;
-    };
-    const showAttachmentDrop = (event) => {
-      if (!isFileTransfer(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (writable() && !attachmentBusy && !state.uploadBusy) {
-        event.dataTransfer.dropEffect = 'copy';
-        section.classList.add('attachment-drop-active');
-        hint.hidden = false;
-      } else {
-        event.dataTransfer.dropEffect = 'none';
-        clearAttachmentDrop();
-      }
-    };
-    section.addEventListener('dragenter', showAttachmentDrop);
-    section.addEventListener('dragover', showAttachmentDrop);
+    section.addEventListener('dragenter', showDrop);
+    section.addEventListener('dragover', showDrop);
     section.addEventListener('dragleave', (event) => {
-      if (
-        !event.relatedTarget ||
-        !(event.relatedTarget instanceof Node) ||
-        !section.contains(event.relatedTarget)
-      )
-        clearAttachmentDrop();
+      if (!(event.relatedTarget instanceof Node) || !section.contains(event.relatedTarget))
+        clearDrop();
     });
     section.addEventListener('drop', (event) => {
       if (!isFileTransfer(event.dataTransfer)) return;
       event.preventDefault();
       event.stopPropagation();
-      clearAttachmentDrop();
-      if (writable() && !attachmentBusy && !state.uploadBusy)
+      clearDrop();
+      if (writable() && !local.busy && !state.uploadBusy)
         void uploadFiles(event.dataTransfer.files);
     });
-  } else heading.append(headingTitle);
-  section.append(heading, status, list);
-  fields.append(section);
-  renderList();
+  }
+  const inputID = `attachment-file-${requestKey()}`;
+  function listTemplate() {
+    if (!attachmentsLoaded(item)) {
+      void ensureAttachments(item);
+      return emptyStateTemplate('Loading attachments…');
+    }
+    if (!item.attachments.length) return emptyStateTemplate('No attachments yet.');
+    return keyedList(
+      item.attachments,
+      (attachment) => attachment.id,
+      (attachment) =>
+        attachmentTileTemplate(
+          item,
+          attachment,
+          currentRoot,
+          `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`,
+          readOnly ? undefined : () => removeAttachment(attachment),
+        ),
+    );
+  }
+  function uploadTemplate() {
+    return html`<div class="attachment-upload">
+      <button
+        type="button"
+        class="attachment-add"
+        data-write="true"
+        aria-controls=${inputID}
+        title="Choose a file to attach"
+        ref=${syncDisabled(local.busy || !writable() || state.integrationFormOpen)}
+        onClick=${() => fileInput().click()}
+      >Add attachment</button>
+      <span class="attachment-drop-hint" hidden=${!local.dropping}>Drop files here</span>
+      <progress
+        class="attachment-progress"
+        max="1"
+        value=${local.progress ?? nothing}
+        hidden=${!progressShown}
+        aria-label="Upload progress"
+      ></progress>
+      <input
+        type="file"
+        class="attachment-file-input"
+        id=${inputID}
+        tabindex="-1"
+        aria-label="Attachment file"
+        onChange=${(event) => {
+          const input = event.currentTarget;
+          void uploadFiles(input.files ? [input.files[0]] : []);
+        }}
+        onCancel=${(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (section.isConnected) addButton()?.focus();
+        }}
+      />
+    </div>`;
+  }
+  function update() {
+    const { status, error } = local;
+    render(
+      html`<div class="section-head">
+          <div class="attachment-heading">
+            ${attachmentPaperclipTemplate()}
+            <h3>Attachments</h3>
+            <span class="attachment-count" aria-hidden="true">${String(attachmentCount(item))}</span>
+          </div>
+          ${readOnly ? nothing : uploadTemplate()}
+        </div>
+        <p
+          class=${error ? 'help error' : 'help'}
+          data-status-class="help"
+          hidden=${!status}
+          role=${error ? 'alert' : 'status'}
+          aria-live="polite"
+        >${status}</p>
+        <div class="attachment-grid">${listTemplate()}</div>`,
+      section,
+    );
+  }
+  update();
+  return () => attachmentListeners.delete(onAttachmentsLoaded);
+}
+export function itemAttachmentsTemplate(item, readOnly) {
+  return html`<${Controller} as="section"
+    class="item-attachments"
+    aria-label="Attachments"
+    setup=${mountAttachments} args=${[item, readOnly]}
+  />`;
 }
 // Registers the attachment tooltip listeners; app.js calls this once at startup.
 export function initAttachmentTooltips() {

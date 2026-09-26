@@ -2,20 +2,37 @@
 
 The planning UI is plain ES modules and CSS under `internal/planningui/static/`, embedded with `go:embed`.
 There is no application build step or runtime package installation.
-On the `preact-htm` experiment, Preact and HTM are vendored in `modules/vendor-preact.js`; the workspace gate and first-run checklist use components, while other views still use the existing DOM helpers.
+Preact and HTM are vendored in `modules/vendor-preact.js`; all dynamic views, widgets and dialog markup render Preact VNodes.
+The static shell and domain controllers remain plain ES modules.
 
-## Preact migration
+## Rendering with Preact
 
 - Import the runtime only through `modules/preact.js`; use HTM templates, not JSX or raw HTML injection.
 - `tools/vendor/package-lock.json` pins the runtime and bundler; `make vendor-web` rebuilds the checked-in bundle.
   Never edit the generated bundle by hand; preserve the licenses in `tools/vendor/`.
-- Components receive domain data and actions as props; keep API/session state in the existing controllers during this first migration slice.
-- Each component island owns its host's children; do not pass those children to the legacy reconciler.
-  Call `unmountIsland(host)` before removing an island host so hook cleanup runs.
+- Components receive data and actions as props; domain/session state and revision-checked commands remain in the existing controllers.
+  Template factories are pure VNode builders; never put a DOM node inside an HTM expression.
+- Each render root owns its host's children exclusively; the handwritten reconciler has been removed.
+  Use `replaceContent(host, ...)` when replacing a static host's content and `unmountIsland(host)` before removing a render root.
+  `mount(host, template)` starts a fresh form lifetime and returns an update function that ignores stale updates after replacement.
+- `Controller` is the Preact lifecycle boundary for existing stateful form controllers.
+  Its setup arguments are fixed for that instance; use a stable domain key or `withKey` when a different identity needs a fresh controller.
+  Setup must return cleanup for outside listeners, subscriptions, animation frames and observers.
+  Local controller renders are synchronous so native form values and focus are available to existing command handlers.
+- `attach(setup, ...args)` is only for one-time, element-local wiring such as drag/drop or chip decoration; handlers must read current data by stable ID at event time.
+  Use component effects or `Controller` for external resources, never `attach`.
+- Native text fields are uncontrolled (`defaultValue`) unless their value is owned by reactive state, such as project search.
+  Keep user edits intact across unrelated renders.
+  `syncDisabled` synchronizes controls also written by `renderControls`; one writer per attribute remains the goal.
+- Use Preact style objects for dynamic colors and CSS variables; Preact applies these through CSSOM, which preserves the existing CSP.
+  Never pass a style string or use `dangerouslySetInnerHTML`.
+- `nodeOf` is restricted to rendered-once shell nodes/form skeletons; dispose it before removing its host.
+  Board/List updates always render VNodes, including observation icons.
+  Keys preserve identity within a parent; cross-column card moves also restore logical focus and open attachment disclosures.
 - Use stable domain keys for lists, and effects with cleanup for lifecycle work.
   Do not add module-level listeners or timers.
-- Workspace submission still owns the creation input's value/disabled state and status line; these are deliberately not reactive component bindings yet.
-  Move the controller and those bindings together in a later slice, not one writer at a time.
+- Rendered-once workspace and integration forms keep their submission controller's ownership of input values, busy flags and status lines.
+  Do not add competing reactive bindings without migrating that controller too.
 - No CSS, API or CSP changes are part of the migration; never introduce inline styles, scripts or `eval`.
 - `tests/preact-fixture.mjs` serves an API-free fixture for `tests/preact.browser.js`; it requires no database and must bind only to a private test interface.
 
@@ -41,7 +58,7 @@ Feature modules export functions and constants only; any document listeners or t
 |---|---|
 | Base | `vendor-preact`, `preact`, `gate-components`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
 | State | `state` (every reassigned shell variable, as `state.<name>`), `hooks` |
-| Services | `permissions`, `notices`, `items`, `controls`, `people`, `reconcile`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
+| Services | `permissions`, `notices`, `items`, `controls`, `people`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
 | Views | `view-board`, `view-archive`, `bulk`, `view-list`, `view-velocity`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `shortcuts`, `view-gate`, `sync` |
 | Shell | `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, event wiring and startup |
@@ -88,5 +105,7 @@ Each file holds one feature, including its media queries; a feature's responsive
 - Any Go change (for example `web.go`) needs `make check` with `FLUX_TEST_DATABASE_URL` set to a disposable database.
 - Browser scripts in `tests/*.browser.js` run through Playwright `run-code` against disposable, seeded workspaces only.
   `tests/style-snapshot.browser.js` returns a JSON style snapshot; save it outside the repository and diff two runs made on the same day.
+  `tests/rendering.browser.js` checks root ownership and cross-column focus/disclosure preservation.
+  `tests/board-perf.browser.js` measures synthetic 100/500/1000-card boards; compare runs on the same browser host only.
 - Tool versions are pinned in the `Makefile` (`BIOME_VERSION`, `RUMDL_VERSION`) and in CI.
   Set `BIOME=biome` or `RUMDL=rumdl` to use installed binaries.

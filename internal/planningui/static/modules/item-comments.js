@@ -1,14 +1,13 @@
 // Item comments: list, paging and composer.
-import { el, button } from './dom.js';
 import { api, requestKey } from './api.js';
 import { initials } from './format.js';
-import { renderMarkdown, markdownEditor } from './markdown.js';
-import { panelHead, helpText, statusLine, setStatusText } from './layout.js';
+import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
+import { panelHeadTemplate, helpTextTemplate } from './layout.js';
+import { Controller, html, nothing, render, keyedList, syncDisabled } from './preact.js';
 import { state } from './state.js';
 import { canComment } from './permissions.js';
 import { renderControls } from './controls.js';
-import { memberInfo } from './people.js';
-import { reconcileKeyedChildren } from './reconcile.js';
+import { memberInfo, avatarImageTemplate } from './people.js';
 
 function commentTime(value) {
   const date = new Date(value);
@@ -39,118 +38,80 @@ function validCommentPage(data) {
       (Number.isSafeInteger(data.next_before) && data.next_before >= 0))
   );
 }
-function commentNode(comment) {
-  const row = el('article', undefined, 'comment');
-  row.dataset.commentId = String(comment.id);
-  row.dataset.renderSignature = JSON.stringify({ comment, member: memberInfo(comment.author) });
+function commentTemplate(comment) {
   const info = memberInfo(comment.author);
-  const avatar = el('span', undefined, 'avatar comment-avatar');
-  avatar.setAttribute('aria-hidden', 'true');
-  avatar.append(el('span', initials(info.name), 'avatar-fallback'));
-  if (info.avatarURL) {
-    const image = el('img');
-    image.src = info.avatarURL;
-    image.alt = '';
-    image.decoding = 'async';
-    image.referrerPolicy = 'no-referrer';
-    image.onerror = () => image.remove();
-    avatar.append(image);
-  }
-  const content = el('div', undefined, 'comment-content');
-  const header = el('div', undefined, 'comment-head');
-  const author = el('strong', info.name);
-  author.title = comment.author;
   const time = commentTime(comment.created_at);
-  const created = el('time', time.label, 'muted');
-  if (time.dateTime) created.dateTime = time.dateTime;
-  header.append(author, created);
-  const body = el('div', undefined, 'comment-body');
-  renderMarkdown(body, comment.body);
-  content.append(header, body);
-  row.append(avatar, content);
-  return row;
+  return html`<article class="comment" data-comment-id=${String(comment.id)}>
+    <span class="avatar comment-avatar" aria-hidden="true">
+      <span class="avatar-fallback">${initials(info.name)}</span>
+      ${avatarImageTemplate(info.avatarURL)}
+    </span>
+    <div class="comment-content">
+      <div class="comment-head">
+        <strong title=${comment.author}>${info.name}</strong>
+        <time class="muted" datetime=${time.dateTime || nothing}>${time.label}</time>
+      </div>
+      <div class="comment-body">${markdownTemplate(comment.body)}</div>
+    </div>
+  </article>`;
 }
-function renderCommentList(list, comments) {
-  const next = comments.map(commentNode);
-  if (!next.length) {
-    list.replaceChildren();
-    return;
-  }
-  reconcileKeyedChildren(list, next, (node) => `comment:${node.dataset.commentId}`);
-}
-export function renderItemComments(fields, item) {
+// Comments are a stateful widget: the list, paging and composer state live in
+// a local object, and the widget renders itself with Preact into its section.
+function mountComments(section, item) {
   const currentRoot = state.root;
-  const section = el('section', undefined, 'item-comments');
-  const heading = panelHead('Comments');
-  const status = statusLine();
-  const older = button('Load older comments');
-  older.className = 'comment-load-older';
-  older.hidden = true;
-  const list = el('div', undefined, 'comment-list');
-  let comments = [],
-    nextBefore = 0,
-    commentBusy = false,
-    commentLoad = 0,
+  const local = {
+    comments: [],
+    nextBefore: 0,
+    olderDisabled: true,
+    busy: false,
+    status: 'Loading comments…',
+    error: false,
+  };
+  let commentLoad = 0,
     pendingCommentBody = '',
-    pendingCommentKey = '';
-  let addButton, textarea, refreshCommentPreview;
-  const setStatus = (text, error = false) => setStatusText(status, text, error);
-  setStatus('Loading comments…');
-  section.append(heading, status, older, list);
-  if (state.board.role !== 'member' && state.board.role !== 'admin')
-    section.append(helpText('Viewers can read comments; members and admins can add them.'));
-  else {
-    const composer = el('div', undefined, 'comment-composer');
-    const editor = markdownEditor(composer, 'comment_body', 'Add a comment', '', 4000);
-    textarea = editor.input;
-    textarea.dataset.commentControl = 'true';
-    refreshCommentPreview = editor.refresh;
-    addButton = button('Add comment', addComment, 'primary');
-    addButton.dataset.commentWrite = 'true';
-    addButton.disabled = !canComment();
-    composer.append(addButton);
-    section.append(composer);
-  }
-  fields.append(section);
+    pendingCommentKey = '',
+    editor;
+  const writer = state.board.role === 'member' || state.board.role === 'admin';
+  const setStatus = (text, error = false) => {
+    local.status = text || '';
+    local.error = error;
+    update();
+  };
   async function loadComments(before = 0, append = false) {
     const loadID = ++commentLoad;
+    local.olderDisabled = true;
     setStatus('Loading comments…');
-    older.disabled = true;
     try {
       const query = new URLSearchParams({ limit: String(COMMENT_PAGE_LIMIT) });
       if (before) query.set('before', String(before));
       const page = await api(
-        currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments?' + query,
+        `${currentRoot}/items/${encodeURIComponent(item.id)}/comments?${query}`,
       );
       if (loadID !== commentLoad || state.root !== currentRoot || !section.isConnected)
         return false;
       if (!validCommentPage(page))
         throw new Error('Comments are invalid. Reopen the item to retry.');
-      comments = append ? [...page.comments, ...comments] : page.comments;
-      nextBefore = page.next_before || 0;
-      older.hidden = !nextBefore;
-      older.disabled = false;
-      renderCommentList(list, comments);
+      local.comments = append ? [...page.comments, ...local.comments] : page.comments;
+      local.nextBefore = page.next_before || 0;
+      local.olderDisabled = false;
+      const count = local.comments.length;
       setStatus(
-        comments.length
-          ? `${comments.length}${nextBefore ? '+' : ''} comment${comments.length === 1 ? '' : 's'} loaded.`
+        count
+          ? `${count}${local.nextBefore ? '+' : ''} comment${count === 1 ? '' : 's'} loaded.`
           : 'No comments yet.',
       );
       return true;
     } catch (error) {
       if (loadID === commentLoad && state.root === currentRoot && section.isConnected) {
-        older.hidden = !nextBefore;
-        older.disabled = false;
+        local.olderDisabled = false;
         setStatus(error.message, true);
       }
       return false;
     }
   }
-  older.onclick = () => {
-    if (nextBefore && !commentBusy) void loadComments(nextBefore, true);
-  };
   async function addComment() {
-    if (!addButton || commentBusy || !canComment()) return;
+    if (local.busy || !canComment()) return;
+    const textarea = editor.input;
     const body = textarea.value.trim();
     if (!body) {
       setStatus('Comment cannot be empty.', true);
@@ -161,12 +122,11 @@ export function renderItemComments(fields, item) {
       pendingCommentBody = body;
       pendingCommentKey = requestKey();
     }
-    commentBusy = true;
+    local.busy = true;
     commentLoad++;
-    addButton.disabled = true;
     setStatus('Adding comment…');
     try {
-      await api(currentRoot + '/items/' + encodeURIComponent(item.id) + '/comments', {
+      await api(`${currentRoot}/items/${encodeURIComponent(item.id)}/comments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -179,18 +139,70 @@ export function renderItemComments(fields, item) {
       pendingCommentBody = '';
       pendingCommentKey = '';
       textarea.value = '';
-      refreshCommentPreview();
+      editor.refresh();
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       await loadComments();
     } catch (error) {
       if (state.root === currentRoot && section.isConnected) setStatus(error.message, true);
     } finally {
-      commentBusy = false;
-      if (addButton && section.isConnected) {
-        addButton.disabled = !canComment();
+      local.busy = false;
+      if (section.isConnected) {
+        update();
         renderControls();
       }
     }
   }
+  function update() {
+    const { comments, nextBefore, status, error } = local;
+    render(
+      html`${panelHeadTemplate('Comments')}
+        <p
+          class=${error ? 'help error' : 'help'}
+          data-status-class="help"
+          hidden=${!status}
+          role=${error ? 'alert' : 'status'}
+          aria-live="polite"
+        >${status}</p>
+        <button
+          type="button"
+          class="comment-load-older"
+          hidden=${!nextBefore}
+          disabled=${local.olderDisabled}
+          onClick=${() => {
+            if (local.nextBefore && !local.busy) void loadComments(local.nextBefore, true);
+          }}
+        >Load older comments</button>
+        <div class="comment-list">
+          ${keyedList(comments, (comment) => comment.id, commentTemplate)}
+        </div>
+        ${
+          writer
+            ? html`<div class="comment-composer">
+                ${markdownEditorTemplate('comment_body', 'Add a comment', '', 4000, false, false, {
+                  commentControl: true,
+                  onReady: (ready) => {
+                    editor = ready;
+                  },
+                })}
+                <button
+                  type="button"
+                  class="primary"
+                  data-comment-write="true"
+                  ref=${syncDisabled(local.busy || !canComment())}
+                  onClick=${addComment}
+                >Add comment</button>
+              </div>`
+            : helpTextTemplate('Viewers can read comments; members and admins can add them.')
+        }`,
+      section,
+    );
+  }
+  update();
   void loadComments();
+  return () => {
+    commentLoad++;
+  };
+}
+export function itemCommentsTemplate(item) {
+  return html`<${Controller} as="section" class="item-comments" setup=${mountComments} args=${[item]} />`;
 }

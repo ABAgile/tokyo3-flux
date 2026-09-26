@@ -24,6 +24,7 @@ export const state = {
   membershipPoll: false,
   pendingPlanningURLState: undefined,
   projectSearch: '',
+  projectFilterIDs: undefined,
   selectedItemID: '',
   detailPane: undefined,
   detailState: undefined,

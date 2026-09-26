@@ -13,73 +13,74 @@
 //           ├── .help                    guidance text (optional)
 //           └── body: .panel / .maintenance-list / .empty
 //
-// No module-level state: every export is a pure factory over its arguments, so
-// it is safe to import anywhere.
-import { el, options, uid, noAutofill } from './dom.js';
+// Every component is a Preact template (`*Template`); emptyState also has a node
+// form for the loading page, which is appended to a static host. The only
+// module-level state is the per-select option mount cache below.
+import { el, uid } from './dom.js';
+import { html, mount, nodeOf, nothing, render, keyedList, replaceContent } from './preact.js';
 
 // #content holds exactly one page root. `data-content-view` names the
-// composition so a re-render can patch the existing DOM instead of replacing
-// it whenever the page kind is unchanged.
+// composition, so the next render updates the same root while the page kind is
+// unchanged.
 function contentRoot(tag, className, contentView) {
   const root = el(tag, undefined, className);
   if (contentView) root.dataset.contentView = contentView;
   return root;
 }
+// Renders a view's template into its page root. The root persists while the
+// host shows the same view, so Preact updates it in place; a new root is filled
+// while detached and then replaces the host's content in one insertion.
+function renderRoot(host, className, contentView, template, tag = 'div') {
+  const current = host.firstElementChild;
+  const root =
+    current?.dataset.contentView === contentView
+      ? current
+      : contentRoot(tag, className, contentView);
+  render(template, root);
+  if (root !== current) replaceContent(host, root);
+  return root;
+}
 // The default page body: one single-column stack of sections with one gap, so
 // Projects, Sprints, Members, Labels and History space their sections alike.
-function pageStack(contentView) {
-  return contentRoot('div', 'page-stack', contentView);
+function renderPage(host, contentView, template) {
+  return renderRoot(host, 'page-stack', contentView, template);
 }
 // A bordered surface. Variants add their own padding and inner layout.
-function panel(className, tag = 'section') {
-  return el(tag, undefined, className ? `panel ${className}` : 'panel');
+function panelTemplate(className, content, tag = 'section') {
+  const classes = className ? `panel ${className}` : 'panel';
+  return tag === 'article'
+    ? html`<article class=${classes}>${content}</article>`
+    : html`<section class=${classes}>${content}</section>`;
 }
-
 // Page-level section title with optional right-aligned actions.
-function sectionHead(title, ...actions) {
-  const head = el('div', undefined, 'section-head');
-  head.append(el('h2', title), ...actions.filter(Boolean));
-  return head;
+function sectionHeadTemplate(title, ...actions) {
+  return html`<div class="section-head"><h2>${title}</h2>${actions.filter(Boolean)}</div>`;
 }
 // Subordinate heading for a panel: an h3 title above optional guidance, used by
 // the read-only chart panels so their heads match the page heads. `description`
-// is either guidance text or a ready-made node.
-function panelHead(title, { id, description, className } = {}) {
-  const head = el('div', undefined, className ? `section-head ${className}` : 'section-head');
-  const heading = el('h3', title);
-  if (id) heading.id = id;
-  if (!description) {
-    head.append(heading);
-    return head;
-  }
+// is either guidance text or a ready-made template or node.
+function panelHeadTemplate(title, { id, description, className } = {}) {
+  const classes = className ? `section-head ${className}` : 'section-head';
+  const heading = html`<h3 id=${id || nothing}>${title}</h3>`;
+  if (!description) return html`<div class=${classes}>${heading}</div>`;
   // Title and guidance travel together so actions stay on the opposite edge.
-  const intro = el('div');
-  intro.append(heading, typeof description === 'string' ? helpText(description) : description);
-  head.append(intro);
-  return head;
+  const guidance = typeof description === 'string' ? helpTextTemplate(description) : description;
+  return html`<div class=${classes}><div>${heading}${guidance}</div></div>`;
 }
 // Guidance text. `variant` adds a page-specific class beside the shared one.
-function helpText(text, variant) {
-  return el('p', text, variant ? `help ${variant}` : 'help');
+function helpTextTemplate(text, variant) {
+  return html`<p class=${variant ? `help ${variant}` : 'help'}>${text}</p>`;
 }
-// One inline live region for progress and validation: polite while it reports
-// progress, assertive while it carries an error, hidden while it says nothing.
-function statusLine(className = 'help') {
-  const line = el('p', '', className);
-  line.dataset.statusClass = className;
-  line.hidden = true;
-  line.setAttribute('role', 'status');
-  line.setAttribute('aria-live', 'polite');
-  return line;
-}
-// The assertive counterpart: a one-line error region, empty and hidden until a
-// write fails. Errors never share a node with progress, so they are announced
-// once and stay until the next attempt clears them.
-function errorLine(text = '', className = 'error') {
-  const line = el('p', text, className);
-  line.setAttribute('role', 'alert');
-  line.hidden = !text;
-  return line;
+// Status lines are inline live regions: polite while they report progress,
+// assertive while they carry an error, hidden while they say nothing. Widgets
+// render them from their own state. setStatusText and setErrorText write the
+// status and error lines of rendered-once DOM (the detail form, the workspace
+// creation form, the integration form).
+// Error lines are one-line regions, empty and hidden until a write fails.
+// Errors never share a node with progress, so they are announced once and stay
+// until the next attempt clears them.
+function errorLineTemplate(text = '', className = 'error') {
+  return html`<p class=${className} role="alert" hidden=${!text}>${text}</p>`;
 }
 function setErrorText(line, text) {
   line.textContent = text || '';
@@ -92,60 +93,136 @@ function setStatusText(line, text, error = false) {
   line.hidden = !text;
   line.setAttribute('role', error ? 'alert' : 'status');
 }
-// Empty states are keyed so the reconciler patches them in place instead of
-// rebuilding the surrounding container.
+// Empty states are marked with data-empty.
+function emptyStateTemplate(text) {
+  return html`<p class="empty" data-empty="true">${text}</p>`;
+}
 function emptyState(text) {
-  const node = el('p', text, 'empty');
-  node.dataset.empty = 'true';
-  return node;
+  return nodeOf(emptyStateTemplate(text));
 }
 // The one metric row: large value over its caption, shared by the project lens,
 // sprint panels, the delivery trend and burn-down charts.
-function metricList(entries, className) {
-  const metrics = el('div', undefined, className ? `metrics ${className}` : 'metrics');
-  entries.forEach(([value, label]) => {
-    const metric = el('span', undefined, 'metric');
-    metric.append(el('strong', String(value)), el('span', label));
-    metrics.append(metric);
-  });
-  return metrics;
+function metricListTemplate(entries, className) {
+  return html`<div class=${className ? `metrics ${className}` : 'metrics'}>
+    ${entries.map(
+      ([value, label]) =>
+        html`<span class="metric"><strong>${String(value)}</strong><span>${label}</span></span>`,
+    )}
+  </div>`;
 }
 
 // The only filter container: labeled native controls on the left, a
-// right-aligned visible record count. Callers append their controls.
-function filterBar() {
-  const bar = el('div', undefined, 'filter-bar');
-  const controls = el('div', undefined, 'actions');
-  const count = el('span', undefined, 'filter-bar-count muted');
-  count.setAttribute('aria-live', 'polite');
-  bar.append(controls, count);
-  return { bar, controls, count };
+// right-aligned visible record count.
+function filterBarTemplate(controls, count = '') {
+  return html`<div class="filter-bar">
+    <div class="actions">${controls}</div>
+    <span class="filter-bar-count muted" aria-live="polite">${count}</span>
+  </div>`;
 }
-// Add-a-filter select: it adds one value and returns to its All entry. Filter
-// controls are standalone page state, never form data, so they are identified
-// by a unique id rather than a submitted name.
-function filterSelect(title, entries) {
-  const select = el('select');
-  select.id = uid(`filter-${controlSlug(title)}`);
-  select.setAttribute('aria-label', title);
-  options(select, entries, 'all');
-  const label = el('label', title);
-  label.setAttribute('for', select.id);
-  label.append(select);
-  return { label, select };
+// Filter controls are standalone page state, never form data, so they are
+// identified by a unique id rather than a submitted name. Ids are generated
+// once per control and passed in, so a re-render keeps them.
+function filterControlID(title) {
+  return uid(`filter-${controlSlug(title)}`);
 }
-function filterSearch(title, { value = '', placeholder = '', maxLength = 120 } = {}) {
-  const input = noAutofill(el('input'));
-  input.id = uid(`filter-${controlSlug(title)}`);
-  input.type = 'search';
-  input.value = value;
-  input.placeholder = placeholder;
-  input.maxLength = maxLength;
-  input.setAttribute('aria-label', title);
-  const label = el('label', title);
-  label.setAttribute('for', input.id);
-  label.append(input);
-  return { label, input };
+// Add-a-filter select: it adds one value and returns to its All entry.
+function filterSelectTemplate(title, entries, id, onChange) {
+  return html`<label for=${id}
+    >${title}<select id=${id} aria-label=${title} onChange=${onChange}>
+      ${entries.map(([value, text]) => html`<option value=${value}>${text}</option>`)}
+    </select></label
+  >`;
+}
+function filterSearchTemplate(
+  title,
+  id,
+  { value = '', placeholder = '', maxLength = 120 },
+  onInput,
+) {
+  return html`<label for=${id}
+    >${title}<input
+      id=${id}
+      type="search"
+      autocomplete="off"
+      value=${value}
+      placeholder=${placeholder}
+      maxlength=${maxLength}
+      aria-label=${title}
+      onInput=${onInput}
+  /></label>`;
+}
+// A labeled form control. `options` carries its attributes. Values are bound
+// once per mount: forms are rendered when opened and then belong to the user.
+function fieldTemplate(name, title, value = '', type = 'text', entries, options = {}) {
+  const {
+    className,
+    controlFirst = false,
+    id,
+    required = false,
+    readOnly = false,
+    disabled = false,
+    maxLength,
+    placeholder,
+    min,
+    max,
+    step,
+    autocomplete,
+    onChange,
+    onInput,
+  } = options;
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  const choice = type === 'checkbox' || type === 'radio' || type === 'file';
+  const control = entries
+    ? html`<select
+        name=${name}
+        id=${id || nothing}
+        required=${required}
+        disabled=${disabled}
+        onChange=${onChange}
+      >
+        ${entries.map(
+          ([optionValue, optionText]) =>
+            html`<option value=${optionValue} selected=${String(optionValue) === text}
+              >${optionText}</option
+            >`,
+        )}
+      </select>`
+    : type === 'textarea'
+      ? html`<textarea
+          name=${name}
+          id=${id || nothing}
+          autocomplete=${autocomplete || 'off'}
+          required=${required}
+          readonly=${readOnly}
+          disabled=${disabled}
+          aria-readonly=${readOnly ? 'true' : nothing}
+          maxlength=${maxLength ?? nothing}
+          placeholder=${placeholder ?? nothing}
+          defaultValue=${text}
+          onInput=${onInput}
+          onChange=${onChange}
+        ></textarea>`
+      : html`<input
+          name=${name}
+          type=${type}
+          id=${id || nothing}
+          autocomplete=${choice ? nothing : autocomplete || 'off'}
+          required=${required}
+          readonly=${readOnly}
+          disabled=${disabled}
+          aria-readonly=${readOnly ? 'true' : nothing}
+          maxlength=${maxLength ?? nothing}
+          placeholder=${placeholder ?? nothing}
+          min=${min ?? nothing}
+          max=${max ?? nothing}
+          step=${step ?? nothing}
+          defaultValue=${text}
+          onInput=${onInput}
+          onChange=${onChange}
+        />`;
+  return controlFirst
+    ? html`<label class=${className || nothing}>${control}${title}</label>`
+    : html`<label class=${className || nothing}>${title}${control}</label>`;
 }
 function controlSlug(title) {
   return (
@@ -155,60 +232,74 @@ function controlSlug(title) {
       .replace(/^-|-$/g, '') || 'control'
   );
 }
+// The shell's static <select>s (scope, planning filters, workspace) get their
+// options from Preact. The first render replaces the options written in the page;
+// later renders update that mount in place. `colors(value)` styles an option.
+const optionMounts = new WeakMap();
+function renderOptions(select, entries, value, colors) {
+  const template = html`${keyedList(
+    entries,
+    ([optionValue]) => optionValue,
+    ([optionValue, text]) =>
+      html`<option value=${optionValue} style=${colors?.(optionValue) ?? {}}>${text}</option>`,
+  )}`;
+  const update = optionMounts.get(select);
+  if (update) update(template);
+  else optionMounts.set(select, mount(select, template));
+  if (value !== undefined) select.value = value;
+}
 // Removable chips are the authoritative view of a multi-value filter group.
-function filterChipRow(ariaLabel) {
-  const chips = el('div', undefined, 'filter-chips');
-  chips.setAttribute('role', 'group');
-  chips.setAttribute('aria-label', ariaLabel);
-  chips.hidden = true;
-  return chips;
+function filterChipRowTemplate(ariaLabel, chips) {
+  return html`<div class="filter-chips" role="group" aria-label=${ariaLabel} hidden=${!chips.length}>
+    ${chips}
+  </div>`;
 }
 // Filter bars live in a slot so the shared planning bar can be relocated
-// between hosts rather than duplicated.
-function filterSlot(id, ...children) {
-  const slot = el('div', undefined, 'filter-slot');
-  if (id) slot.id = id;
-  slot.append(...children.filter(Boolean));
-  return slot;
+// between hosts rather than duplicated. A slot that receives the relocated bar
+// must have no bound children, so Preact never touches the moved node.
+function filterSlotTemplate(id, ...children) {
+  return html`<div class="filter-slot" id=${id || nothing}>${children.filter(Boolean)}</div>`;
 }
 
-function maintenanceList(className) {
-  return el('div', undefined, className ? `maintenance-list ${className}` : 'maintenance-list');
+function maintenanceListTemplate(className, rows) {
+  return html`<div class=${className ? `maintenance-list ${className}` : 'maintenance-list'}>
+    ${rows}
+  </div>`;
 }
 // One row shape for Projects, Members and Labels: identity on the left,
 // optional actions on the right.
-function maintenanceRow({ tag = 'div', className = '', content = [], actions = [] } = {}) {
-  const row = el(tag, undefined, `setup-row maintenance-row${className ? ` ${className}` : ''}`);
-  const info = el('div', undefined, 'maintenance-row-info');
-  info.append(...content.filter(Boolean));
-  row.append(info);
+function maintenanceRowTemplate({ tag = 'div', className = '', content = [], actions = [] } = {}) {
+  const classes = `setup-row maintenance-row${className ? ` ${className}` : ''}`;
   const visible = actions.filter(Boolean);
-  if (visible.length) {
-    const group = el('div', undefined, 'actions');
-    group.append(...visible);
-    row.append(group);
-  }
-  return row;
+  const body = html`<div class="maintenance-row-info">${content.filter(Boolean)}</div>
+    ${visible.length ? html`<div class="actions">${visible}</div>` : nothing}`;
+  return tag === 'article'
+    ? html`<article class=${classes}>${body}</article>`
+    : html`<div class=${classes}>${body}</div>`;
 }
 
 export {
   contentRoot,
-  pageStack,
-  panel,
-  sectionHead,
-  panelHead,
-  helpText,
-  statusLine,
+  renderRoot,
+  renderPage,
+  panelTemplate,
+  sectionHeadTemplate,
+  panelHeadTemplate,
+  helpTextTemplate,
   setStatusText,
-  errorLine,
+  errorLineTemplate,
   setErrorText,
   emptyState,
-  metricList,
-  filterBar,
-  filterSelect,
-  filterSearch,
-  filterChipRow,
-  filterSlot,
-  maintenanceList,
-  maintenanceRow,
+  emptyStateTemplate,
+  metricListTemplate,
+  filterBarTemplate,
+  filterControlID,
+  filterSelectTemplate,
+  filterSearchTemplate,
+  fieldTemplate,
+  renderOptions,
+  filterChipRowTemplate,
+  filterSlotTemplate,
+  maintenanceListTemplate,
+  maintenanceRowTemplate,
 };

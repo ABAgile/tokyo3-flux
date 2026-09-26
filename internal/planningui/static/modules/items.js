@@ -1,6 +1,6 @@
 // Read-only helpers over the board model: projects, labels, sprints, blockers.
-import { el } from './dom.js';
 import { labelForeground } from './format.js';
+import { html } from './preact.js';
 import { state } from './state.js';
 
 export function activeSprints() {
@@ -13,28 +13,25 @@ export function itemProjectIDs(item) {
   if (Array.isArray(item?.project_ids)) return item.project_ids.filter(Boolean).map(String);
   return item?.project_id ? [String(item.project_id)] : [];
 }
-export function projectBadges(item, className = 'card-project') {
+export function projectBadgesTemplate(item, className = 'card-project') {
   const names = itemProjectIDs(item).map(projectName);
   if (!names.length) names.push('No project');
-  return names.map((name) => el('span', name, `badge badge-project ${className}`));
+  return names.map((name) => html`<span class="badge badge-project ${className}">${name}</span>`);
 }
 export function labelInfo(name) {
   return state.board.labels.find((label) => label.name === name) || { name, color: '#dcefe4' };
 }
-export function labelBadge(name) {
+// Preact applies style objects through CSSOM; style strings/attributes would
+// violate the style-src policy.
+export function labelBadgeTemplate(name) {
   const label = labelInfo(name);
-  const badge = el('span', name, 'badge badge-label label-badge');
-  badge.dataset.label = name;
-  badge.style.backgroundColor = label.color;
-  badge.style.color = labelForeground(label.color);
-  return badge;
+  const colors = { 'background-color': label.color, color: labelForeground(label.color) };
+  return html`<span class="badge badge-label label-badge" data-label=${name} style=${colors}>${name}</span>`;
 }
-export function styleLabelOptions(select) {
-  [...select.options].forEach((option) => {
-    const label = labelInfo(option.value);
-    option.style.backgroundColor = label.color;
-    option.style.color = labelForeground(label.color);
-  });
+// A label option's colours, for renderOptions.
+export function labelOptionColors(name) {
+  const label = labelInfo(name);
+  return { 'background-color': label.color, color: labelForeground(label.color) };
 }
 export function done(item) {
   return state.board.columns.find((c) => c.id === item.column_id)?.category === 'done';

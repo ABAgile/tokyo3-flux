@@ -1,14 +1,21 @@
-import { $, button, options } from './modules/dom.js';
+import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
-import { emptyState } from './modules/layout.js';
+import { emptyState, renderOptions } from './modules/layout.js';
+import {
+  html,
+  nodeOf,
+  nothing,
+  render as renderTemplate,
+  replaceContent,
+  unmountIsland,
+} from './modules/preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
 import { notice, clearError } from './modules/notices.js';
-import { activeSprints, styleLabelOptions } from './modules/items.js';
+import { activeSprints, labelOptionColors } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
-import { unmountIsland } from './modules/preact.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import { planningHost, pageHost, setContentBusy } from './modules/mount.js';
 import {
@@ -116,22 +123,23 @@ function render() {
   if (!state.board) {
     setContentBusy(state.workspaceGate === 'loading' || state.loading);
     $('project-summary').hidden = true;
-    $('project-summary').replaceChildren();
-    $('sprint-summary').replaceChildren();
+    renderTemplate(nothing, $('project-summary'));
+    // Both hosts are rendered by Preact, so they are cleared through Preact.
+    renderTemplate(nothing, $('sprint-summary'));
     $('count').textContent = '';
     $('planning-change').hidden = true;
     $('filter-chips').hidden = true;
-    $('filter-chips').replaceChildren();
+    renderTemplate(nothing, $('filter-chips'));
     if (state.workspaceGate === 'select') {
       $('title').textContent = 'Choose a workspace';
       $('subtitle').textContent = 'Select a shared planning space to continue.';
-      renderWorkspaceSelection(pageHost());
+      renderWorkspaceSelection(pageHost('workspace-select'));
     } else if (state.workspaceGate === 'create') {
       $('title').textContent = state.workspaces.length
         ? 'Create a workspace'
         : 'Create your first workspace';
       $('subtitle').textContent = 'Set up a shared planning space for your team.';
-      renderWorkspaceCreation(pageHost());
+      renderWorkspaceCreation(pageHost('workspace-create'));
     } else {
       $('title').textContent = 'Loading planning data';
       $('subtitle').textContent = 'Checking workspace access…';
@@ -141,7 +149,7 @@ function render() {
   }
   // The selects choose one value at a time and reset; the chip row below the
   // toolbar carries the full multi-value filter state.
-  options(
+  renderOptions(
     $('project'),
     [
       ['all', 'All projects'],
@@ -150,7 +158,7 @@ function render() {
     ],
     'all',
   );
-  options(
+  renderOptions(
     $('assignee'),
     [
       ['all', 'All assignees'],
@@ -159,7 +167,7 @@ function render() {
     ],
     'all',
   );
-  options(
+  renderOptions(
     $('label'),
     [
       ['all', 'All labels'],
@@ -167,8 +175,8 @@ function render() {
       ...state.board.labels.map((label) => [label.name, label.name]),
     ],
     'all',
+    labelOptionColors,
   );
-  styleLabelOptions($('label'));
   FILTER_NAMES.forEach((name) =>
     setFilterValues(
       name,
@@ -201,7 +209,7 @@ function render() {
   });
   const active = activeSprints();
   const selected = $('scope').value;
-  options(
+  renderOptions(
     $('scope'),
     [
       ['active', 'Active sprints'],
@@ -231,18 +239,18 @@ function render() {
   renderContent();
 }
 // Views that own their layout share one lifecycle: mount `#page-root`, keep the
-// root the view patches in place (if it has one), then build into the host.
+// view's Preact root (named by its data-content-view), then render into the host.
 const PAGE_VIEWS = Object.freeze({
-  projects: { build: renderProjects },
-  sprints: { build: renderSprintPage, patches: 'sprint-page' },
-  members: { build: renderMembers },
-  labels: { build: renderLabels },
-  history: { build: renderHistory },
+  projects: { build: renderProjects, root: 'projects' },
+  sprints: { build: renderSprintPage, root: 'sprint-page' },
+  members: { build: renderMembers, root: 'members' },
+  labels: { build: renderLabels, root: 'labels' },
+  history: { build: renderHistory, root: 'history' },
 });
 function renderPageRoot(name) {
   if (!Object.hasOwn(PAGE_VIEWS, name)) return false;
   const page = PAGE_VIEWS[name];
-  page.build(pageHost(page.patches || ''));
+  page.build(pageHost(page.root));
   return true;
 }
 function renderContent() {
@@ -258,27 +266,29 @@ function renderContent() {
     renderFirstRunChecklist(body);
     return;
   }
-  unmountIsland(body.firstElementChild);
   if (state.view === 'board' && state.presentation === 'list')
     renderListPresentationContent(body, items);
   else if (state.view === 'board') renderBoardContent(body, items);
   else renderCardListContent(body, items);
   body.querySelector(':scope > .archive-more')?.remove();
   if (state.view === 'archive' && state.archiveMore) {
-    const more = button(
-      'Load older archived work',
-      async () => {
-        try {
-          await loadArchive();
-          renderContent();
-        } catch (e) {
-          notice(e.message, true);
-        }
-      },
-      'archive-more',
+    // The button is a sibling of the archive list's root in a static host.
+    const loadOlder = async () => {
+      try {
+        await loadArchive();
+        renderContent();
+      } catch (e) {
+        notice(e.message, true);
+      }
+    };
+    body.append(
+      nodeOf(html`<button
+        type="button"
+        class="archive-more"
+        disabled=${state.busy || state.loading}
+        onClick=${loadOlder}
+      >Load older archived work</button>`),
     );
-    more.disabled = state.busy || state.loading;
-    body.append(more);
   }
 }
 $('editor').addEventListener('cancel', (e) => {
@@ -322,6 +332,14 @@ $('dismiss').onclick = $('cancel').onclick = () => {
 // because closing one dialog to open another — archive, observations, restore —
 // happens within the same task and must not drop the card from the URL.
 $('editor').addEventListener('close', restoreEditorFocus);
+$('editor').addEventListener('close', () => {
+  // A dialog can close and reopen in the same task. Only dispose the form
+  // when it really stays closed, not the newly opened editor's controllers.
+  if (!$('editor').open) {
+    replaceContent($('fields'));
+    unmountIsland($('editor-title'));
+  }
+});
 $('editor').addEventListener('close', () => {
   const opener = state.editorOpener;
   state.editorOpener = undefined;

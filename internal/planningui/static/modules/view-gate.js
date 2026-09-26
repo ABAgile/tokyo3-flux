@@ -1,10 +1,10 @@
 // The workspace gate, workspace list and creation, and the first-run checklist.
-import { $, options } from './dom.js';
-import { html, renderIsland } from './preact.js';
+import { $ } from './dom.js';
+import { html } from './preact.js';
 import { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } from './gate-components.js';
 import { api, requestKey } from './api.js';
 import { workspaceLabel } from './format.js';
-import { contentRoot, panel, setStatusText } from './layout.js';
+import { renderRoot, renderOptions, setStatusText } from './layout.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
@@ -44,7 +44,7 @@ function updateWorkspaceOptions(selected = '') {
   const signature = workspaceListSignature(state.workspaces);
   const select = $('workspace');
   if (select.dataset.signature === signature && select.value === selected) return;
-  options(
+  renderOptions(
     select,
     state.workspaces.map((workspace) => [workspace.id, workspaceLabel(workspace)]),
     selected,
@@ -108,22 +108,26 @@ export async function refreshWorkspaceGate() {
   }
 }
 export function renderWorkspaceSelection(content) {
-  const gate = panel('workspace-gate');
-  gate.setAttribute('aria-label', 'Choose a workspace');
-  content.append(gate);
-  renderIsland(
-    gate,
+  const gate = renderRoot(
+    content,
+    'panel workspace-gate',
+    'workspace-select',
     html`<${WorkspaceSelection} workspaces=${state.workspaces} choose=${chooseWorkspace} create=${showWorkspaceCreate} />`,
+    'section',
   );
+  gate.setAttribute('aria-label', 'Choose a workspace');
 }
 export function renderWorkspaceCreation(content) {
-  const gate = panel('workspace-gate');
-  gate.setAttribute('aria-label', 'Create a workspace');
-  content.append(gate);
-  renderIsland(
-    gate,
+  if (content.firstElementChild?.dataset.contentView === 'workspace-create') return;
+  const gate = renderRoot(
+    content,
+    'panel workspace-gate',
+    'workspace-create',
     html`<${WorkspaceCreation} name=${state.session?.name} hasWorkspaces=${state.workspaces.length > 0} submit=${createWorkspace} back=${showWorkspaceSelection} />`,
+    'section',
   );
+  gate.setAttribute('aria-label', 'Create a workspace');
+  gate.querySelector('input').focus();
 }
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
@@ -151,16 +155,14 @@ export function renderFirstRunChecklist(body) {
       run: () => $('new-item').click(),
     },
   ];
-  let setup = body.firstElementChild;
-  if (setup?.dataset.contentView !== 'first-run') {
-    setup = contentRoot('section', 'panel first-run', 'first-run');
-    setup.setAttribute('aria-labelledby', 'first-run-heading');
-    body.replaceChildren(setup);
-  }
-  renderIsland(
-    setup,
+  const setup = renderRoot(
+    body,
+    'panel first-run',
+    'first-run',
     html`<${FirstRunChecklist} steps=${steps} disabled=${!writable() || state.integrationFormOpen} />`,
+    'section',
   );
+  setup.setAttribute('aria-labelledby', 'first-run-heading');
 }
 export function showFirstRun() {
   return (
