@@ -1,30 +1,26 @@
 // The Archive view and its paging.
 import { $ } from './dom.js';
 import { api } from './api.js';
-import { contentRoot, emptyState } from './layout.js';
+import { contentRoot, emptyStateTemplate } from './layout.js';
+import { html, nothing, render, repeat } from './lit.js';
 import { state } from './state.js';
-import { patchNode, keyedNodeKey, reconcileKeyedChildren } from './reconcile.js';
-import { patchCard, appendCards } from './view-board.js';
+import { cardTemplate } from './view-board.js';
 
 export function renderCardListContent(content, items) {
-  const next = contentRoot('div', 'list', `list:${state.view}`);
-  appendCards(next, items);
-  if (!items.length)
-    next.append(
-      emptyState(
-        state.view === 'board' && $('scope').value === 'backlog'
-          ? 'Backlog is clear. Create work without a sprint to plan what comes next.'
-          : 'No matching work.',
-      ),
-    );
+  const view = `list:${state.view}`;
   const current = content.firstElementChild;
-  if (!current || current.dataset.contentView !== next.dataset.contentView) {
-    content.replaceChildren(next);
-    return;
-  }
-  reconcileKeyedChildren(current, [...next.children], keyedNodeKey, (target, fresh) =>
-    fresh.dataset.item ? patchCard(target, fresh) : patchNode(target, fresh),
+  const root = current?.dataset.contentView === view ? current : contentRoot('div', 'list', view);
+  const empty =
+    state.view === 'board' && $('scope').value === 'backlog'
+      ? 'Backlog is clear. Create work without a sprint to plan what comes next.'
+      : 'No matching work.';
+  render(
+    html`${repeat(items, (item) => item.id, cardTemplate)}${
+      items.length ? nothing : emptyStateTemplate(empty)
+    }`,
+    root,
   );
+  if (root !== current) content.replaceChildren(root);
 }
 const ARCHIVE_PAGE = 50;
 export function resetArchive() {

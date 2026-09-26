@@ -1,6 +1,6 @@
 // Member names, avatars and the participant stack.
-import { el } from './dom.js';
 import { initials } from './format.js';
+import { classMap, html, keyed, nodeOf, nothing } from './lit.js';
 import { state } from './state.js';
 
 export function memberInfo(subject) {
@@ -32,20 +32,22 @@ export function memberListingInfo(member) {
       '',
   };
 }
+function removeImage(event) {
+  event.currentTarget.remove();
+}
+// A failed image removes itself so the initials show; `keyed` gives a changed
+// URL a fresh <img> instead of reusing the removed one.
+function avatarImageTemplate(avatarURL) {
+  if (!avatarURL) return nothing;
+  return keyed(
+    avatarURL,
+    html`<img src=${avatarURL} alt="" decoding="async" referrerpolicy="no-referrer" @error=${removeImage}>`,
+  );
+}
 export function avatarView(name, avatarURL) {
-  const avatar = el('span', undefined, 'avatar');
-  avatar.setAttribute('aria-hidden', 'true');
-  avatar.append(el('span', initials(name), 'avatar-fallback'));
-  if (avatarURL) {
-    const image = el('img');
-    image.src = avatarURL;
-    image.alt = '';
-    image.decoding = 'async';
-    image.referrerPolicy = 'no-referrer';
-    image.onerror = () => image.remove();
-    avatar.append(image);
-  }
-  return avatar;
+  return nodeOf(
+    html`<span class="avatar" aria-hidden="true"><span class="avatar-fallback">${initials(name)}</span>${avatarImageTemplate(avatarURL)}</span>`,
+  );
 }
 // Participants are derived server-side from assignment, cached reviewers and
 // comment authors, so a card states who is involved without one request per
@@ -85,45 +87,41 @@ function participantDescription(participant) {
   const info = participantInfo(participant);
   return info.roles.length ? `${info.name} \u00b7 ${info.roles.join(', ')}` : info.name;
 }
-export function participantStack(item) {
+function participantAvatarTemplate(participant) {
+  const info = participantInfo(participant);
+  const description = participantDescription(participant);
+  // The assignee keeps a static accent ring so the planning owner is legible
+  // without colour alone and without motion.
+  const classes = { avatar: true, 'participant-avatar': true, 'is-assignee': info.assignee };
+  return html`<span
+    class=${classMap(classes)}
+    data-participant-role=${info.assignee ? 'assignee' : nothing}
+    title=${description}
+    role="img"
+    aria-label=${description}
+  >
+    <span class="avatar-fallback">${initials(info.name)}</span>
+    ${avatarImageTemplate(info.avatarURL)}
+  </span>`;
+}
+export function participantStackTemplate(item) {
   const participants = itemParticipants(item);
-  const stack = el('div', undefined, 'participant-stack');
-  stack.dataset.cardSection = 'participants';
-  if (!participants.length) {
-    stack.append(el('span', 'Unassigned', 'participant-empty'));
-    stack.setAttribute('aria-label', 'No participants \u00b7 unassigned');
-    return stack;
-  }
-  stack.setAttribute('role', 'group');
-  stack.setAttribute(
-    'aria-label',
-    `Participants: ${participants.map(participantDescription).join('; ')}`,
-  );
-  participants.slice(0, PARTICIPANT_STACK_LIMIT).forEach((participant) => {
-    const info = participantInfo(participant);
-    const description = participantDescription(participant);
-    const avatar = avatarView(info.name, info.avatarURL);
-    avatar.classList.add('participant-avatar');
-    // The assignee keeps a static accent ring so the planning owner is legible
-    // without colour alone and without motion.
-    if (info.assignee) {
-      avatar.classList.add('is-assignee');
-      avatar.dataset.participantRole = 'assignee';
-    }
-    avatar.title = description;
-    avatar.removeAttribute('aria-hidden');
-    avatar.setAttribute('role', 'img');
-    avatar.setAttribute('aria-label', description);
-    stack.append(avatar);
-  });
+  if (!participants.length)
+    return html`<div class="participant-stack" data-card-section="participants" aria-label="No participants · unassigned">
+      <span class="participant-empty">Unassigned</span>
+    </div>`;
+  const label = `Participants: ${participants.map(participantDescription).join('; ')}`;
   const overflow = participants.length - PARTICIPANT_STACK_LIMIT;
-  if (overflow > 0) {
-    const more = el('span', `+${overflow}`, 'participant-more');
-    const rest = participants.slice(PARTICIPANT_STACK_LIMIT).map(participantDescription).join('; ');
-    more.title = rest;
-    more.setAttribute('role', 'img');
-    more.setAttribute('aria-label', `${overflow} more: ${rest}`);
-    stack.append(more);
-  }
-  return stack;
+  const rest = participants.slice(PARTICIPANT_STACK_LIMIT).map(participantDescription).join('; ');
+  return html`<div class="participant-stack" data-card-section="participants" role="group" aria-label=${label}>
+    ${participants.slice(0, PARTICIPANT_STACK_LIMIT).map(participantAvatarTemplate)}
+    ${
+      overflow > 0
+        ? html`<span class="participant-more" title=${rest} role="img" aria-label=${`${overflow} more: ${rest}`}>${`+${overflow}`}</span>`
+        : nothing
+    }
+  </div>`;
+}
+export function participantStack(item) {
+  return nodeOf(participantStackTemplate(item));
 }

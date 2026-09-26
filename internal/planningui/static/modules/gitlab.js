@@ -2,6 +2,8 @@
 import { $, el, syncAttributes } from './dom.js';
 import { requestKey } from './api.js';
 import { helpText, emptyState } from './layout.js';
+import { hooks } from './hooks.js';
+import { html, nodeOf } from './lit.js';
 import { state } from './state.js';
 import { writable, writeButton } from './permissions.js';
 import { change } from './commands.js';
@@ -32,19 +34,31 @@ function mergeRequestLinkURL(link) {
     return '';
   }
 }
-export function cardLinkView(link, focusKey) {
+export function cardLinkTemplate(link, focusKey) {
   const url = link.kind === 'mr' ? mergeRequestLinkURL(link) : link.observation?.url;
-  const node = el(url ? 'a' : 'span', linkLabel(link), 'card-link');
-  node.dataset.linkId = link.id;
-  node.dataset.observation = 'link';
-  node.dataset.focusKey = focusKey || `link:${link.id}`;
-  node.title = link.observation?.title || linkDisplayName(link, false);
-  if (url) {
-    node.href = url;
-    node.target = '_blank';
-    node.rel = 'noopener noreferrer';
-  }
-  return node;
+  const key = focusKey || `link:${link.id}`;
+  const title = link.observation?.title || linkDisplayName(link, false);
+  if (!url)
+    return html`<span
+      class="card-link"
+      data-link-id=${link.id}
+      data-observation="link"
+      data-focus-key=${key}
+      title=${title}
+    >${linkLabel(link)}</span>`;
+  return html`<a
+    class="card-link"
+    data-link-id=${link.id}
+    data-observation="link"
+    data-focus-key=${key}
+    title=${title}
+    href=${url}
+    target="_blank"
+    rel="noopener noreferrer"
+  >${linkLabel(link)}</a>`;
+}
+export function cardLinkView(link, focusKey) {
+  return nodeOf(cardLinkTemplate(link, focusKey));
 }
 function pipelineLinkURL(link, pipeline) {
   if (typeof pipeline?.url === 'string' && pipeline.url) return pipeline.url;
@@ -160,20 +174,24 @@ function observationIconState(link) {
   if (state === 'opened') return { symbol: '●', status: 'open', stale: observationIsStale(link) };
   return { symbol: '?', status: 'unknown', stale: observationIsStale(link) };
 }
-export function cardObservationIcon(link, focusKey) {
-  const state = observationIconState(link);
-  const icon = el('span', state.symbol, 'card-observation-icon');
+export function cardObservationIconTemplate(link, focusKey) {
+  const icon = observationIconState(link);
   const tooltip = observationTooltip(link);
-  icon.dataset.linkId = link.id;
-  icon.dataset.observation = 'status-icon';
-  icon.dataset.status = state.status;
-  icon.dataset.stale = String(state.stale);
-  icon.dataset.focusKey = focusKey || `link:${link.id}:observation`;
-  icon.dataset.tooltip = tooltip;
-  icon.setAttribute('role', 'img');
-  icon.setAttribute('aria-label', `Card observation: ${tooltip}`);
-  icon.tabIndex = 0;
-  return icon;
+  return html`<span
+    class="card-observation-icon"
+    data-link-id=${link.id}
+    data-observation="status-icon"
+    data-status=${icon.status}
+    data-stale=${String(icon.stale)}
+    data-focus-key=${focusKey || `link:${link.id}:observation`}
+    data-tooltip=${tooltip}
+    role="img"
+    aria-label=${`Card observation: ${tooltip}`}
+    tabindex="0"
+  >${icon.symbol}</span>`;
+}
+export function cardObservationIcon(link, focusKey) {
+  return nodeOf(cardObservationIconTemplate(link, focusKey));
 }
 export function linkIdentitySignature(link) {
   return JSON.stringify({
@@ -242,17 +260,27 @@ export function patchObservationUI(previousLinks, nextLinks) {
       observationSignature(previous.get(link.id)) !== observationSignature(link),
   );
   if (!changed.length) return false;
+  // Cards are lit templates: re-render them rather than patching their nodes.
+  let cards = false;
+  const patch = (node, link, patcher) => {
+    if (node.dataset.linkId !== link.id) return;
+    if (node.closest('.card')) cards = true;
+    else patcher(node, link);
+  };
   changed.forEach((link) => {
-    document.querySelectorAll('[data-observation="status-icon"]').forEach((node) => {
-      if (node.dataset.linkId === link.id) patchObservationIcon(node, link);
-    });
-    document.querySelectorAll('[data-observation="link"]').forEach((node) => {
-      if (node.dataset.linkId === link.id) patchObservationLink(node, link);
-    });
+    for (const node of document.querySelectorAll('[data-observation="status-icon"]'))
+      patch(node, link, patchObservationIcon);
+    for (const node of document.querySelectorAll('[data-observation="link"]'))
+      patch(node, link, patchObservationLink);
     document.querySelectorAll('[data-refresh-link]').forEach((node) => {
       if (node.dataset.refreshLink === link.id) patchRefreshControl(node, link);
     });
   });
+  if (cards) {
+    hooks.renderContent();
+    if (state.observationTooltipTarget?.isConnected)
+      positionObservationTooltip(state.observationTooltipTarget);
+  }
   return true;
 }
 function observationTiming(link) {

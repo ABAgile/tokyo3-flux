@@ -2,6 +2,7 @@
 
 The planning UI is plain ES modules and CSS under `internal/planningui/static/`, embedded with `go:embed`.
 There is no build step and there are no npm runtime dependencies.
+The one browser library, lit-html, is vendored as `modules/vendor-lit-html.js`; see [Rendering with lit-html](#rendering-with-lit-html).
 
 ## Rules
 
@@ -23,12 +24,31 @@ Feature modules export functions and constants only; any document listeners or t
 
 | Layer | Modules |
 |---|---|
-| Base | `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
+| Base | `vendor-lit-html`, `lit`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
 | State | `state` (every reassigned shell variable, as `state.<name>`), `hooks` |
 | Services | `permissions`, `notices`, `items`, `controls`, `people`, `reconcile`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
 | Views | `view-board`, `view-archive`, `bulk`, `view-list`, `view-velocity`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `shortcuts`, `view-gate`, `sync` |
 | Shell | `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, event wiring and startup |
+
+## Rendering with lit-html
+
+Board cards, columns and the Archive list are lit-html templates; every other view still builds nodes with `dom.js` and patches them with `reconcile.js`.
+
+- Import lit only from `modules/lit.js`, never from `vendor-lit-html.js`.
+  `vendor-lit-html.js` is generated: change the pinned version or `tools/vendor/lit-html.entry.js` and run `make vendor-web`; never edit the bundle by hand.
+- A template describes the whole component on every render; lit updates only what changed, so focus, hover and open `<details>` survive.
+  Key lists with `repeat(items, (item) => item.id, template)`.
+- Never bind a `style` attribute or use lit's `styleMap`: its first render writes the attribute, which `style-src 'self'` blocks.
+  Use `styleProps({ 'background-color': value })`, which sets properties through the CSSOM.
+- One owner per attribute.
+  A template binds an attribute, property or class only if no other code writes it: `renderControls` owns `disabled` on `[data-write]` controls and `draggable`; drag, file-drop and tooltip code own their classes, `aria-describedby` and tooltip positions.
+  Use `classMap` for classes, since it leaves classes added by other code alone.
+- Code outside a template never moves, removes or re-texts nodes a template created; it re-renders instead (`hooks.renderContent()`).
+  `refreshDueDateBadges` and `patchObservationUI` skip `.card` descendants for this reason.
+- Wire imperative behaviour (drag, drop, file drops) with `attach(setup, ...args)`: it runs once per element, so pass stable ids and read changing data from `state` at event time.
+- Leaf helpers shared with imperative views have a `*Template` form; the node form wraps it with `nodeOf`/`nodesOf`, and the nodes it returns are plain DOM that callers may mutate.
+- Split static and dynamic text only with care: text split across nodes can shape a fraction of a pixel differently, so bind one string where exact width matters (`` ${`${count} shown`} ``).
 
 ## CSS file map
 
@@ -72,5 +92,6 @@ Each file holds one feature, including its media queries; a feature's responsive
 - Any Go change (for example `web.go`) needs `make check` with `FLUX_TEST_DATABASE_URL` set to a disposable database.
 - Browser scripts in `tests/*.browser.js` run through Playwright `run-code` against disposable, seeded workspaces only.
   `tests/style-snapshot.browser.js` returns a JSON style snapshot; save it outside the repository and diff two runs made on the same day.
-- Tool versions are pinned in the `Makefile` (`BIOME_VERSION`, `RUMDL_VERSION`) and in CI.
+  `tests/board-perf.browser.js` times board renders on synthetic boards of 100, 500 and 1000 cards; compare runs on one machine only.
+- Tool versions are pinned in the `Makefile` (`BIOME_VERSION`, `RUMDL_VERSION`, `LIT_HTML_VERSION`, `ESBUILD_VERSION`) and in CI.
   Set `BIOME=biome` or `RUMDL=rumdl` to use installed binaries.

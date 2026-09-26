@@ -3,12 +3,30 @@ import { el, button, syncAttributes } from './dom.js';
 import { columnWIPLabel } from './format.js';
 import { contentRoot, emptyState } from './layout.js';
 import { state } from './state.js';
-import { projectBadges, labelBadge, blocked } from './items.js';
-import { memberName, participantStack } from './people.js';
+import {
+  projectName,
+  itemProjectIDs,
+  projectBadges,
+  labelInfo,
+  labelBadge,
+  blocked,
+} from './items.js';
+import {
+  memberInfo,
+  memberName,
+  itemParticipants,
+  participantInfo,
+  participantStack,
+} from './people.js';
 import { patchNode, keyedNodeKey, reconcileKeyedChildren } from './reconcile.js';
 import { itemDateStatus, dueDateBadge, positionListDueBadge } from './due-dates.js';
 import { filteredItems } from './filters.js';
-import { attachmentCount, itemFileDropZone, attachmentPaperclip } from './item-attachments.js';
+import {
+  attachmentsLoaded,
+  attachmentCount,
+  itemFileDropZone,
+  attachmentPaperclip,
+} from './item-attachments.js';
 import { makeDraggable, dropZone } from './drag.js';
 import { cardLinkView, cardObservationIcon, showLinks } from './gitlab.js';
 import {
@@ -17,9 +35,49 @@ import {
   updateDetailPaneVisibility,
   selectItem,
 } from './item-detail.js';
-import { cardRenderSignature } from './view-board.js';
 import { pruneBulkSelection, renderBulkBar, refreshBulkBar } from './bulk.js';
 
+// A row's content fingerprint: an unchanged row is kept as it is on refresh.
+function cardRenderSignature(item, links) {
+  const linkIdentity = links.map((link) => ({
+    id: link.id,
+    project: link.project,
+    kind: link.kind,
+    number: link.number,
+    items: link.items,
+  }));
+  const due = itemDateStatus(item);
+  const itemView = {
+    id: item.id,
+    title: item.title,
+    column_id: item.column_id,
+    project_id: item.project_id,
+    project_ids: itemProjectIDs(item),
+    assignee: item.assignee,
+    labels: item.labels,
+    sprint_ids: item.sprint_ids,
+    archived: item.archived,
+    due_date: item.due_date,
+    overdue: due?.overdue || false,
+    attachments: attachmentsLoaded(item) ? item.attachments : null,
+    attachment_count: attachmentCount(item),
+  };
+  return JSON.stringify({
+    item: itemView,
+    links: linkIdentity,
+    projects: itemProjectIDs(item).map(projectName),
+    assignee: memberInfo(item.assignee),
+    participants: itemParticipants(item).map((participant) => [
+      participant.subject,
+      participant.roles,
+      participantInfo(participant).name,
+      participantInfo(participant).avatarURL,
+    ]),
+    sprints: item.sprint_ids.map((id) => state.board.sprints.find((s) => s.id === id)?.name || id),
+    labels: item.labels.map(labelInfo),
+    blocked: blocked(item),
+  });
+}
 function listCell(label, className) {
   const cell = el('div', undefined, `list-cell ${className || ''}`.trim());
   cell.dataset.label = label;

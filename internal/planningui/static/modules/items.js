@@ -1,6 +1,6 @@
 // Read-only helpers over the board model: projects, labels, sprints, blockers.
-import { el } from './dom.js';
 import { labelForeground } from './format.js';
+import { html, nodeOf, nodesOf, styleProps } from './lit.js';
 import { state } from './state.js';
 
 export function activeSprints() {
@@ -13,21 +13,26 @@ export function itemProjectIDs(item) {
   if (Array.isArray(item?.project_ids)) return item.project_ids.filter(Boolean).map(String);
   return item?.project_id ? [String(item.project_id)] : [];
 }
-export function projectBadges(item, className = 'card-project') {
+export function projectBadgesTemplate(item, className = 'card-project') {
   const names = itemProjectIDs(item).map(projectName);
   if (!names.length) names.push('No project');
-  return names.map((name) => el('span', name, `badge badge-project ${className}`));
+  return names.map((name) => html`<span class="badge badge-project ${className}">${name}</span>`);
+}
+export function projectBadges(item, className) {
+  return nodesOf(html`${projectBadgesTemplate(item, className)}`);
 }
 export function labelInfo(name) {
   return state.board.labels.find((label) => label.name === name) || { name, color: '#dcefe4' };
 }
-export function labelBadge(name) {
+// Label colours are user data, so they are set through the CSSOM (styleProps)
+// rather than a style attribute, which the style-src policy would block.
+export function labelBadgeTemplate(name) {
   const label = labelInfo(name);
-  const badge = el('span', name, 'badge badge-label label-badge');
-  badge.dataset.label = name;
-  badge.style.backgroundColor = label.color;
-  badge.style.color = labelForeground(label.color);
-  return badge;
+  const colors = { 'background-color': label.color, color: labelForeground(label.color) };
+  return html`<span class="badge badge-label label-badge" data-label=${name} ${styleProps(colors)}>${name}</span>`;
+}
+export function labelBadge(name) {
+  return nodeOf(labelBadgeTemplate(name));
 }
 export function styleLabelOptions(select) {
   [...select.options].forEach((option) => {

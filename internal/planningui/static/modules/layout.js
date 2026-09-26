@@ -16,6 +16,7 @@
 // No module-level state: every export is a pure factory over its arguments, so
 // it is safe to import anywhere.
 import { el, options, uid, noAutofill } from './dom.js';
+import { html, nodeOf } from './lit.js';
 
 // #content holds exactly one page root. `data-content-view` names the
 // composition so a re-render can patch the existing DOM instead of replacing
@@ -94,10 +95,11 @@ function setStatusText(line, text, error = false) {
 }
 // Empty states are keyed so the reconciler patches them in place instead of
 // rebuilding the surrounding container.
+function emptyStateTemplate(text) {
+  return html`<p class="empty" data-empty="true">${text}</p>`;
+}
 function emptyState(text) {
-  const node = el('p', text, 'empty');
-  node.dataset.empty = 'true';
-  return node;
+  return nodeOf(emptyStateTemplate(text));
 }
 // The one metric row: large value over its caption, shared by the project lens,
 // sprint panels, the delivery trend and burn-down charts.
@@ -203,6 +205,7 @@ export {
   errorLine,
   setErrorText,
   emptyState,
+  emptyStateTemplate,
   metricList,
   filterBar,
   filterSelect,

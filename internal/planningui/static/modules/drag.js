@@ -12,8 +12,13 @@ function clearDropMarks() {
 }
 export function makeDraggable(node, type, id, name) {
   node.dataset.dragType = type;
-  node.draggable = writable() && !(type === 'card' && findItem(id)?.archived);
   node.setAttribute('aria-label', `Drag ${type} ${name}`);
+  return attachDrag(node, type, id);
+}
+// The drag listeners alone, for elements whose attributes a template renders.
+// `draggable` is set here and afterwards maintained by renderControls.
+export function attachDrag(node, type, id) {
+  node.draggable = writable() && !(type === 'card' && findItem(id)?.archived);
   node.addEventListener('dragstart', (e) => {
     if (
       !writable() ||

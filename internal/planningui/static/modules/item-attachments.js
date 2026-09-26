@@ -3,6 +3,7 @@ import { el, button } from './dom.js';
 import { api, apiUpload, requestKey } from './api.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { statusLine, setStatusText, emptyState } from './layout.js';
+import { html, nodeOf } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
@@ -193,40 +194,37 @@ export function itemFileDropZone(node, item) {
       void dropFilesOntoItem(item, event.dataTransfer.files);
   });
 }
-function attachmentFileMark(attachment) {
-  const mark = el('span', attachmentKind(attachment), 'attachment-file-mark');
-  mark.setAttribute('aria-hidden', 'true');
-  return mark;
+export function attachmentPaperclipTemplate() {
+  return html`<span class="attachment-paperclip" aria-hidden="true">📎</span>`;
 }
 export function attachmentPaperclip() {
-  const icon = el('span', '📎', 'attachment-paperclip');
-  icon.setAttribute('aria-hidden', 'true');
-  return icon;
+  return nodeOf(attachmentPaperclipTemplate());
 }
-function attachmentLinkView(item, attachment, base = state.root) {
-  const link = el('a', attachment.name, 'attachment-link');
-  link.href = attachmentHref(item, attachment, base);
-  link.setAttribute('aria-label', attachment.name);
-  link.setAttribute('download', '');
-  link.dataset.attachmentTooltip = attachmentTypeDescription(attachment);
-  return link;
-}
-export function attachmentTileLink(
+// `extraClass` adds a placement class, for example on a card's attachment list.
+export function attachmentTileLinkTemplate(
   item,
   attachment,
   base = state.root,
   metadata = attachmentSize(attachment.size),
+  extraClass = '',
 ) {
-  const link = attachmentLinkView(item, attachment, base);
-  link.dataset.attachmentId = String(attachment.id);
-  link.classList.add('attachment-tile-link');
-  const copy = el('span', undefined, 'attachment-tile-copy');
-  copy.append(
-    el('span', attachment.name, 'attachment-name'),
-    el('span', metadata, 'attachment-meta'),
-  );
-  link.replaceChildren(attachmentFileMark(attachment), copy);
-  return link;
+  return html`<a
+    class="attachment-link attachment-tile-link${extraClass}"
+    href=${attachmentHref(item, attachment, base)}
+    aria-label=${attachment.name}
+    download=""
+    data-attachment-tooltip=${attachmentTypeDescription(attachment)}
+    data-attachment-id=${String(attachment.id)}
+  >
+    <span class="attachment-file-mark" aria-hidden="true">${attachmentKind(attachment)}</span>
+    <span class="attachment-tile-copy">
+      <span class="attachment-name">${attachment.name}</span>
+      <span class="attachment-meta">${metadata}</span>
+    </span>
+  </a>`;
+}
+export function attachmentTileLink(item, attachment, base, metadata) {
+  return nodeOf(attachmentTileLinkTemplate(item, attachment, base, metadata));
 }
 function attachmentTooltipHost() {
   return document.querySelector('dialog[open]') || document.body;

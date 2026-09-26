@@ -1,6 +1,8 @@
 // Due-date badges and the overdue refresh.
-import { el, uid } from './dom.js';
+import { uid } from './dom.js';
 import { dueDatePresentation } from './format.js';
+import { hooks } from './hooks.js';
+import { html, nodeOf, nothing } from './lit.js';
 import { state } from './state.js';
 
 export function itemDateStatus(item, now = new Date()) {
@@ -8,30 +10,22 @@ export function itemDateStatus(item, now = new Date()) {
     state.board?.columns.find((column) => column.id === item.column_id)?.category || '';
   return dueDatePresentation(item.due_date, category, !!item.archived, now);
 }
-export function dueDateBadge(item) {
+// `extraClass` places the badge, for example beside an overdue card title.
+export function dueDateBadgeTemplate(item, extraClass = '') {
   const status = itemDateStatus(item);
-  if (!status) return undefined;
-  const badge = el('span', status.label, `badge badge-due${status.overdue ? ' is-overdue' : ''}`);
-  badge.dataset.dueDateBadge = item.id;
-  badge.dataset.dueDate = item.due_date;
-  badge.dataset.dueCategory =
+  if (!status) return nothing;
+  const category =
     state.board?.columns.find((column) => column.id === item.column_id)?.category || '';
-  badge.dataset.dueArchived = String(!!item.archived);
-  return badge;
+  return html`<span
+    class="badge badge-due${status.overdue ? ' is-overdue' : ''}${extraClass}"
+    data-due-date-badge=${item.id}
+    data-due-date=${item.due_date}
+    data-due-category=${category}
+    data-due-archived=${String(!!item.archived)}
+  >${status.label}</span>`;
 }
-export function positionCardDueBadge(badge, overdue) {
-  const card = badge.closest('.card');
-  if (!card) return;
-  const top = card.querySelector('.card-top');
-  if (overdue && top) {
-    badge.classList.add('card-title-due');
-    top.classList.add('card-top-overdue');
-    if (!top.contains(badge)) top.append(badge);
-  } else if (!overdue && badge.classList.contains('card-title-due')) {
-    badge.classList.remove('card-title-due');
-    top?.classList.remove('card-top-overdue');
-    card.querySelector('[data-card-section="labels"]')?.append(badge);
-  }
+export function dueDateBadge(item) {
+  return itemDateStatus(item) ? nodeOf(dueDateBadgeTemplate(item)) : undefined;
 }
 export function positionListDueBadge(badge, overdue) {
   const row = badge.closest('.list-row');
@@ -75,8 +69,11 @@ function positionEditorDueBadge(badge, overdue) {
       title.removeAttribute('aria-describedby');
   }
 }
+// Cards are lit templates that compute their badges from the date, so they are
+// re-rendered; every other badge is patched in place.
 export function refreshDueDateBadges(now = new Date()) {
   document.querySelectorAll('.badge-due[data-due-date-badge]').forEach((badge) => {
+    if (badge.closest('.card')) return;
     const status = dueDatePresentation(
       badge.dataset.dueDate,
       badge.dataset.dueCategory,
@@ -84,19 +81,17 @@ export function refreshDueDateBadges(now = new Date()) {
       now,
     );
     if (!status) {
-      const card = badge.closest('.card');
-      badge.closest('.card,.list-row')?.classList.remove('is-overdue');
-      card?.querySelector('.card-top')?.classList.remove('card-top-overdue');
+      badge.closest('.list-row')?.classList.remove('is-overdue');
       badge.remove();
       return;
     }
     badge.textContent = status.label;
     badge.classList.toggle('is-overdue', status.overdue);
-    badge.closest('.card,.list-row')?.classList.toggle('is-overdue', status.overdue);
-    positionCardDueBadge(badge, status.overdue);
+    badge.closest('.list-row')?.classList.toggle('is-overdue', status.overdue);
     positionListDueBadge(badge, status.overdue);
     positionEditorDueBadge(badge, status.overdue);
   });
+  if (document.querySelector('.card')) hooks.renderContent();
 }
 export function scheduleOverdueRefresh() {
   clearTimeout(state.overdueTimer);
