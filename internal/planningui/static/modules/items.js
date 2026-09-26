@@ -1,6 +1,6 @@
 // Read-only helpers over the board model: projects, labels, sprints, blockers.
 import { labelForeground } from './format.js';
-import { html, nodeOf, nodesOf, styleProps } from './lit.js';
+import { html, styleProps } from './lit.js';
 import { state } from './state.js';
 
 export function activeSprints() {
@@ -18,9 +18,6 @@ export function projectBadgesTemplate(item, className = 'card-project') {
   if (!names.length) names.push('No project');
   return names.map((name) => html`<span class="badge badge-project ${className}">${name}</span>`);
 }
-export function projectBadges(item, className) {
-  return nodesOf(html`${projectBadgesTemplate(item, className)}`);
-}
 export function labelInfo(name) {
   return state.board.labels.find((label) => label.name === name) || { name, color: '#dcefe4' };
 }
@@ -31,15 +28,10 @@ export function labelBadgeTemplate(name) {
   const colors = { 'background-color': label.color, color: labelForeground(label.color) };
   return html`<span class="badge badge-label label-badge" data-label=${name} ${styleProps(colors)}>${name}</span>`;
 }
-export function labelBadge(name) {
-  return nodeOf(labelBadgeTemplate(name));
-}
-export function styleLabelOptions(select) {
-  [...select.options].forEach((option) => {
-    const label = labelInfo(option.value);
-    option.style.backgroundColor = label.color;
-    option.style.color = labelForeground(label.color);
-  });
+// A label option's colours, for renderOptions.
+export function labelOptionColors(name) {
+  const label = labelInfo(name);
+  return { 'background-color': label.color, color: labelForeground(label.color) };
 }
 export function done(item) {
   return state.board.columns.find((c) => c.id === item.column_id)?.category === 'done';

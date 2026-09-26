@@ -1,6 +1,6 @@
 // Member names, avatars and the participant stack.
 import { initials } from './format.js';
-import { classMap, html, keyed, nodeOf, nothing } from './lit.js';
+import { classMap, html, keyed, nothing } from './lit.js';
 import { state } from './state.js';
 
 export function memberInfo(subject) {
@@ -122,7 +122,4 @@ export function participantStackTemplate(item) {
         : nothing
     }
   </div>`;
-}
-export function participantStack(item) {
-  return nodeOf(participantStackTemplate(item));
 }

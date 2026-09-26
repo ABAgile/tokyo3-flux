@@ -2,7 +2,7 @@
 
 The planning UI is plain ES modules and CSS under `internal/planningui/static/`, embedded with `go:embed`.
 There is no build step and there are no npm runtime dependencies.
-The one browser library, lit-html, is vendored as `modules/vendor-lit-html.js`; see [Rendering with lit-html](#rendering-with-lit-html).
+The one browser library, lit-html, is vendored as `modules/vendor-lit-html.js`, and every view renders with it; see [Rendering with lit-html](#rendering-with-lit-html).
 
 ## Rules
 
@@ -26,29 +26,39 @@ Feature modules export functions and constants only; any document listeners or t
 |---|---|
 | Base | `vendor-lit-html`, `lit`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
 | State | `state` (every reassigned shell variable, as `state.<name>`), `hooks` |
-| Services | `permissions`, `notices`, `items`, `controls`, `people`, `reconcile`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
+| Services | `permissions`, `notices`, `items`, `controls`, `people`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
 | Views | `view-board`, `view-archive`, `bulk`, `view-list`, `view-velocity`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `shortcuts`, `view-gate`, `sync` |
 | Shell | `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, event wiring and startup |
 
 ## Rendering with lit-html
 
-Board cards, columns and the Archive list are lit-html templates; every other view still builds nodes with `dom.js` and patches them with `reconcile.js`.
+Every view renders with lit-html templates.
+`index.html` supplies the static shell (sidebar, heading, planning filter bar, editor dialog), whose elements are updated directly or serve as hosts.
 
 - Import lit only from `modules/lit.js`, never from `vendor-lit-html.js`.
   `vendor-lit-html.js` is generated: change the pinned version or `tools/vendor/lit-html.entry.js` and run `make vendor-web`; never edit the bundle by hand.
-- A template describes the whole component on every render; lit updates only what changed, so focus, hover and open `<details>` survive.
+- A template describes the whole component on every render; lit updates only what changed, so focus, hover, scroll and open `<details>` survive.
   Key lists with `repeat(items, (item) => item.id, template)`.
+- Where to render:
+  - A view renders into a page root with `renderRoot`/`renderPage` (layout.js); the root persists while the host shows that view (`data-content-view`, `pageHost(root)`).
+  - A static shell host (`#sprint-summary`, `#project-summary`, `#filter-chips`) is rendered with `render`, and cleared with `render(nothing, host)`, never `replaceChildren`: removing lit's nodes breaks its next render.
+  - A container other code also clears (the dialog's `#fields`) is rendered with `mount`, which keeps lit's bookkeeping on a fresh fragment per mount.
+  - Dialog builders passed to `openEditor` return a template.
+- Stateful widgets (multi-select, Markdown editor, help popover, dates field, comments, attachments, sprint goal) render themselves: `widgetTemplate(...)` puts a host element in the page with `attach`, and the widget renders into that host from a local state object.
+  Their arguments are fixed per instance; wrap a widget in `keyed(value, ...)` when a changed value needs a fresh one.
+- Some DOM is rendered once and then written directly: the editor heads, the detail form skeleton, dialog footer actions (`nodeOf`), and dialogs such as observations that are never re-rendered.
+  Code may change a lit-rendered element's static parts (a status line's text) but never moves, removes or re-texts bound parts; it re-renders instead.
+  `refreshDueDateBadges` and `patchObservationUI` re-render cards and list rows rather than patching them; observation nodes elsewhere are `cardObservationIcon`/`cardLinkView` nodes, which they patch.
 - Never bind a `style` attribute or use lit's `styleMap`: its first render writes the attribute, which `style-src 'self'` blocks.
   Use `styleProps({ 'background-color': value })`, which sets properties through the CSSOM.
 - One owner per attribute.
-  A template binds an attribute, property or class only if no other code writes it: `renderControls` owns `disabled` on `[data-write]` controls and `draggable`; drag, file-drop and tooltip code own their classes, `aria-describedby` and tooltip positions.
+  A template binds an attribute, property or class only if no other code writes it, or with `live()` when other code writes the same derived value: `renderControls` sets `disabled` on `[data-write]`, `[data-admin-write]`, `[data-gitlab-write]` and `[data-comment-write]` controls, so their templates use `?disabled=${live(...)}`.
+  `renderControls` owns `draggable`; drag, file-drop and tooltip code own their classes, `aria-describedby` and tooltip positions; `syncListSelection` owns `is-selected` and `aria-current` on list rows.
   Use `classMap` for classes, since it leaves classes added by other code alone.
-- Code outside a template never moves, removes or re-texts nodes a template created; it re-renders instead (`hooks.renderContent()`).
-  `refreshDueDateBadges` and `patchObservationUI` skip `.card` descendants for this reason.
 - Wire imperative behaviour (drag, drop, file drops) with `attach(setup, ...args)`: it runs once per element, so pass stable ids and read changing data from `state` at event time.
-- Leaf helpers shared with imperative views have a `*Template` form; the node form wraps it with `nodeOf`/`nodesOf`, and the nodes it returns are plain DOM that callers may mutate.
-- Split static and dynamic text only with care: text split across nodes can shape a fraction of a pixel differently, so bind one string where exact width matters (`` ${`${count} shown`} ``).
+- A template rendered straight into a host styled with `:empty` (`#sprint-summary`) has no whitespace between its parts.
+- Bind one string where exact width matters (`` ${`${count} shown`} ``): text split across nodes can shape a fraction of a pixel differently.
 
 ## CSS file map
 

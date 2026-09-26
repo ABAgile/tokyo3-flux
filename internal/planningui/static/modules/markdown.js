@@ -2,7 +2,7 @@
 // templates whose text parts lit writes as text, never as markup, so item and
 // comment bodies cannot inject HTML. Link targets are filtered through
 // markdownURL.
-import { el, uid } from './dom.js';
+import { uid } from './dom.js';
 import { requestKey } from './api.js';
 import { attach, html, nothing, render, styleProps } from './lit.js';
 
@@ -291,10 +291,6 @@ function markdownTemplate(source) {
   }
   return blocks;
 }
-// Renders Markdown into `parent`, which lit then owns.
-function renderMarkdown(parent, source) {
-  render(markdownTemplate(source), parent);
-}
 const prefixLines = (text, prefix) =>
   text
     .split('\n')
@@ -351,12 +347,7 @@ function setInitialValue(input, value) {
 // The Markdown editor is a stateful widget: it renders itself with lit into a
 // host element and keeps its mode in a local state object. The textarea's
 // value belongs to the user after the initial value is set.
-function markdownEditor(parent, ...options) {
-  const group = el('div', undefined, 'markdown-field');
-  parent.append(group);
-  return mountMarkdownEditor(group, ...options);
-}
-// Template form. `settings.onReady(editor)` receives { input, refresh } and
+// The editor's template. `settings.onReady(editor)` receives { input, refresh } and
 // `settings.commentControl` marks the textarea as a comment control.
 function markdownEditorTemplate(
   name,
@@ -494,4 +485,4 @@ function mountMarkdownEditor(
   if (previewByDefault) setMode(true);
   return { input, refresh };
 }
-export { markdownTemplate, renderMarkdown, markdownEditor, markdownEditorTemplate };
+export { markdownTemplate, markdownEditorTemplate };

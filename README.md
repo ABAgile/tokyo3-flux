@@ -478,7 +478,7 @@ docker compose config -q
 `make check` ends with `make check-web test-web`: pinned Biome and rumdl checks, `node --check` for `app.js` and every module, and the Node tests.
 Run `make fmt-web lint-web` after JS/CSS edits and `make fmt-md` after Markdown edits; [AGENTS.md](AGENTS.md) lists the frontend conventions.
 The stylesheet is authored as ordered files under `internal/planningui/static/styles/` and served joined, in name order, as `/styles.css`.
-Board cards render with lit-html, vendored as `internal/planningui/static/modules/vendor-lit-html.js`; `make vendor-web` rebuilds it from the pinned release (it needs `npm`/`npx`, only at vendoring time).
+The UI renders with lit-html templates; lit-html is vendored as `internal/planningui/static/modules/vendor-lit-html.js`, and `make vendor-web` rebuilds it from the pinned release (it needs `npm`/`npx`, only at vendoring time).
 
 Use a disposable test DB; PostgreSQL tests skip without its URL.
 Browser scripts in `tests/` mutate disposable workspaces: planning/proposals require fresh seeded workspaces, drag-labels requires an empty workspace.

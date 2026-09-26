@@ -13,15 +13,15 @@
 //           ├── .help                    guidance text (optional)
 //           └── body: .panel / .maintenance-list / .empty
 //
-// Each component has a lit template form (`*Template`) and, while imperative
-// views remain, a node form that renders the template once. No module-level
-// state: every export is a pure factory over its arguments.
-import { el, uid, noAutofill } from './dom.js';
-import { html, live, nodeOf, nothing, render } from './lit.js';
+// Every component is a lit template (`*Template`); emptyState also has a node
+// form for the loading page, which is appended to a static host. The only
+// module-level state is the per-select option mount cache below.
+import { el, uid } from './dom.js';
+import { html, live, mount, nodeOf, nothing, render, repeat, styleProps } from './lit.js';
 
 // #content holds exactly one page root. `data-content-view` names the
-// composition so a re-render can patch the existing DOM instead of replacing
-// it whenever the page kind is unchanged.
+// composition, so the next render updates the same root while the page kind is
+// unchanged.
 function contentRoot(tag, className, contentView) {
   const root = el(tag, undefined, className);
   if (contentView) root.dataset.contentView = contentView;
@@ -42,9 +42,6 @@ function renderRoot(host, className, contentView, template, tag = 'div') {
 }
 // The default page body: one single-column stack of sections with one gap, so
 // Projects, Sprints, Members, Labels and History space their sections alike.
-function pageStack(contentView) {
-  return contentRoot('div', 'page-stack', contentView);
-}
 function renderPage(host, contentView, template) {
   return renderRoot(host, 'page-stack', contentView, template);
 }
@@ -55,15 +52,9 @@ function panelTemplate(className, content, tag = 'section') {
     ? html`<article class=${classes}>${content}</article>`
     : html`<section class=${classes}>${content}</section>`;
 }
-function panel(className, tag = 'section') {
-  return el(tag, undefined, className ? `panel ${className}` : 'panel');
-}
 // Page-level section title with optional right-aligned actions.
 function sectionHeadTemplate(title, ...actions) {
   return html`<div class="section-head"><h2>${title}</h2>${actions.filter(Boolean)}</div>`;
-}
-function sectionHead(title, ...actions) {
-  return nodeOf(sectionHeadTemplate(title, ...actions));
 }
 // Subordinate heading for a panel: an h3 title above optional guidance, used by
 // the read-only chart panels so their heads match the page heads. `description`
@@ -76,43 +67,20 @@ function panelHeadTemplate(title, { id, description, className } = {}) {
   const guidance = typeof description === 'string' ? helpTextTemplate(description) : description;
   return html`<div class=${classes}><div>${heading}${guidance}</div></div>`;
 }
-function panelHead(title, options) {
-  return nodeOf(panelHeadTemplate(title, options));
-}
 // Guidance text. `variant` adds a page-specific class beside the shared one.
 function helpTextTemplate(text, variant) {
   return html`<p class=${variant ? `help ${variant}` : 'help'}>${text}</p>`;
 }
-function helpText(text, variant) {
-  return nodeOf(helpTextTemplate(text, variant));
-}
-// One inline live region for progress and validation: polite while it reports
-// progress, assertive while it carries an error, hidden while it says nothing.
-// Its class, text and role belong to setStatusText, so the template binds none
-// of them after creation.
-function statusLineTemplate(className = 'help') {
-  return html`<p
-    class=${className}
-    data-status-class=${className}
-    hidden
-    role="status"
-    aria-live="polite"
-  ></p>`;
-}
-function statusLine(className = 'help') {
-  return nodeOf(statusLineTemplate(className));
-}
-// The assertive counterpart: a one-line error region, empty and hidden until a
-// write fails. Errors never share a node with progress, so they are announced
-// once and stay until the next attempt clears them.
+// Status lines are inline live regions: polite while they report progress,
+// assertive while they carry an error, hidden while they say nothing. Widgets
+// render them from their own state. setStatusText and setErrorText write the
+// status and error lines of rendered-once DOM (the detail form, the workspace
+// creation form, the integration form).
+// Error lines are one-line regions, empty and hidden until a write fails.
+// Errors never share a node with progress, so they are announced once and stay
+// until the next attempt clears them.
 function errorLineTemplate(text = '', className = 'error') {
   return html`<p class=${className} role="alert" ?hidden=${!text}>${text}</p>`;
-}
-function errorLine(text = '', className = 'error') {
-  const line = el('p', text, className);
-  line.setAttribute('role', 'alert');
-  line.hidden = !text;
-  return line;
 }
 function setErrorText(line, text) {
   line.textContent = text || '';
@@ -125,8 +93,7 @@ function setStatusText(line, text, error = false) {
   line.hidden = !text;
   line.setAttribute('role', error ? 'alert' : 'status');
 }
-// Empty states are keyed so the reconciler patches them in place instead of
-// rebuilding the surrounding container.
+// Empty states are marked with data-empty.
 function emptyStateTemplate(text) {
   return html`<p class="empty" data-empty="true">${text}</p>`;
 }
@@ -143,9 +110,6 @@ function metricListTemplate(entries, className) {
     )}
   </div>`;
 }
-function metricList(entries, className) {
-  return nodeOf(metricListTemplate(entries, className));
-}
 
 // The only filter container: labeled native controls on the left, a
 // right-aligned visible record count.
@@ -154,11 +118,6 @@ function filterBarTemplate(controls, count = '') {
     <div class="actions">${controls}</div>
     <span class="filter-bar-count muted" aria-live="polite">${count}</span>
   </div>`;
-}
-// Imperative form: callers append their controls and write the count.
-function filterBar() {
-  const bar = nodeOf(filterBarTemplate());
-  return { bar, controls: bar.firstElementChild, count: bar.lastElementChild };
 }
 // Filter controls are standalone page state, never form data, so they are
 // identified by a unique id rather than a submitted name. Ids are generated
@@ -173,12 +132,6 @@ function filterSelectTemplate(title, entries, id, onChange) {
       ${entries.map(([value, text]) => html`<option value=${value}>${text}</option>`)}
     </select></label
   >`;
-}
-function filterSelect(title, entries) {
-  const label = nodeOf(filterSelectTemplate(title, entries, filterControlID(title)));
-  const select = label.querySelector('select');
-  select.value = 'all';
-  return { label, select };
 }
 function filterSearchTemplate(
   title,
@@ -198,21 +151,7 @@ function filterSearchTemplate(
       @input=${onInput}
   /></label>`;
 }
-function filterSearch(title, { value = '', placeholder = '', maxLength = 120 } = {}) {
-  const input = noAutofill(el('input'));
-  input.id = filterControlID(title);
-  input.type = 'search';
-  input.value = value;
-  input.placeholder = placeholder;
-  input.maxLength = maxLength;
-  input.setAttribute('aria-label', title);
-  const label = el('label', title);
-  label.setAttribute('for', input.id);
-  label.append(input);
-  return { label, input };
-}
-// A labeled form control, the template form of dom.js field(). `options`
-// carries the attributes callers used to set afterwards. Values are bound
+// A labeled form control. `options` carries its attributes. Values are bound
 // once per mount: forms are rendered when opened and then belong to the user.
 function fieldTemplate(name, title, value = '', type = 'text', entries, options = {}) {
   const {
@@ -293,14 +232,27 @@ function controlSlug(title) {
       .replace(/^-|-$/g, '') || 'control'
   );
 }
+// The shell's static <select>s (scope, planning filters, workspace) get their
+// options from lit. The first render replaces the options written in the page;
+// later renders update that mount in place. `colors(value)` styles an option.
+const optionMounts = new WeakMap();
+function renderOptions(select, entries, value, colors) {
+  const template = html`${repeat(
+    entries,
+    ([optionValue]) => optionValue,
+    ([optionValue, text]) =>
+      html`<option value=${optionValue} ${styleProps(colors?.(optionValue) ?? {})}>${text}</option>`,
+  )}`;
+  const update = optionMounts.get(select);
+  if (update) update(template);
+  else optionMounts.set(select, mount(select, template));
+  if (value !== undefined) select.value = value;
+}
 // Removable chips are the authoritative view of a multi-value filter group.
 function filterChipRowTemplate(ariaLabel, chips) {
   return html`<div class="filter-chips" role="group" aria-label=${ariaLabel} ?hidden=${!chips.length}>
     ${chips}
   </div>`;
-}
-function filterChipRow(ariaLabel) {
-  return nodeOf(filterChipRowTemplate(ariaLabel, []));
 }
 // Filter bars live in a slot so the shared planning bar can be relocated
 // between hosts rather than duplicated. A slot that receives the relocated bar
@@ -308,20 +260,11 @@ function filterChipRow(ariaLabel) {
 function filterSlotTemplate(id, ...children) {
   return html`<div class="filter-slot" id=${id || nothing}>${children.filter(Boolean)}</div>`;
 }
-function filterSlot(id, ...children) {
-  const slot = el('div', undefined, 'filter-slot');
-  if (id) slot.id = id;
-  slot.append(...children.filter(Boolean));
-  return slot;
-}
 
 function maintenanceListTemplate(className, rows) {
   return html`<div class=${className ? `maintenance-list ${className}` : 'maintenance-list'}>
     ${rows}
   </div>`;
-}
-function maintenanceList(className) {
-  return el('div', undefined, className ? `maintenance-list ${className}` : 'maintenance-list');
 }
 // One row shape for Projects, Members and Labels: identity on the left,
 // optional actions on the right.
@@ -334,47 +277,29 @@ function maintenanceRowTemplate({ tag = 'div', className = '', content = [], act
     ? html`<article class=${classes}>${body}</article>`
     : html`<div class=${classes}>${body}</div>`;
 }
-function maintenanceRow(options) {
-  return nodeOf(maintenanceRowTemplate(options));
-}
 
 export {
   contentRoot,
   renderRoot,
-  pageStack,
   renderPage,
-  panel,
   panelTemplate,
-  sectionHead,
   sectionHeadTemplate,
-  panelHead,
   panelHeadTemplate,
-  helpText,
   helpTextTemplate,
-  statusLine,
-  statusLineTemplate,
   setStatusText,
-  errorLine,
   errorLineTemplate,
   setErrorText,
   emptyState,
   emptyStateTemplate,
-  metricList,
   metricListTemplate,
-  filterBar,
   filterBarTemplate,
   filterControlID,
-  filterSelect,
   filterSelectTemplate,
-  filterSearch,
   filterSearchTemplate,
-  filterChipRow,
-  filterChipRowTemplate,
-  filterSlot,
-  filterSlotTemplate,
   fieldTemplate,
-  maintenanceList,
+  renderOptions,
+  filterChipRowTemplate,
+  filterSlotTemplate,
   maintenanceListTemplate,
-  maintenanceRow,
   maintenanceRowTemplate,
 };

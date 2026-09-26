@@ -1,8 +1,8 @@
 // The workspace gate, workspace list and creation, and the first-run checklist.
-import { $, options } from './dom.js';
+import { $ } from './dom.js';
 import { api, requestKey } from './api.js';
 import { workspaceLabel } from './format.js';
-import { renderRoot, helpTextTemplate, setStatusText } from './layout.js';
+import { renderRoot, renderOptions, helpTextTemplate, setStatusText } from './layout.js';
 import { html, nothing, repeat } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
@@ -43,7 +43,7 @@ function updateWorkspaceOptions(selected = '') {
   const signature = workspaceListSignature(state.workspaces);
   const select = $('workspace');
   if (select.dataset.signature === signature && select.value === selected) return;
-  options(
+  renderOptions(
     select,
     state.workspaces.map((workspace) => [workspace.id, workspaceLabel(workspace)]),
     selected,

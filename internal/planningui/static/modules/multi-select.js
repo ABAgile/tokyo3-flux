@@ -1,5 +1,5 @@
 // Multi-select fields, the label color picker and help popovers.
-import { el, uid } from './dom.js';
+import { uid } from './dom.js';
 import { requestKey } from './api.js';
 import { attach, html, live, nodeOf, nothing, render, repeat, styleProps } from './lit.js';
 
@@ -139,12 +139,7 @@ function uniqueEntries(entries) {
 // returns an optional template shown after the heading ("Assign me"), and
 // `settings.footer` one shown below the options; `controls.update()` re-renders
 // both. `settings.disabled` disables every control of a read-only picker.
-export function multiSelect(parent, ...options) {
-  const group = el('div', undefined, 'multi-select-field');
-  parent.append(group);
-  return mountMultiSelect(group, ...options);
-}
-// Template form: `settings.onReady(controls)` receives the controls once the
+// The picker's template: `settings.onReady(controls)` receives the controls once the
 // widget has rendered.
 export function multiSelectTemplate(name, title, entries, selected, decorate, helpText, settings) {
   return html`<div
@@ -407,9 +402,4 @@ export function labelColorPickerTemplate(value) {
       />`,
     )}
   </fieldset>`;
-}
-export function labelColorPicker(parent, value) {
-  const palette = nodeOf(labelColorPickerTemplate(value));
-  parent.append(palette);
-  return palette;
 }

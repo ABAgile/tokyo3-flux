@@ -11,8 +11,8 @@ export function planningHost() {
   mountPage(false, '');
   return $('planning-body');
 }
-// `keepView` names the page root that may survive this render, so a view that
-// patches its own DOM (Sprints) is not rebuilt from scratch on every pass.
+// `keepView` names the page root that survives this render, so the view's lit
+// root is updated in place instead of rebuilt.
 export function pageHost(keepView = '') {
   mountPage(true, keepView);
   return $('page-root');
