@@ -22,6 +22,7 @@ async function run(page) {
     const { StatusBars, notice, showPlanningChangeNotice, clearPlanningChangeNotice } =
       await import('/modules/notices.js');
     const { App } = await import('/modules/app-shell.js');
+    const { openEditor, openFormDialog, closeEditor } = await import('/modules/dialog.js');
     const { api } = await import('/modules/api.js');
     const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
     const { markdownTemplate, markdownEditorTemplate } = await import('/modules/markdown.js');
@@ -142,22 +143,106 @@ async function run(page) {
     setState({ shortcutChord: initialChord });
 
     const previousGate = state.workspaceGate;
+    const previousBoard = state.board;
     renderIsland(host, html`<${App} refresh=${() => {}} />`);
     const legacyBody = host.querySelector('#planning-body');
     check(
       host.querySelector('#title')?.textContent === 'Loading planning data',
       'app shell renders its initial title',
     );
-    setState({ workspaceGate: 'select' });
+    setState({ board: { role: 'member', workspace: { revision: 1, id: 'test' } } });
+    openEditor(
+      'Dialog snapshot',
+      () => html`<div><p id="dialog-field-root">Reactive dialog content</p>
+        <label>Probe<input name="probe" defaultValue="initial" /></label></div>`,
+      () => ({ kind: 'probe' }),
+    );
+    await flush();
+    check(
+      host.querySelector('#editor')?.open &&
+        host.querySelector('#dialog-field-root')?.textContent === 'Reactive dialog content',
+      'EditorDialog opens and mounts a Preact snapshot',
+    );
+    host.querySelector('[name="probe"]').value = 'draft';
+    setState({ board: previousBoard, workspaceGate: 'select' });
     await flush();
     check(
       host.querySelector('#title')?.textContent === 'Choose a workspace' &&
+        host.querySelector('#page-root')?.parentElement === host.querySelector('#content') &&
+        host.querySelector('#planning-body')?.parentElement ===
+          host.querySelector('#planning-frame') &&
         host.querySelector('nav')?.hidden &&
-        host.querySelector('#planning-body') === legacyBody,
-      'app shell updates gate content without replacing the planning mount',
+        !host.querySelector('#page-root')?.hidden &&
+        host.querySelector('#planning-frame')?.hidden &&
+        host.querySelector('#planning-body') === legacyBody &&
+        host.querySelector('#dialog-field-root')?.textContent === 'Reactive dialog content' &&
+        host.querySelector('[name="probe"]')?.value === 'draft' &&
+        host.querySelector('#editor-title')?.textContent === 'Dialog snapshot',
+      'app shell updates without replacing page or dialog content mounts',
     );
+    const dialogNode = host.querySelector('#editor');
+    setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
+    openEditor(
+      'Replacement snapshot',
+      () => html`<p id="dialog-field-root">Replacement content</p>`,
+      () => ({ kind: 'probe' }),
+    );
+    await flush();
+    check(
+      host.querySelector('#editor') === dialogNode &&
+        dialogNode.open &&
+        host.querySelector('#editor-title')?.textContent === 'Replacement snapshot' &&
+        host.querySelector('#dialog-field-root')?.textContent === 'Replacement content' &&
+        !host.querySelector('[name="probe"]'),
+      'changing the editor config replaces its snapshot without replacing the dialog',
+    );
+    setState({ board: previousBoard });
+    closeEditor();
+    await flush();
+    check(!host.querySelector('#editor')?.open, 'EditorDialog closes through the controller');
+
+    setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
+    let customSubmission;
+    openFormDialog(
+      'Custom form probe',
+      'Submit probe',
+      () => html`<label>Probe<input name="probe" defaultValue="initial" /></label>`,
+      (data, { setError }) => {
+        customSubmission = data.get('probe');
+        setError('Keep this draft');
+      },
+    );
+    await flush();
+    const customInput = host.querySelector('[name="probe"]');
+    customInput.value = 'retained';
+    host.querySelector('#editor-form').requestSubmit();
+    await flush();
+    check(
+      customSubmission === 'retained' &&
+        customInput.value === 'retained' &&
+        host.querySelector('#form-error')?.textContent === 'Keep this draft',
+      'custom editor submissions retain drafts and render reactive errors',
+    );
+    host.querySelector('#editor').close();
+    await flush();
+    check(
+      !host.querySelector('#editor')?.open &&
+        state.editorDialog === undefined &&
+        !host.querySelector('[name="probe"]'),
+      'native dialog close disposes its snapshot and controller state',
+    );
+    setState({ board: previousBoard });
+    setState({ undoOffer: [{}], undoText: 'Moved sample item' });
+    await flush();
+    check(
+      !host.querySelector('#undo-bar')?.hidden &&
+        host.querySelector('#undo-text')?.textContent === 'Moved sample item' &&
+        host.querySelector('#undo-bar')?.getAttribute('aria-live') === 'polite',
+      'undo notice is a store-driven polite live region',
+    );
+    setState({ undoOffer: undefined, undoText: '' });
     unmountIsland(host);
-    setState({ workspaceGate: previousGate });
+    setState({ board: previousBoard, workspaceGate: previousGate });
 
     let refreshes = 0;
     renderIsland(host, html`<${StatusBars} refresh=${() => refreshes++} />`);

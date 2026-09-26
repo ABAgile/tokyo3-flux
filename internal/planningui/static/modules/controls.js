@@ -32,7 +32,6 @@ export function renderControls() {
   $('project').disabled = !state.board || state.busy || state.loading;
   $('assignee').disabled = !state.board || state.busy || state.loading;
   $('label').disabled = !state.board || state.busy || state.loading;
-  $('undo').disabled = !writable();
   document.querySelectorAll('.list-row-select').forEach((input) => {
     input.disabled = state.busy || state.loading;
   });

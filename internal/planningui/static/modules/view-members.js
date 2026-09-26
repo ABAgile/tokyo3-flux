@@ -15,7 +15,7 @@ import { adminIconTemplate, adminWritable, accessButtonTemplate } from './permis
 import { memberListingInfo, avatarTemplate } from './people.js';
 import { multiSelectTemplate } from './multi-select.js';
 import { memberUserEntries, loadGitLabUsers } from './gitlab-catalog.js';
-import { openEditor } from './dialog.js';
+import { openEditor, setEditorSaveText } from './dialog.js';
 
 const MEMBER_ROLE_ENTRIES = [
   ['viewer', 'Viewer'],
@@ -66,7 +66,7 @@ function editMember(member) {
       member: { subject: member.subject, name: data.get('name').trim(), role: data.get('role') },
     }),
   );
-  $('save').textContent = 'Save member';
+  setEditorSaveText('Save member');
 }
 function removeMember(member) {
   if (!adminWritable()) return;
@@ -85,7 +85,7 @@ function removeMember(member) {
       }`,
     () => ({ kind: 'member.delete', target: member.subject }),
   );
-  $('save').textContent = 'Remove member';
+  setEditorSaveText('Remove member');
 }
 function addMember() {
   if (!adminWritable()) return;
@@ -178,7 +178,7 @@ function addMember() {
       };
     },
   );
-  $('save').textContent = 'Add member';
+  setEditorSaveText('Add member');
 }
 export function renderMembers(content) {
   const members = state.board.members;

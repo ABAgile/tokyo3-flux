@@ -136,9 +136,14 @@ export async function refresh(preloaded) {
   renderControls();
   setContentBusy(true);
   try {
-    const selectedID = state.board?.workspace?.id || $('workspace').value;
     const memberships = await loadWorkspaces();
     if (generation !== state.loadGeneration) return false;
+    const selectedID =
+      state.board?.workspace?.id ||
+      memberships.find(
+        (workspace) => `/api/v2/workspaces/${encodeURIComponent(workspace.id)}` === state.root,
+      )?.id ||
+      $('workspace').value;
     if (!selectedID || !memberships.some((workspace) => workspace.id === selectedID)) {
       enterWorkspaceGate(
         memberships.length ? 'select' : 'create',

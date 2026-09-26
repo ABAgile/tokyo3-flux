@@ -7,8 +7,9 @@ It reuses the view/template boundaries developed on `lit-html` (`0a968f7`) rathe
 The old DOM reconciler, card signatures and per-section patch routines are removed.
 No Go, CSS, API, authentication or CSP behavior is intentionally changed.
 
-A body-level Preact `App` owns the sidebar, navigation, heading, status bars and stable legacy page/dialog mounts.
-The page hosts still retain their own controllers and lifetimes while their templates are incrementally migrated.
+A body-level Preact `App` owns the sidebar, navigation, heading, status and undo bars, page frame and native dialog markup.
+The shared editor dialog renders from an opener configuration and keeps its form snapshot intact across unrelated store updates, including background refreshes.
+Page hosts and editor fields still retain controller-owned roots and lifetimes while those boundaries are incrementally migrated.
 Shared planning state and revision-checked commands remain in plain ES modules.
 Rendering factories return VNodes; Preact owns each render host's children.
 The adapter in `modules/preact.js` provides keyed lists, explicit mount/unmount boundaries and logical focus recovery.
@@ -16,11 +17,11 @@ It does not implement another diff algorithm or reinterpret lit syntax.
 HTM binds directly to Preact's `h`.
 
 Stateful widgets are Preact function components that own interaction state with hooks and acquire outside listeners, subscriptions and observers in effects with cleanup.
-This removes the former nested-controller roots and makes component identity, state, and lifetime visible to the renderer.
+Converted widgets no longer need separate controller-owned roots; component identity, state and lifetime are visible to the renderer.
 Native form drafts remain uncontrolled unless the application owns their changing value, so unrelated renders do not reset user input.
 Session state and revision-checked command flows remain plain ES modules; they are shared domain behavior rather than renderer-specific component state.
 
-The remaining imperative boundaries are intentional during migration: legacy control synchronization, native form submission, drag/drop, tooltip positioning, rendered-once dialog skeletons and user-owned disclosure/focus state.
+The remaining imperative boundaries are intentional during migration: legacy control synchronization, controller-owned page and editor-field roots, native form values, drag/drop, tooltip positioning, rendered-once workspace/integration forms and user-owned disclosure/focus state.
 Do not let a second renderer patch component-owned children.
 A keyed card moving between columns changes its Preact parent and remounts; its logical focus and open attachment disclosure are explicitly restored.
 Within one parent, keyed nodes retain identity.
@@ -63,7 +64,7 @@ These are synthetic board results, not a general browser benchmark or an end-to-
 Both library renderers inserted zero elements on unchanged refreshes and title-only updates.
 The original renderer inserted six elements on a title update.
 Cold-render ordering varies between runs; treat small differences as noise rather than a framework guarantee.
-The checked-in Preact/HTM runtime is 14,529 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
+The checked-in Preact/HTM runtime is 14,514 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
 The board measurements above predate the hook-component migration and are a historical hybrid-renderer baseline, not a benchmark of the current component implementation.
 Re-run both renderer probes on the same browser host before drawing performance conclusions from the migrated implementation.
 Normal application builds require no npm installation.

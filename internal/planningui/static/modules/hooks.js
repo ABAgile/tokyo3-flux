@@ -15,4 +15,5 @@ export const hooks = {
   reopenItemEditor: undefined,
   resetBurndown: undefined,
   selectItem: undefined,
+  setSharedItem: undefined,
 };

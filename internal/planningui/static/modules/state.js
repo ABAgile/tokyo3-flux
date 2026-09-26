@@ -54,6 +54,7 @@ const initialState = {
   sprintHistoryError: '',
   bulkSelection: new Set(),
   undoOffer: undefined,
+  undoText: '',
   undoTimer: undefined,
   integrationFormOpen: false,
   integrationCatalog: [],
@@ -83,6 +84,9 @@ const initialState = {
   editorReturn: undefined,
   // The control that opened the editor dialog, for focus return after a rebuild.
   editorOpener: undefined,
+  editorDialog: undefined,
+  editorSaveText: 'Save changes',
+  editorError: '',
   observationPoll: false,
   observationDigest: '',
   observationReadAt: 0,

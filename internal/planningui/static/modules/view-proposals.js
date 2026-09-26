@@ -12,7 +12,7 @@ import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable, accessButtonTemplate } from './permissions.js';
 import { notice } from './notices.js';
-import { openEditor } from './dialog.js';
+import { openEditor, setEditorSaveText } from './dialog.js';
 
 export async function showProposals(before = 0) {
   if (!state.board || state.busy || state.loading) return;
@@ -87,7 +87,7 @@ function importProposal(document) {
       };
     },
   );
-  $('save').textContent = 'Save draft only';
+  setEditorSaveText('Save draft only');
 }
 async function reviewProposal(id) {
   const currentRoot = state.root;
@@ -169,7 +169,7 @@ async function reviewProposal(id) {
       },
       !canAccept,
     );
-    $('save').textContent = 'Accept exact diff';
+    setEditorSaveText('Accept exact diff');
   } catch (e) {
     notice(e.message, true);
   }
@@ -183,5 +183,5 @@ async function rejectProposal(id) {
       fieldTemplate('reason', 'Rejection rationale', '', 'textarea', undefined, { required: true }),
     (data) => ({ kind: 'proposal.reject', target: id, reason: data.get('reason').trim() }),
   );
-  $('save').textContent = 'Reject proposal';
+  setEditorSaveText('Reject proposal');
 }

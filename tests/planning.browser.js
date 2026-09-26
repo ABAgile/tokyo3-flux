@@ -872,8 +872,10 @@ async function run(page) {
           box = badge.getBoundingClientRect(),
           head = header.getBoundingClientRect();
         return (
-          header.children[0]?.id === 'editor-title' &&
-          header.children[1] === badge &&
+          header.children[0]?.id === 'editor-title-group' &&
+          header.children[0]?.querySelector('#editor-title') &&
+          header.children[1]?.id === 'editor-title-badge' &&
+          header.children[1]?.firstElementChild === badge &&
           header.children[2]?.id === 'dismiss' &&
           Math.abs(box.left + box.width / 2 - (head.left + head.width / 2)) < 1
         );
@@ -1176,7 +1178,8 @@ async function run(page) {
           box = badge.getBoundingClientRect(),
           head = header.getBoundingClientRect();
         return (
-          header.children[1] === badge &&
+          header.children[1]?.id === 'editor-title-badge' &&
+          header.children[1]?.firstElementChild === badge &&
           Math.abs(box.left + box.width / 2 - (head.left + head.width / 2)) < 1
         );
       });
@@ -1404,7 +1407,8 @@ async function run(page) {
   check(
     await shareAction.evaluate(
       (node) =>
-        node.previousElementSibling?.classList.contains('help-popover') && !!node.closest('h2'),
+        node.previousElementSibling?.classList.contains('help-popover') &&
+        !!node.closest('#editor-title-group'),
     ),
     'copy link does not follow the details popover in the heading',
   );

@@ -92,7 +92,7 @@ Feature modules export functions and constants; any document listeners or timers
 | Services | `permissions`, `notices`, `items`, `controls`, `people`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
 | Views | `view-board`, `view-archive`, `bulk`, `view-list`, `view-velocity`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `shortcuts`, `view-gate`, `sync` |
-| Shell | `app-shell`: body-level `App` and stable legacy mounts; `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, event wiring and startup |
+| Shell | `app-shell`: body-level `App`, page frame and native dialog markup; `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, controller wiring and startup |
 
 ## CSS file map
 

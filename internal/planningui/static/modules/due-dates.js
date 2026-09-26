@@ -28,7 +28,7 @@ export function dueDateBadge(item) {
   return itemDateStatus(item) ? nodeOf(dueDateBadgeTemplate(item)) : undefined;
 }
 export function editorDueBadgeHost(form) {
-  if (form.classList.contains('item-editor-form')) return form.querySelector('.dialog-head');
+  if (form.classList.contains('item-editor-form')) return form.querySelector('#editor-title-badge');
   if (form.classList.contains('item-detail-form')) return form.querySelector('.item-detail-head');
   return form.querySelector('.item-title-label');
 }

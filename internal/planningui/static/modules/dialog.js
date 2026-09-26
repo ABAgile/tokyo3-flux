@@ -1,98 +1,225 @@
-// The shared editor dialog used by every create/edit flow.
+// The shared Preact editor dialog used by every create/edit flow.
 import { $ } from './dom.js';
-import { mount, replaceContent, unmountIsland } from './preact.js';
+import {
+  html,
+  mount,
+  replaceContent,
+  unmountIsland,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from './preact.js';
 import { requestKey } from './api.js';
-import { state } from './state.js';
+import { state, setState } from './state.js';
 import { change } from './commands.js';
 import { hideAttachmentTooltip } from './item-attachments.js';
+import { hooks } from './hooks.js';
+
+function clearEditorTitleExtras() {
+  for (const id of ['editor-title-extra', 'editor-title-badge']) {
+    const host = $(id);
+    unmountIsland(host);
+    host.replaceChildren();
+  }
+}
+function disposeEditorContent() {
+  replaceContent($('fields'));
+  unmountIsland($('editor-title'));
+  clearEditorTitleExtras();
+}
+function closeAfterNativeEvent(config, dialog) {
+  if (dialog.open || (state.editorDialog && state.editorDialog !== config)) return;
+  restoreEditorFocus();
+  setTimeout(() => {
+    if (dialog.open || (state.editorDialog && state.editorDialog !== config)) return;
+    if (state.editorDialog === config)
+      setState({ editorDialog: undefined, editorSaveText: 'Save changes', editorError: '' });
+    if (state.detailState) return;
+    state.editorItemID = '';
+    hooks.setSharedItem?.('');
+  }, 0);
+}
+
+export function EditorDialog({ config, busy, saveText, errorText }) {
+  const dialogRef = useRef(null);
+  const formRef = useRef(null);
+  const pending = useRef({ serialized: undefined, key: undefined });
+  const [saving, setSaving] = useState(false);
+  const disabled = saving || busy;
+
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    const form = formRef.current;
+    if (!config || !dialog || !form) return;
+    const fields = form.querySelector('#fields');
+    pending.current = { serialized: undefined, key: undefined };
+    replaceContent(fields);
+    unmountIsland(form.querySelector('#editor-title'));
+    clearEditorTitleExtras();
+    form.querySelectorAll('[data-item-footer]').forEach((node) => {
+      node.remove();
+    });
+    form.classList.toggle(
+      'item-editor-form',
+      ['Work item', 'Create work item'].includes(config.title),
+    );
+    const content = config.build(fields);
+    if (content !== undefined) mount(fields, content);
+    if (config.readOnly) {
+      fields
+        .querySelectorAll(
+          'input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])',
+        )
+        .forEach((input) => {
+          input.disabled = true;
+        });
+      fields.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach((input) => {
+        input.disabled = true;
+      });
+    }
+    setSaving(false);
+    if (!dialog.open) dialog.showModal();
+    return () => disposeEditorContent();
+  }, [config]);
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!config || config.readOnly || state.busy) return;
+    setState({ editorError: '' });
+    const form = formRef.current;
+    if (config.onSubmit) {
+      try {
+        await config.onSubmit(new FormData(form), {
+          close: closeEditor,
+          setError: setEditorError,
+          form,
+        });
+      } catch (error) {
+        setEditorError(error.message);
+      }
+      return;
+    }
+    setSaving(true);
+    try {
+      const command = { revision: config.revision, ...config.submit(new FormData(form)) };
+      const serialized = JSON.stringify(command);
+      if (pending.current.serialized !== serialized) {
+        pending.current = { serialized, key: requestKey() };
+      }
+      await change(command, pending.current.key);
+      if (config.afterSave) await config.afterSave(command);
+      closeEditor();
+    } catch (error) {
+      setEditorError(
+        `${error.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function dismiss() {
+    if (!state.busy) closeEditor();
+  }
+  function cancel(event) {
+    event.preventDefault();
+    if (event.target === dialogRef.current && !state.busy) closeEditor();
+  }
+  function backdrop(event) {
+    if (!state.busy && event.target === dialogRef.current) closeEditor();
+  }
+  function closed() {
+    closeAfterNativeEvent(config, dialogRef.current);
+  }
+
+  return html`<dialog
+    id="editor"
+    aria-labelledby="editor-title"
+    ref=${dialogRef}
+    onCancel=${cancel}
+    onClick=${backdrop}
+    onClose=${closed}
+  >
+    <form id="editor-form" ref=${formRef} onSubmit=${submit}>
+      <div class="dialog-head">
+        <div id="editor-title-group">
+          <h2 id="editor-title">${config?.title || 'Work item'}</h2>
+          <div id="editor-title-extra"></div>
+        </div>
+        <div id="editor-title-badge"></div>
+        <button type="button" id="dismiss" aria-label="Close editor" disabled=${disabled} onClick=${dismiss}>×</button>
+      </div>
+      <div id="fields"></div>
+      <p id="form-error" role="alert" hidden=${!errorText}>${errorText}</p>
+      <div class="dialog-foot">
+        <span id="editor-footer-actions"></span>
+        <button type="button" id="cancel" disabled=${disabled} onClick=${dismiss}>Cancel</button>
+        <button type="submit" class="primary" id="save" hidden=${!config || config.hideSave || config.readOnly} disabled=${disabled}>
+          ${saveText || config?.saveText || 'Save changes'}
+        </button>
+      </div>
+    </form>
+  </dialog>`;
+}
 
 export function closeEditor() {
   if (state.busy) return;
   const returnTo = state.editorReturn;
   state.editorReturn = undefined;
   hideAttachmentTooltip();
-  $('editor').close();
+  const dialog = $('editor');
+  if (dialog.open) dialog.close();
+  setState({ editorDialog: undefined, editorSaveText: 'Save changes', editorError: '' });
   restoreEditorFocus();
   if (returnTo) returnTo();
 }
-// The dialog returns focus to its opener, but a board update while it was open
-// can rebuild that control; focus the rebuilt control with the same focus key.
-// closeEditor calls this at once, and the dialog's close event covers the paths
-// that close it directly.
+// Return focus to the opener, or to the rebuilt control with the same logical key.
 export function restoreEditorFocus() {
   const opener = state.editorOpener;
   state.editorOpener = undefined;
   const key = opener?.isConnected === false ? opener.dataset?.focusKey : '';
-  // Focus is still on the closed dialog's control, or already on the body.
   const active = document.activeElement;
   if (key && (active === document.body || $('editor').contains(active)))
     document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
 }
-export function openEditor(title, build, submit, readOnly = false, afterSave, afterClose) {
+export function setEditorError(text) {
+  setState({ editorError: String(text || '') });
+}
+export function setEditorSaveText(text) {
+  if (state.editorDialog) setState({ editorSaveText: String(text || '') });
+}
+export function openEditor(
+  title,
+  build,
+  submit,
+  readOnly = false,
+  afterSave,
+  afterClose,
+  options = {},
+) {
   state.editorReturn = afterClose;
-  state.editorOpener = document.activeElement;
-  unmountIsland($('editor-title'));
-  $('editor-title').textContent = title;
-  $('editor-form')
-    .querySelectorAll('.dialog-head .badge-due[data-due-date-badge]')
-    .forEach((e) => e.remove());
-  $('editor-form').classList.toggle(
-    'item-editor-form',
-    ['Work item', 'Create work item'].includes(title),
-  );
-  $('editor-form')
-    .querySelectorAll('[data-item-footer]')
-    .forEach((e) => e.remove());
-  $('form-error').textContent = '';
-  $('save').textContent = 'Save changes';
-  $('save').hidden = readOnly;
-  $('save').disabled = false;
-  const revision = state.board.workspace.revision;
-  let pending, key;
-  // A builder returns the dialog's template, or renders into the fields itself
-  // (the item editor) and returns nothing.
-  replaceContent($('fields'));
-  const content = build($('fields'));
-  if (content !== undefined) mount($('fields'), content);
-  if (readOnly) {
-    $('fields')
-      .querySelectorAll(
-        'input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])',
-      )
-      .forEach((e) => {
-        e.disabled = true;
-      });
-    $('fields')
-      .querySelectorAll('[data-multi-edit],[data-multi-remove]')
-      .forEach((e) => {
-        e.disabled = true;
-      });
-  }
-  $('editor-form').onsubmit = async (e) => {
-    e.preventDefault();
-    if (readOnly || state.busy) return;
-    $('form-error').textContent = '';
-    $('save').disabled = true;
-    $('cancel').disabled = true;
-    $('dismiss').disabled = true;
-    try {
-      const command = { revision, ...submit(new FormData($('editor-form'))) };
-      const serialized = JSON.stringify(command);
-      if (pending !== serialized) {
-        key = requestKey();
-        pending = serialized;
-      }
-      await change(command, key);
-      if (afterSave) await afterSave(command);
-      closeEditor();
-    } catch (err) {
-      $('form-error').textContent =
-        `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`;
-    } finally {
-      $('save').disabled = false;
-      $('cancel').disabled = false;
-      $('dismiss').disabled = false;
-    }
+  if (!$('editor').open) state.editorOpener = document.activeElement;
+  const config = {
+    title,
+    build,
+    submit,
+    readOnly,
+    afterSave,
+    onSubmit: options.onSubmit,
+    hideSave: !!options.hideSave,
+    saveText: options.saveText,
+    revision: state.board.workspace.revision,
   };
-  $('editor').showModal();
+  setState({
+    editorDialog: config,
+    editorSaveText: options.saveText || 'Save changes',
+    editorError: '',
+  });
+}
+export function openFormDialog(title, saveText, build, onSubmit, options = {}) {
+  openEditor(title, build, undefined, false, undefined, undefined, {
+    ...options,
+    saveText,
+    onSubmit,
+  });
 }

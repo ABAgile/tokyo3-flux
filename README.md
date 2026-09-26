@@ -481,7 +481,8 @@ Run `make fmt-web lint-web` after JS/CSS edits and `make fmt-md` after Markdown 
 ### Preact + HTM experiment
 
 The `preact-htm` branch replaces the handwritten renderer with Preact and HTM across Board/List, summaries, maintenance views, Markdown, selectors, comments, attachments and all dialog markup.
-A Preact `App` root now owns the body-level shell and status bars, while the existing DOM-first page mounts remain stable beneath it during the incremental migration.
+A Preact `App` root owns the body-level shell, status and undo bars, page frame, and native dialog markup.
+Persistent content hosts preserve view lifetimes while their controllers continue moving into components; the shared editor dialog retains its snapshot and draft across unrelated updates.
 Shared shell state is exposed through a selector store; revision-checked command controllers remain plain ES modules, and stateful widgets use Preact function components and hooks.
 This is a rendering migration, not a rewrite of the API or application state model.
 View/template boundaries from the `lit-html` experiment were reused where applicable so the comparison does not introduce unrelated layout or feature changes.

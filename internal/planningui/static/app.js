@@ -1,14 +1,7 @@
 import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
 import { emptyState, renderOptions } from './modules/layout.js';
-import {
-  html,
-  nodeOf,
-  nothing,
-  render as renderTemplate,
-  replaceContent,
-  unmountIsland,
-} from './modules/preact.js';
+import { html, nodeOf, nothing, render as renderTemplate } from './modules/preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
@@ -35,7 +28,7 @@ import {
 import { resetBurndown } from './modules/view-burndown.js';
 import { clearUndo, quick, runSequence } from './modules/commands.js';
 import { isFileTransfer, initAttachmentTooltips } from './modules/item-attachments.js';
-import { closeEditor, restoreEditorFocus } from './modules/dialog.js';
+import { closeEditor } from './modules/dialog.js';
 import { initObservationTooltips } from './modules/gitlab.js';
 import {
   workspacePreference,
@@ -92,8 +85,39 @@ Object.assign(hooks, {
   reopenItemEditor,
   resetBurndown,
   selectItem,
+  setSharedItem,
 });
-renderTemplate(html`<${App} refresh=${refresh} />`, document.body);
+async function runUndo() {
+  const commands = state.undoOffer;
+  clearUndo();
+  if (!commands?.length || !state.board || !writable()) return;
+  if (commands.length === 1) {
+    await quick(commands[0]);
+    return;
+  }
+  await runSequence('Undo', commands);
+}
+renderTemplate(
+  html`<${App}
+    refresh=${refresh}
+    onUndo=${runUndo}
+    onThemeToggle=${toggleTheme}
+    onWorkspaceCreate=${showWorkspaceCreate}
+    onWorkspaceChange=${handleWorkspaceChange}
+    onView=${navigateView}
+    onProposals=${() => showProposals()}
+    onSetupBoard=${setupBoard}
+    onNewItem=${() => editItem()}
+    onPresentation=${setPresentation}
+    onScopeChange=${changeScope}
+    onFilterChange=${changeFilter}
+    onSearchInput=${queueSearch}
+    onSearchChange=${handleSearchChange}
+    onSearchKeyDown=${handleSearchKeyDown}
+    onShortcutClose=${closeShortcuts}
+  />`,
+  document.body,
+);
 const theme =
   localStorage.getItem('flux-plan-theme') ||
   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -103,12 +127,12 @@ function updateThemeControl() {
   $('theme').firstElementChild.textContent = dark ? '☀' : '☾';
   $('theme').title = dark ? 'Switch to light theme' : 'Switch to dark theme';
 }
-$('theme').onclick = () => {
+function toggleTheme() {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   localStorage.setItem('flux-plan-theme', next);
   updateThemeControl();
-};
+}
 updateThemeControl();
 window.addEventListener('popstate', () => {
   void applyHistoryNavigation();
@@ -262,13 +286,6 @@ function renderContent() {
     );
   }
 }
-$('editor').addEventListener('cancel', (e) => {
-  e.preventDefault();
-  if (e.target === $('editor') && !state.busy) closeEditor();
-});
-$('editor').addEventListener('click', (e) => {
-  if (!state.busy && e.target === $('editor')) closeEditor();
-});
 initObservationTooltips();
 initAttachmentTooltips();
 document.addEventListener('pointerdown', (e) => {
@@ -296,120 +313,71 @@ function setPresentation(next) {
   render();
   persistPlanningURL();
 }
-$('dismiss').onclick = $('cancel').onclick = () => {
-  if (!state.busy) closeEditor();
-};
 // A closed item editor is no longer a view of that card. The check is deferred
 // because closing one dialog to open another — archive, observations, restore —
 // happens within the same task and must not drop the card from the URL.
-$('editor').addEventListener('close', restoreEditorFocus);
-$('editor').addEventListener('close', () => {
-  // A dialog can close and reopen in the same task. Only dispose the form
-  // when it really stays closed, not the newly opened editor's controllers.
-  if (!$('editor').open) {
-    replaceContent($('fields'));
-    unmountIsland($('editor-title'));
-  }
-});
-$('editor').addEventListener('close', () => {
-  const opener = state.editorOpener;
-  state.editorOpener = undefined;
-  const key = opener?.isConnected === false ? opener.dataset?.focusKey : '';
-  // Focus is still on the closed dialog's control, or already on the body.
-  const active = document.activeElement;
-  if (key && (active === document.body || $('editor').contains(active)))
-    document.querySelector(`[data-focus-key="${CSS.escape(key)}"]`)?.focus();
-});
-$('editor').addEventListener('close', () => {
-  setTimeout(() => {
-    if ($('editor').open || state.detailState) return;
-    state.editorItemID = '';
-    setSharedItem('');
-  }, 0);
-});
-$('proposals').onclick = () => showProposals();
-$('new-item').onclick = () => editItem();
-$('columns').onclick = setupBoard;
-$('new-workspace').onclick = showWorkspaceCreate;
-$('refresh').onclick = refresh;
-$('presentation-board').onclick = () => setPresentation('board');
-$('presentation-list').onclick = () => setPresentation('list');
-$('scope').onchange = () => {
+function changeScope() {
   render();
   persistPlanningURL();
-};
+}
 // Each select adds one value and resets to its "all" entry, so it reads as an
 // add-a-filter control while the chip row owns the active state.
-FILTER_NAMES.forEach((name) => {
-  $(name).onchange = (event) => {
-    addFilterValue(name, event.target.value);
-    event.target.value = 'all';
-    applyFilterChange(name);
-  };
-});
-$('search').oninput = queueSearch;
-$('search').onchange = () => {
+function changeFilter(name, event) {
+  addFilterValue(name, event.target.value);
+  event.target.value = 'all';
+  applyFilterChange(name);
+}
+function handleSearchChange() {
   if (flushSearch() && state.board) renderContent();
-};
-$('search').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    if (flushSearch() && state.board) renderContent();
-  }
-});
-$('shortcuts-dismiss').onclick = $('shortcuts-close').onclick = () => $('shortcuts').close();
-initShortcuts();
-$('undo').onclick = async () => {
-  const commands = state.undoOffer;
-  clearUndo();
-  if (!commands?.length || !state.board || !writable()) return;
-  if (commands.length === 1) {
-    await quick(commands[0]);
-    return;
-  }
-  await runSequence('Undo', commands);
-};
-document.querySelectorAll('[data-view]').forEach((b) => {
-  b.onclick = async () => {
-    if (state.loading || state.busy || state.integrationFormOpen) return;
-    if (
-      state.view === 'board' &&
-      b.dataset.view !== 'board' &&
-      state.detailState &&
-      !closeDetail({ focus: false })
-    )
-      return;
-    state.view = b.dataset.view;
-    state.bulkSelection.clear();
-    if (state.view === 'history') {
-      try {
-        await loadHistory(true);
-      } catch (e) {
-        notice(e.message, true);
-      }
-    }
-    if (state.view === 'archive') {
-      try {
-        await loadArchive(true);
-      } catch (e) {
-        notice(e.message, true);
-      }
-    }
-    if (state.view === 'sprints') {
-      resetSprintHistory();
-      try {
-        await loadSprintHistory(true);
-      } catch (e) {
-        state.sprintHistoryError = e.message;
-        notice(e.message, true);
-      }
-    }
-    render();
-  };
-});
-$('workspace').onchange = () => {
+}
+function handleSearchKeyDown(event) {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  if (flushSearch() && state.board) renderContent();
+}
+function handleWorkspaceChange() {
   void chooseWorkspace();
-};
+}
+function closeShortcuts() {
+  $('shortcuts').close();
+}
+async function navigateView(view) {
+  if (state.loading || state.busy || state.integrationFormOpen) return;
+  if (
+    state.view === 'board' &&
+    view !== 'board' &&
+    state.detailState &&
+    !closeDetail({ focus: false })
+  )
+    return;
+  state.view = view;
+  state.bulkSelection.clear();
+  if (view === 'history') {
+    try {
+      await loadHistory(true);
+    } catch (e) {
+      notice(e.message, true);
+    }
+  }
+  if (view === 'archive') {
+    try {
+      await loadArchive(true);
+    } catch (e) {
+      notice(e.message, true);
+    }
+  }
+  if (view === 'sprints') {
+    resetSprintHistory();
+    try {
+      await loadSprintHistory(true);
+    } catch (e) {
+      state.sprintHistoryError = e.message;
+      notice(e.message, true);
+    }
+  }
+  render();
+}
+initShortcuts();
 startPolling();
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) refreshDueDateBadges();

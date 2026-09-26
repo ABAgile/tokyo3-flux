@@ -44,6 +44,11 @@ dialog > .dialog-panel {
 .dialog-head {
   margin-bottom: var(--s6);
 }
+#editor-title-extra:empty,
+#editor-title-badge:empty,
+#editor-footer-actions:empty {
+  display: none;
+}
 .dialog-foot {
   justify-content: flex-end;
   margin-top: var(--s6);

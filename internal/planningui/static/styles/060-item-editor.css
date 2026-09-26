@@ -139,7 +139,13 @@ dialog > form.item-editor-form {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
 }
-.item-editor-form .dialog-head > #editor-title {
+.item-editor-form .dialog-head > #editor-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+}
+.item-editor-form .dialog-head #editor-title {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -147,9 +153,14 @@ dialog > form.item-editor-form {
   grid-column: 3;
   justify-self: end;
 }
-.item-editor-form .dialog-head > .badge-due {
+.item-editor-form .dialog-head > #editor-title-badge {
   grid-column: 2;
   justify-self: center;
+}
+.item-editor-form .dialog-head #editor-title-extra {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
 }
 @media (min-width: 1000px) {
   dialog > form.item-editor-form {

@@ -1,6 +1,6 @@
 // Same-origin Preact + HTM, without JSX, eval, or an application build step.
 import { h, htm, Fragment, render as preactRender } from './vendor-preact.js';
-export { Component, Fragment } from './vendor-preact.js';
+export { Fragment };
 export {
   useEffect,
   useLayoutEffect,

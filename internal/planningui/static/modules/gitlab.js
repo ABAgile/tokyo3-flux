@@ -7,7 +7,7 @@ import { html, nodeOf, nothing } from './preact.js';
 import { state } from './state.js';
 import { writable } from './permissions.js';
 import { change } from './commands.js';
-import { openEditor } from './dialog.js';
+import { openEditor, setEditorError } from './dialog.js';
 
 export function linkDisplayName(link, includeTitle = true) {
   const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
@@ -314,8 +314,9 @@ async function refreshObservation(item, link, key) {
     $('editor').close();
     showLinks(state.board.items.find((i) => i.id === item.id));
   } catch (e) {
-    $('form-error').textContent =
-      `${e.message} Refresh the board to see current status; cooldowns prevent duplicate requests.`;
+    setEditorError(
+      `${e.message} Refresh the board to see current status; cooldowns prevent duplicate requests.`,
+    );
   }
 }
 // The dialog is a snapshot rendered once per opening and never re-rendered,

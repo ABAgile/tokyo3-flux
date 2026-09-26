@@ -30,7 +30,7 @@ import {
 import { singleFilterValue } from './filters.js';
 import { UNDO_TTL, offerUndo, quick } from './commands.js';
 import { itemAttachmentsTemplate } from './item-attachments.js';
-import { closeEditor, openEditor } from './dialog.js';
+import { closeEditor, openEditor, setEditorSaveText } from './dialog.js';
 import { linkDisplayName, cardObservationIconTemplate, showLinks } from './gitlab.js';
 import { itemCommentsTemplate } from './item-comments.js';
 import { setSharedItem, copyCardLink, openSharedItem } from './url-state.js';
@@ -160,8 +160,8 @@ export function refreshEditorDueBadge(form, item) {
   previous?.remove();
   showEditorOverdueBadge(form, item);
 }
-// The overdue badge sits in the editor's head, a static host outside the Preact
-// template, and names itself in the title input's aria-describedby.
+// The overdue badge sits in the centered editor-title-badge host and names
+// itself in the title input's aria-describedby.
 function showEditorOverdueBadge(form, item) {
   if (!itemDateStatus(item)?.overdue) return;
   const badge = dueDateBadge(item);
@@ -428,8 +428,8 @@ function itemEditorTemplate(item, draft, readOnly, context) {
     </div>`;
 }
 // The card title gets a details popover and a "Copy link" action. Both sit in
-// the editor's head, a static host, so they are appended as nodes; the copy
-// action's text belongs to markCopyOutcome.
+// the editor-title-extra host, separate from the Preact-owned title text; the
+// copy action's text belongs to markCopyOutcome.
 function decorateItemTitle(titleHost, item) {
   const share = nodeOf(html`<button
     type="button"
@@ -469,7 +469,10 @@ function addItemFooterAction(item, readOnly, context) {
           onClick=${() => void restoreSharedItem(item, context)}
         >Restore item</button>`,
   );
-  const footer = context.footer || context.form.querySelector('.dialog-foot');
+  const footer =
+    context.footer ||
+    context.form.querySelector('#editor-footer-actions') ||
+    context.form.querySelector('.dialog-foot');
   const cancel = footer?.querySelector('#cancel,.detail-cancel');
   if (footer) footer.insertBefore(action, cancel || footer.lastElementChild);
 }
@@ -514,7 +517,7 @@ export function editItemModal(item, draft) {
     existing ? 'Work item' : 'Create work item',
     (fields) => {
       context.form = $('editor-form');
-      buildItemEditor(fields, item, draft, readOnly, context, $('editor-title'));
+      buildItemEditor(fields, item, draft, readOnly, context, $('editor-title-extra'));
     },
     (data) => {
       if (existing) desiredLinkIDs = data.getAll('link_ids');
@@ -552,5 +555,5 @@ function archiveItem(item, context) {
       if (context?.mode === 'detail') hooks.closeDetail({ force: true, focus: true });
     },
   );
-  $('save').textContent = 'Archive item';
+  setEditorSaveText('Archive item');
 }

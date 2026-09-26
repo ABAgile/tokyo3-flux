@@ -14,7 +14,7 @@ import { state } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
 import { labelColorPickerTemplate } from './multi-select.js';
-import { openEditor } from './dialog.js';
+import { openEditor, setEditorSaveText } from './dialog.js';
 
 function editLabel(label) {
   $('editor').close();
@@ -48,7 +48,7 @@ function deleteLabel(label) {
       html`<p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>`,
     () => ({ kind: 'label.delete', target: label.name }),
   );
-  $('save').textContent = 'Delete label';
+  setEditorSaveText('Delete label');
 }
 function labelRowTemplate(label) {
   const usage = state.board.items.filter((item) => item.labels.includes(label.name)).length;

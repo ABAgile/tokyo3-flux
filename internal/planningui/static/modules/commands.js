@@ -1,7 +1,6 @@
 // Planning changes: posting, optimistic apply, undo and sequences.
-import { $ } from './dom.js';
 import { api, requestKey } from './api.js';
-import { state } from './state.js';
+import { state, setState } from './state.js';
 import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
 import { notice } from './notices.js';
@@ -115,19 +114,13 @@ function optimisticApply(command) {
 export const UNDO_TTL = 10000;
 export function clearUndo() {
   if (state.undoTimer) clearTimeout(state.undoTimer);
-  state.undoTimer = undefined;
-  state.undoOffer = undefined;
-  $('undo-bar').hidden = true;
-  $('undo-text').textContent = '';
+  setState({ undoTimer: undefined, undoOffer: undefined, undoText: '' });
 }
 export function offerUndo(text, commands) {
   const list = (Array.isArray(commands) ? commands : [commands]).filter(Boolean);
   clearUndo();
   if (!list.length) return;
-  state.undoOffer = list;
-  $('undo-text').textContent = text;
-  $('undo').disabled = !writable();
-  $('undo-bar').hidden = false;
+  setState({ undoOffer: list, undoText: text });
   state.undoTimer = setTimeout(clearUndo, UNDO_TTL);
 }
 function itemTitle(id) {

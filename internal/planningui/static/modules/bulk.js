@@ -1,8 +1,7 @@
 // Bulk selection and bulk actions in the List presentation.
-import { $ } from './dom.js';
 import { labelForeground } from './format.js';
 import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
-import { html, mount, nothing } from './preact.js';
+import { html, nothing } from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { accessButtonTemplate } from './permissions.js';
@@ -10,6 +9,7 @@ import { notice } from './notices.js';
 import { findItem } from './items.js';
 import { memberName } from './people.js';
 import { UNDO_TTL, offerUndo, runSequence } from './commands.js';
+import { openFormDialog } from './dialog.js';
 
 function bulkTargets() {
   return [...state.bulkSelection].map(findItem).filter((item) => item && !item.archived);
@@ -34,33 +34,25 @@ async function runBulk(label, plan, undoFor) {
   if (ok && commands.length && undo)
     offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
 }
-function openBulkDialog(title, saveText, build, plan, label, undoFor) {
-  state.editorReturn = undefined;
-  $('editor-title').textContent = title;
-  $('editor-form').classList.remove('item-editor-form');
-  $('editor-form')
-    .querySelectorAll('[data-item-footer]')
-    .forEach((node) => node.remove());
-  $('form-error').textContent = '';
-  $('save').hidden = false;
-  $('save').disabled = false;
-  $('save').textContent = saveText;
-  mount($('fields'), build());
-  $('editor-form').onsubmit = async (event) => {
-    event.preventDefault();
-    if (state.busy) return;
-    $('form-error').textContent = '';
-    let apply;
-    try {
-      apply = plan(new FormData($('editor-form')));
-    } catch (error) {
-      $('form-error').textContent = error.message;
-      return;
-    }
-    $('editor').close();
-    await runBulk(label, apply, undoFor);
-  };
-  $('editor').showModal();
+function openBulkDialog(title, saveText, build, plan, label, undoFor, hideSave = false) {
+  openFormDialog(
+    title,
+    saveText,
+    build,
+    async (data, { close, setError }) => {
+      if (state.busy) return;
+      let apply;
+      try {
+        apply = plan(data);
+      } catch (error) {
+        setError(error.message);
+        return;
+      }
+      close();
+      await runBulk(label, apply, undoFor);
+    },
+    { hideSave },
+  );
 }
 function bulkAssign() {
   const count = bulkTargets().length;
@@ -89,10 +81,8 @@ function bulkSprint() {
     'Add selected work to a sprint',
     'Add to sprint',
     () => {
-      if (!open.length) {
-        $('save').hidden = true;
+      if (!open.length)
         return emptyStateTemplate('No open sprint is available. Plan a sprint first.');
-      }
       return html`${helpTextTemplate(
         `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`,
       )}
@@ -113,6 +103,8 @@ function bulkSprint() {
           : bulkItemUpdate(item, { sprint_ids: [...item.sprint_ids, sprint] });
     },
     'Add to sprint',
+    undefined,
+    !open.length,
   );
 }
 function bulkLabel() {
@@ -121,10 +113,8 @@ function bulkLabel() {
     'Add a label to selected work',
     'Add label',
     () => {
-      if (!state.board.labels.length) {
-        $('save').hidden = true;
+      if (!state.board.labels.length)
         return emptyStateTemplate('No workspace label exists yet. Create one in the Labels view.');
-      }
       return html`${helpTextTemplate(
         `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`,
       )}
@@ -152,6 +142,8 @@ function bulkLabel() {
           : bulkItemUpdate(item, { labels: [...item.labels, label] });
     },
     'Add label',
+    undefined,
+    !state.board.labels.length,
   );
 }
 function bulkArchive() {

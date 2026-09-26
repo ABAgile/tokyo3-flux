@@ -276,7 +276,7 @@ export async function addGitLabLink(item, context) {
   openEditor(
     'Add link',
     () => {
-      $('editor-title').append(
+      $('editor-title-extra').append(
         ' ',
         helpPopover(
           'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',

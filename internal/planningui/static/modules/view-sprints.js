@@ -30,7 +30,7 @@ import { done, blocked, scopeItems } from './items.js';
 import { placeFilters, sprintFilterItems, sprintMatchesFilters } from './filters.js';
 import { burndownTemplate } from './view-burndown.js';
 import { quick } from './commands.js';
-import { openEditor } from './dialog.js';
+import { openEditor, setEditorSaveText } from './dialog.js';
 import { persistPlanningURL } from './url-state.js';
 import { sprintVelocityTemplate } from './view-velocity.js';
 
@@ -401,7 +401,7 @@ function closeSprint(sprint) {
       reason: data.get('reason').trim(),
     }),
   );
-  $('save').textContent = 'Close sprint';
+  setEditorSaveText('Close sprint');
 }
 function archiveSprint(sprint) {
   openEditor(
@@ -412,5 +412,5 @@ function archiveSprint(sprint) {
       )}`,
     () => ({ kind: 'sprint.archive', target: sprint.id }),
   );
-  $('save').textContent = 'Archive sprint';
+  setEditorSaveText('Archive sprint');
 }

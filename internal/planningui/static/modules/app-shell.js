@@ -1,9 +1,10 @@
-// Preact owns the application shell. Legacy page mounts are isolated below it
-// until their templates move into this tree.
-import { Component, Fragment, html } from './preact.js';
+// Preact owns the application shell; named content hosts keep existing view
+// lifetimes stable while their controllers move into components.
+import { Fragment, html } from './preact.js';
 import { useStore } from './state.js';
 import { workspaceLabel } from './format.js';
 import { StatusBars } from './notices.js';
+import { EditorDialog } from './dialog.js';
 
 const VIEWS = [
   ['board', '▦', 'Kanban board'],
@@ -40,6 +41,11 @@ function selectShell(state) {
     busy: state.busy,
     loading: state.loading,
     integrationFormOpen: state.integrationFormOpen,
+    undoOffer: state.undoOffer,
+    undoText: state.undoText,
+    editorDialog: state.editorDialog,
+    editorSaveText: state.editorSaveText,
+    editorError: state.editorError,
   };
 }
 function sameShell(left, right) {
@@ -66,36 +72,35 @@ function shellSubtitle({ board, view, workspaceGate }) {
   return SUBTITLES[view] || 'Plan intentionally. Keep work moving.';
 }
 
-// These hosts retain the existing DOM-first page/dialog lifetimes. The parent
-// shell can update without reconciling children managed by those controllers.
-class LegacyMain extends Component {
-  shouldComponentUpdate() {
-    return false;
-  }
-
-  render() {
-    return html`<${Fragment}>
-      <div id="undo-bar" class="notice-bar notice-bar-accent" hidden role="status" aria-live="polite">
-        <span id="undo-text"></span>
-        <button id="undo" type="button">Undo</button>
-      </div>
+// The page frame and dialogs are part of the App tree. Their named content
+// hosts contain smaller Preact roots owned by the existing view controllers.
+function PlanningArea({
+  showPageRoot,
+  onPresentation,
+  onScopeChange,
+  onFilterChange,
+  onSearchInput,
+  onSearchChange,
+  onSearchKeyDown,
+}) {
+  return html`<${Fragment}>
       <section id="content" aria-label="Planning content">
-        <div id="planning-frame" class="page-stack">
+        <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
           <section id="project-summary" class="panel project-summary" hidden aria-label="Project summary"></section>
           <section id="sprint-summary" class="sprints" aria-label="Active sprints"></section>
           <div id="planning-filter-slot" class="filter-slot">
             <div id="planning-filters" class="filter-bar">
               <div class="actions">
-                <label id="scope-label">Scope<select id="scope"><option value="active" selected>Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option></select></label>
-                <label>Project<select id="project" aria-label="Project"><option value="all">All projects</option><option value="none">No project</option></select></label>
-                <label>Assignee<select id="assignee" aria-label="Assignee"><option value="all">All assignees</option><option value="none">Unassigned</option></select></label>
-                <label id="label-filter">Label<select id="label" aria-label="Label"><option value="all">All labels</option><option value="none">No labels</option></select></label>
-                <label id="search-filter">Search<input id="search" type="search" autocomplete="off" placeholder="Find work… (press /)" maxlength="240"></label>
+                <label id="scope-label">Scope<select id="scope" onChange=${onScopeChange}><option value="active" selected>Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option></select></label>
+                <label>Project<select id="project" aria-label="Project" onChange=${(event) => onFilterChange('project', event)}><option value="all">All projects</option><option value="none">No project</option></select></label>
+                <label>Assignee<select id="assignee" aria-label="Assignee" onChange=${(event) => onFilterChange('assignee', event)}><option value="all">All assignees</option><option value="none">Unassigned</option></select></label>
+                <label id="label-filter">Label<select id="label" aria-label="Label" onChange=${(event) => onFilterChange('label', event)}><option value="all">All labels</option><option value="none">No labels</option></select></label>
+                <label id="search-filter">Search<input id="search" type="search" autocomplete="off" placeholder="Find work… (press /)" maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
               </div>
               <div class="filter-bar-end">
                 <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation">
-                  <button id="presentation-board" type="button" aria-pressed="true">Board</button>
-                  <button id="presentation-list" type="button" aria-pressed="false">List</button>
+                  <button id="presentation-board" type="button" aria-pressed="true" onClick=${() => onPresentation('board')}>Board</button>
+                  <button id="presentation-list" type="button" aria-pressed="false" onClick=${() => onPresentation('list')}>List</button>
                 </div>
                 <span id="count" class="filter-bar-count muted"></span>
               </div>
@@ -104,38 +109,18 @@ class LegacyMain extends Component {
           </div>
           <div id="planning-body" aria-busy="true"></div>
         </div>
-        <div id="page-root" hidden></div>
+        <div id="page-root" hidden=${!showPageRoot}></div>
       </section>
     </>`;
-  }
 }
 
-class LegacyDialogs extends Component {
-  shouldComponentUpdate() {
-    return false;
-  }
-
-  render() {
-    return html`<${Fragment}>
-      <dialog id="editor" aria-labelledby="editor-title">
-        <form id="editor-form">
-          <div class="dialog-head">
-            <h2 id="editor-title">Work item</h2>
-            <button type="button" id="dismiss" aria-label="Close editor">×</button>
-          </div>
-          <div id="fields"></div>
-          <p id="form-error" role="alert"></p>
-          <div class="dialog-foot">
-            <button type="button" id="cancel">Cancel</button>
-            <button type="submit" class="primary" id="save">Save changes</button>
-          </div>
-        </form>
-      </dialog>
+function DialogHost({ onShortcutClose }) {
+  return html`<${Fragment}>
       <dialog id="shortcuts" aria-labelledby="shortcuts-title">
         <div class="dialog-panel">
           <div class="dialog-head">
             <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-            <button type="button" id="shortcuts-dismiss" aria-label="Close keyboard shortcuts">×</button>
+            <button type="button" id="shortcuts-dismiss" aria-label="Close keyboard shortcuts" onClick=${onShortcutClose}>×</button>
           </div>
           <dl class="shortcut-list">
             <dt><kbd>/</kbd></dt><dd>Focus the work search</dd>
@@ -151,14 +136,30 @@ class LegacyDialogs extends Component {
             <dt><kbd>Esc</kbd></dt><dd>Leave the focused control, or close the open dialog or detail pane</dd>
             <dt><kbd>?</kbd></dt><dd>Show this list</dd>
           </dl>
-          <div class="dialog-foot"><button type="button" id="shortcuts-close" class="primary">Close</button></div>
+          <div class="dialog-foot"><button type="button" id="shortcuts-close" class="primary" onClick=${onShortcutClose}>Close</button></div>
         </div>
       </dialog>
     </>`;
-  }
 }
 
-export function App({ refresh }) {
+export function App({
+  refresh,
+  onUndo,
+  onThemeToggle,
+  onWorkspaceCreate,
+  onWorkspaceChange,
+  onView,
+  onProposals,
+  onSetupBoard,
+  onNewItem,
+  onPresentation,
+  onScopeChange,
+  onFilterChange,
+  onSearchInput,
+  onSearchChange,
+  onSearchKeyDown,
+  onShortcutClose,
+}) {
   const shell = useStore(selectShell, sameShell);
   const {
     board,
@@ -186,20 +187,20 @@ export function App({ refresh }) {
         <div class="workspace-label-row">
           <label for="workspace">Workspace</label>
           <div class="workspace-actions">
-            <button id="new-workspace" class="icon-button" type="button" aria-label="Create workspace" title="Create workspace" disabled=${!session || disabled}><span aria-hidden="true">＋</span></button>
-            <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh workspace" disabled=${disabled}><span aria-hidden="true">↻</span></button>
+            <button id="new-workspace" class="icon-button" type="button" aria-label="Create workspace" title="Create workspace" disabled=${!session || disabled} onClick=${onWorkspaceCreate}><span aria-hidden="true">＋</span></button>
+            <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh workspace" disabled=${disabled} onClick=${refresh}><span aria-hidden="true">↻</span></button>
           </div>
         </div>
-        <select id="workspace" aria-label="Workspace" value=${currentWorkspace} disabled=${!board || disabled}>
+        <select id="workspace" aria-label="Workspace" value=${currentWorkspace} disabled=${!board || disabled} onChange=${onWorkspaceChange}>
           ${workspaces.map((workspace) => html`<option key=${workspace.id} value=${workspace.id}>${workspaceLabel(workspace)}</option>`)}
         </select>
       </div>
       <nav aria-label="Planning views" hidden=${!board}>
-        ${VIEWS.map(([id, icon, label]) => html`<button key=${id} data-view=${id} aria-current=${view === id ? 'page' : null} disabled=${disabled}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`)}
+        ${VIEWS.map(([id, icon, label]) => html`<button key=${id} data-view=${id} aria-current=${view === id ? 'page' : null} disabled=${disabled} onClick=${() => onView(id)}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`)}
       </nav>
       <div class="sidebar-foot">
         <div class="sidebar-session">
-          <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title="Switch theme"><span aria-hidden="true">☾</span></button>
+          <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title="Switch theme" onClick=${onThemeToggle}><span aria-hidden="true">☾</span></button>
           <div class="sidebar-account"><span id="identity">${session?.name || session?.subject || 'Loading session…'}</span><a href="/auth/logout">Sign out</a></div>
         </div>
       </div>
@@ -208,14 +209,34 @@ export function App({ refresh }) {
       <div class="heading">
         <div><h1 id="title">${shellTitle(shell)}</h1><p id="subtitle" class="muted">${shellSubtitle(shell)}</p></div>
         <div class="actions heading-actions" hidden=${!board}>
-          <button id="proposals">Proposals</button>
-          <button id="columns" data-write>Board setup</button>
-          <button id="new-item" class="primary" data-write>＋ New item</button>
+          <button id="proposals" onClick=${onProposals}>Proposals</button>
+          <button id="columns" data-write onClick=${onSetupBoard}>Board setup</button>
+          <button id="new-item" class="primary" data-write onClick=${onNewItem}>＋ New item</button>
         </div>
       </div>
       <div id="status-bars"><${StatusBars} refresh=${refresh} /></div>
-      <${LegacyMain} />
+      <div id="undo-bar" class="notice-bar notice-bar-accent" hidden=${!shell.undoOffer} role="status" aria-live="polite">
+        <span id="undo-text">${shell.undoText}</span>
+        <button id="undo" type="button" disabled=${!board || board.role === 'viewer' || busy || loading} onClick=${onUndo}>Undo</button>
+      </div>
+      <${PlanningArea}
+        showPageRoot=${
+          !board || ['projects', 'sprints', 'members', 'labels', 'history'].includes(view)
+        }
+        onPresentation=${onPresentation}
+        onScopeChange=${onScopeChange}
+        onFilterChange=${onFilterChange}
+        onSearchInput=${onSearchInput}
+        onSearchChange=${onSearchChange}
+        onSearchKeyDown=${onSearchKeyDown}
+      />
     </main>
-    <${LegacyDialogs} />
+    <${EditorDialog}
+      config=${shell.editorDialog}
+      busy=${shell.busy}
+      saveText=${shell.editorSaveText}
+      errorText=${shell.editorError}
+    />
+    <${DialogHost} onShortcutClose=${onShortcutClose} />
   </>`;
 }
