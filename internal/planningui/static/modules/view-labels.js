@@ -10,7 +10,7 @@ import {
   maintenanceRowTemplate,
 } from './layout.js';
 import { html, keyedList } from './preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
 import { labelColorPickerTemplate } from './multi-select.js';
@@ -50,8 +50,8 @@ function deleteLabel(label) {
   );
   setEditorSaveText('Delete label');
 }
-function labelRowTemplate(label) {
-  const usage = state.board.items.filter((item) => item.labels.includes(label.name)).length;
+function labelRowTemplate(label, items) {
+  const usage = items.filter((item) => item.labels.includes(label.name)).length;
   return maintenanceRowTemplate({
     tag: 'article',
     className: 'label-maintenance-row',
@@ -65,18 +65,21 @@ function labelRowTemplate(label) {
     ],
   });
 }
-export function renderLabels(content) {
-  const labels = state.board.labels;
-  $('count').textContent = labels.length
-    ? `${labels.length} label${labels.length === 1 ? '' : 's'}`
-    : '';
-  renderPage(
-    content,
-    'labels',
-    html`${sectionHeadTemplate(
-      'Workspace labels',
-      accessButtonTemplate('＋ New label', () => editLabel(), { className: 'primary' }),
-    )}
+function selectLabelPage(current) {
+  return {
+    labels: current.board?.labels || [],
+    items: current.board?.items || [],
+  };
+}
+function sameLabelPage(left, right) {
+  return left.labels === right.labels && left.items === right.items;
+}
+export function LabelsPage() {
+  const { labels, items } = useStore(selectLabelPage, sameLabelPage);
+  return html`${sectionHeadTemplate(
+    'Workspace labels',
+    accessButtonTemplate('＋ New label', () => editLabel(), { className: 'primary' }),
+  )}
     ${helpTextTemplate(
       'Create, rename and remove the reusable labels used to classify work in this workspace.',
     )}
@@ -84,9 +87,19 @@ export function renderLabels(content) {
       labels.length
         ? maintenanceListTemplate(
             'label-maintenance-list',
-            keyedList(labels, (label) => label.name, labelRowTemplate),
+            keyedList(
+              labels,
+              (label) => label.name,
+              (label) => labelRowTemplate(label, items),
+            ),
           )
         : emptyStateTemplate('No labels yet. Create reusable labels for this workspace.')
-    }`,
-  );
+    }`;
+}
+export function renderLabels(content) {
+  const labels = state.board.labels;
+  $('count').textContent = labels.length
+    ? `${labels.length} label${labels.length === 1 ? '' : 's'}`
+    : '';
+  renderPage(content, 'labels', html`<${LabelsPage} />`);
 }

@@ -22,6 +22,7 @@ async function run(page) {
     const { StatusBars, notice, showPlanningChangeNotice, clearPlanningChangeNotice } =
       await import('/modules/notices.js');
     const { App } = await import('/modules/app-shell.js');
+    const { LabelsPage } = await import('/modules/view-labels.js');
     const { openEditor, openFormDialog, closeEditor } = await import('/modules/dialog.js');
     const { api } = await import('/modules/api.js');
     const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
@@ -141,6 +142,23 @@ async function run(page) {
       'compatibility state writes notify store selectors',
     );
     setState({ shortcutChord: initialChord });
+
+    const previousLabelBoard = state.board;
+    const labels = [{ name: 'type::component', color: '#ffcc00' }];
+    setState({
+      board: { role: 'admin', labels, items: [{ labels: ['type::component'] }] },
+    });
+    renderIsland(host, html`<${LabelsPage} />`);
+    await flush();
+    check(
+      host.querySelector('.label-maintenance-row') && host.textContent.includes('1 card'),
+      'Labels page renders current label usage',
+    );
+    setState({ board: { role: 'admin', labels, items: [] } });
+    await flush();
+    check(host.textContent.includes('0 cards'), 'Labels page updates when item usage changes');
+    unmountIsland(host);
+    setState({ board: previousLabelBoard });
 
     const previousGate = state.workspaceGate;
     const previousBoard = state.board;
