@@ -1,13 +1,6 @@
 // Same-origin Preact + HTM, without JSX, eval, or an application build step.
-import {
-  h,
-  htm,
-  Fragment,
-  render as preactRender,
-  useRef,
-  useLayoutEffect,
-} from './vendor-preact.js';
-export { useLayoutEffect, useRef, useState, useMemo } from './vendor-preact.js';
+import { h, htm, Fragment, render as preactRender } from './vendor-preact.js';
+export { useEffect, useLayoutEffect, useRef, useState, useMemo } from './vendor-preact.js';
 export const html = htm.bind(h);
 export const nothing = null;
 
@@ -30,8 +23,7 @@ const disposed = new WeakSet();
 
 // One-time, element-local setup (drag/drop listeners or initial form values).
 // Pass stable identities and read current domain data in event handlers.
-// External listeners, observers and async controllers belong in Controller,
-// whose effect supplies cleanup; this adapter owns no external resources.
+// External resources belong in component effects with explicit cleanup.
 export function attach(setup, ...args) {
   return (node) => {
     if (!node || initialized.has(node)) return;
@@ -105,22 +97,6 @@ export function mount(host, template) {
   return (next) => {
     if (roots.get(host) === root && !disposed.has(host)) render(next, host);
   };
-}
-// Lifecycle boundary for existing form controllers. Arguments are fixed for
-// the component instance: key the component to change its identity. Controllers
-// own local form state and render their children; Preact owns their lifetime.
-export function Controller({ as = 'div', setup, args = [], ...props }) {
-  const host = useRef();
-  const initial = useRef({ setup, args });
-  useLayoutEffect(() => {
-    const node = host.current;
-    const cleanup = initial.current.setup(node, ...initial.current.args);
-    return () => {
-      cleanup?.();
-      unmountIsland(node);
-    };
-  }, []);
-  return h(as, { ...props, ref: host });
 }
 // Only for static shell slots and rendered-once form skeletons; never put DOM
 // nodes inside an HTM expression. Re-rendered subtrees use VNodes exclusively.

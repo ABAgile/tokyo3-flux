@@ -4,7 +4,7 @@
 // markdownURL.
 import { uid } from './dom.js';
 import { requestKey } from './api.js';
-import { attach, Controller, html, nothing, render } from './preact.js';
+import { html, nothing, useLayoutEffect, useMemo, useRef, useState } from './preact.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
@@ -341,14 +341,8 @@ function markdownPreview(source, emptyText) {
     String(source || '').trim() ? nothing : html`<p class="help">${emptyText}</p>`
   }`;
 }
-function setInitialValue(input, value) {
-  input.value = value;
-}
-// The Markdown editor is a stateful widget: it renders itself with Preact into a
-// host element and keeps its mode in a local state object. The textarea's
-// value belongs to the user after the initial value is set.
-// The editor's template. `settings.onReady(editor)` receives { input, refresh } and
-// `settings.commentControl` marks the textarea as a comment control.
+// The Markdown editor keeps preview mode in component state while the native
+// textarea owns its draft for the lifetime of the enclosing form.
 function markdownEditorTemplate(
   name,
   title,
@@ -358,64 +352,65 @@ function markdownEditorTemplate(
   previewByDefault,
   settings = {},
 ) {
-  return html`<${Controller}
-    class="markdown-field"
-    setup=${(group) => {
-      const editor = mountMarkdownEditor(
-        group,
-        name,
-        title,
-        value,
-        maxLength,
-        readOnly,
-        previewByDefault,
-        settings.subject,
-        settings.commentControl,
-      );
-      settings.onReady?.(editor);
-    }}
+  return html`<${MarkdownEditor}
+    name=${name}
+    title=${title}
+    value=${value}
+    maxLength=${maxLength}
+    readOnly=${readOnly}
+    previewByDefault=${previewByDefault}
+    settings=${settings}
   />`;
 }
-function mountMarkdownEditor(
-  group,
+function MarkdownEditor({
   name,
   title,
   value = '',
   maxLength = 4000,
   readOnly = false,
   previewByDefault = false,
-  subject = title === 'Description' ? 'description' : 'comment',
-  commentControl = false,
-) {
-  const inputID = `markdown-${requestKey()}`;
-  const label = html`<label class="markdown-label" for=${inputID}><span>${title}</span></label>`;
-  if (readOnly) {
-    render(
-      html`${label}<div class="markdown-preview">${markdownPreview(value, 'No content.')}</div>`,
-      group,
-    );
-    return { input: null, refresh: () => {} };
-  }
-  const local = { previewing: previewByDefault, previewSource: null };
-  let input;
+  settings = {},
+}) {
+  const [inputID] = useState(() => `markdown-${requestKey()}`);
+  const [previewing, setPreviewing] = useState(!!previewByDefault);
+  const [previewSource, setPreviewSource] = useState(previewByDefault ? value : null);
+  const input = useRef();
+  const mode = useRef(previewing);
+  mode.current = previewing;
+  const onReady = useRef(settings.onReady);
+  onReady.current = settings.onReady;
+  const refresh = useMemo(
+    () => () => {
+      if (mode.current) setPreviewSource(input.current?.value ?? '');
+    },
+    [],
+  );
+  const editor = useMemo(
+    () => ({
+      get input() {
+        return input.current;
+      },
+      refresh,
+    }),
+    [refresh],
+  );
+  const wasPreviewing = useRef(previewing);
+  useLayoutEffect(() => {
+    if (!readOnly) onReady.current?.(editor);
+  }, []);
+  useLayoutEffect(() => {
+    if (wasPreviewing.current && !previewing) input.current?.focus();
+    wasPreviewing.current = previewing;
+  }, [previewing]);
   const replaceSelection = (transform, placeholder = 'text') => {
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? start;
-    const selected = input.value.slice(start, end) || placeholder;
-    input.setRangeText(transform(selected), start, end, 'select');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.focus();
-  };
-  const refresh = () => {
-    if (!local.previewing) return;
-    local.previewSource = input.value;
-    update();
-  };
-  const setMode = (previewing) => {
-    local.previewing = previewing;
-    if (previewing) local.previewSource = input.value;
-    update();
-    if (!previewing) input.focus();
+    const target = input.current;
+    if (!target) return;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? start;
+    const selected = target.value.slice(start, end) || placeholder;
+    target.setRangeText(transform(selected), start, end, 'select');
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.focus();
   };
   const shortcut = (event) => {
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -427,62 +422,60 @@ function mountMarkdownEditor(
     event.preventDefault();
     replaceSelection(...action);
   };
-  function update() {
-    const { previewing, previewSource } = local;
-    const mode = previewing ? `Edit ${subject}` : `Preview ${subject}`;
-    render(
-      html`${label}<div class="markdown-editor">
-          <div class="markdown-toolbar">
-            <button
+  const subject = settings.subject || (title === 'Description' ? 'description' : 'comment');
+  const label = html`<label class="markdown-label" for=${inputID}><span>${title}</span></label>`;
+  if (readOnly)
+    return html`<div class="markdown-field">${label}<div class="markdown-preview">${markdownPreview(value, 'No content.')}</div></div>`;
+  const modeLabel = previewing ? `Edit ${subject}` : `Preview ${subject}`;
+  return html`<div class="markdown-field">${label}<div class="markdown-editor">
+    <div class="markdown-toolbar">
+      <button
+        type="button"
+        class="markdown-mode"
+        aria-label=${modeLabel}
+        title=${modeLabel}
+        onClick=${() => {
+          if (!previewing) setPreviewSource(input.current?.value ?? '');
+          setPreviewing(!previewing);
+        }}
+      >${previewing ? 'Edit' : 'Preview'}</button>
+      ${MARKDOWN_TOOLS.map((tool) =>
+        tool
+          ? html`<button
               type="button"
-              class="markdown-mode"
-              aria-label=${mode}
-              title=${mode}
-              onClick=${() => setMode(!local.previewing)}
-            >${previewing ? 'Edit' : 'Preview'}</button>
-            ${MARKDOWN_TOOLS.map((tool) =>
-              tool
-                ? html`<button
-                    type="button"
-                    class="markdown-tool"
-                    aria-label=${tool[0]}
-                    title=${tool[0]}
-                    hidden=${previewing}
-                    onClick=${() => replaceSelection(tool[2], tool[3])}
-                  >${tool[1]}</button>`
-                : html`<span
-                    class="markdown-divider"
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-hidden="true"
-                    hidden=${previewing}
-                  ></span>`,
-            )}
-          </div>
-          <textarea
-            id=${inputID}
-            name=${name}
-            maxlength=${maxLength}
-            placeholder="Write Markdown…"
-            spellcheck="true"
-            data-markdown-control="true"
-            data-comment-control=${commentControl ? 'true' : nothing}
-            autocomplete="off"
-            hidden=${previewing}
-            ref=${attach(setInitialValue, value || '')}
-            onInput=${refresh}
-            onKeydown=${shortcut}
-          ></textarea>
-          <div class="markdown-preview" hidden=${!previewing} tabindex="0">
-            ${previewSource === null ? nothing : markdownPreview(previewSource, 'Nothing to preview yet.')}
-          </div>
-        </div>`,
-      group,
-    );
-  }
-  update();
-  input = group.querySelector('textarea');
-  if (previewByDefault) setMode(true);
-  return { input, refresh };
+              class="markdown-tool"
+              aria-label=${tool[0]}
+              title=${tool[0]}
+              hidden=${previewing}
+              onClick=${() => replaceSelection(tool[2], tool[3])}
+            >${tool[1]}</button>`
+          : html`<span
+              class="markdown-divider"
+              role="separator"
+              aria-orientation="vertical"
+              aria-hidden="true"
+              hidden=${previewing}
+            ></span>`,
+      )}
+    </div>
+    <textarea
+      id=${inputID}
+      name=${name}
+      maxlength=${maxLength}
+      placeholder="Write Markdown…"
+      spellcheck="true"
+      data-markdown-control="true"
+      data-comment-control=${settings.commentControl ? 'true' : nothing}
+      autocomplete="off"
+      defaultValue=${value || ''}
+      hidden=${previewing}
+      ref=${input}
+      onInput=${refresh}
+      onKeydown=${shortcut}
+    ></textarea>
+    <div class="markdown-preview" hidden=${!previewing} tabindex="0">
+      ${previewSource === null ? nothing : markdownPreview(previewSource, 'Nothing to preview yet.')}
+    </div>
+  </div></div>`;
 }
 export { markdownTemplate, markdownEditorTemplate };

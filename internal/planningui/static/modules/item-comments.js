@@ -3,7 +3,16 @@ import { api, requestKey } from './api.js';
 import { initials } from './format.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import { panelHeadTemplate, helpTextTemplate } from './layout.js';
-import { Controller, html, nothing, render, keyedList, syncDisabled } from './preact.js';
+import {
+  html,
+  nothing,
+  keyedList,
+  syncDisabled,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from './preact.js';
 import { state } from './state.js';
 import { canComment } from './permissions.js';
 import { renderControls } from './controls.js';
@@ -55,154 +64,166 @@ function commentTemplate(comment) {
     </div>
   </article>`;
 }
-// Comments are a stateful widget: the list, paging and composer state live in
-// a local object, and the widget renders itself with Preact into its section.
-function mountComments(section, item) {
-  const currentRoot = state.root;
-  const local = {
+// The component owns comment paging, status and submission state. Its request
+// generation guard prevents stale pages from replacing a newer item context.
+function ItemComments({ item }) {
+  const [currentRoot] = useState(() => state.root);
+  const [local, setLocal] = useState({
     comments: [],
     nextBefore: 0,
     olderDisabled: true,
     busy: false,
     status: 'Loading comments…',
     error: false,
-  };
-  let commentLoad = 0,
-    pendingCommentBody = '',
-    pendingCommentKey = '',
-    editor;
+  });
+  // Ref updates synchronously so repeated native events cannot race a state commit.
+  const localRef = useRef(local);
+  localRef.current = local;
+  const active = useRef(false);
+  const commentLoad = useRef(0);
+  const pending = useRef({ body: '', key: '' });
+  const editor = useRef();
   const writer = state.board.role === 'member' || state.board.role === 'admin';
-  const setStatus = (text, error = false) => {
-    local.status = text || '';
-    local.error = error;
-    update();
+  const updateLocal = (next) => {
+    const value = typeof next === 'function' ? next(localRef.current) : next;
+    localRef.current = value;
+    setLocal(value);
   };
+  const setStatus = (text, error = false) =>
+    updateLocal({ ...localRef.current, status: text || '', error });
   async function loadComments(before = 0, append = false) {
-    const loadID = ++commentLoad;
-    local.olderDisabled = true;
-    setStatus('Loading comments…');
+    const loadID = ++commentLoad.current;
+    updateLocal({
+      ...localRef.current,
+      olderDisabled: true,
+      status: 'Loading comments…',
+      error: false,
+    });
     try {
       const query = new URLSearchParams({ limit: String(COMMENT_PAGE_LIMIT) });
       if (before) query.set('before', String(before));
       const page = await api(
         `${currentRoot}/items/${encodeURIComponent(item.id)}/comments?${query}`,
       );
-      if (loadID !== commentLoad || state.root !== currentRoot || !section.isConnected)
+      if (loadID !== commentLoad.current || state.root !== currentRoot || !active.current)
         return false;
       if (!validCommentPage(page))
         throw new Error('Comments are invalid. Reopen the item to retry.');
-      local.comments = append ? [...page.comments, ...local.comments] : page.comments;
-      local.nextBefore = page.next_before || 0;
-      local.olderDisabled = false;
-      const count = local.comments.length;
-      setStatus(
-        count
-          ? `${count}${local.nextBefore ? '+' : ''} comment${count === 1 ? '' : 's'} loaded.`
+      const comments = append ? [...page.comments, ...localRef.current.comments] : page.comments;
+      const nextBefore = page.next_before || 0;
+      updateLocal({
+        ...localRef.current,
+        comments,
+        nextBefore,
+        olderDisabled: false,
+        status: comments.length
+          ? `${comments.length}${nextBefore ? '+' : ''} comment${comments.length === 1 ? '' : 's'} loaded.`
           : 'No comments yet.',
-      );
+        error: false,
+      });
       return true;
     } catch (error) {
-      if (loadID === commentLoad && state.root === currentRoot && section.isConnected) {
-        local.olderDisabled = false;
-        setStatus(error.message, true);
+      if (loadID === commentLoad.current && state.root === currentRoot && active.current) {
+        updateLocal({
+          ...localRef.current,
+          olderDisabled: false,
+          status: error.message,
+          error: true,
+        });
       }
       return false;
     }
   }
   async function addComment() {
-    if (local.busy || !canComment()) return;
-    const textarea = editor.input;
+    if (localRef.current.busy || !canComment()) return;
+    const textarea = editor.current?.input;
+    if (!textarea) return;
     const body = textarea.value.trim();
     if (!body) {
       setStatus('Comment cannot be empty.', true);
       textarea.focus();
       return;
     }
-    if (body !== pendingCommentBody) {
-      pendingCommentBody = body;
-      pendingCommentKey = requestKey();
-    }
-    local.busy = true;
-    commentLoad++;
-    setStatus('Adding comment…');
+    if (body !== pending.current.body) pending.current = { body, key: requestKey() };
+    updateLocal({ ...localRef.current, busy: true, status: 'Adding comment…', error: false });
+    commentLoad.current++;
     try {
       await api(`${currentRoot}/items/${encodeURIComponent(item.id)}/comments`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-CSRF-Token': state.session.csrf,
-          'Idempotency-Key': pendingCommentKey,
+          'Idempotency-Key': pending.current.key,
         },
         body: JSON.stringify({ body }),
       });
-      if (state.root !== currentRoot || !section.isConnected) return;
-      pendingCommentBody = '';
-      pendingCommentKey = '';
+      if (state.root !== currentRoot || !active.current) return;
+      pending.current = { body: '', key: '' };
       textarea.value = '';
-      editor.refresh();
+      editor.current.refresh();
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
       await loadComments();
     } catch (error) {
-      if (state.root === currentRoot && section.isConnected) setStatus(error.message, true);
+      if (state.root === currentRoot && active.current) setStatus(error.message, true);
     } finally {
-      local.busy = false;
-      if (section.isConnected) {
-        update();
+      if (active.current) {
+        updateLocal({ ...localRef.current, busy: false });
         renderControls();
       }
     }
   }
-  function update() {
-    const { comments, nextBefore, status, error } = local;
-    render(
-      html`${panelHeadTemplate('Comments')}
-        <p
-          class=${error ? 'help error' : 'help'}
-          data-status-class="help"
-          hidden=${!status}
-          role=${error ? 'alert' : 'status'}
-          aria-live="polite"
-        >${status}</p>
-        <button
-          type="button"
-          class="comment-load-older"
-          hidden=${!nextBefore}
-          disabled=${local.olderDisabled}
-          onClick=${() => {
-            if (local.nextBefore && !local.busy) void loadComments(local.nextBefore, true);
-          }}
-        >Load older comments</button>
-        <div class="comment-list">
-          ${keyedList(comments, (comment) => comment.id, commentTemplate)}
-        </div>
-        ${
-          writer
-            ? html`<div class="comment-composer">
-                ${markdownEditorTemplate('comment_body', 'Add a comment', '', 4000, false, false, {
-                  commentControl: true,
-                  onReady: (ready) => {
-                    editor = ready;
-                  },
-                })}
-                <button
-                  type="button"
-                  class="primary"
-                  data-comment-write="true"
-                  ref=${syncDisabled(local.busy || !canComment())}
-                  onClick=${addComment}
-                >Add comment</button>
-              </div>`
-            : helpTextTemplate('Viewers can read comments; members and admins can add them.')
-        }`,
-      section,
-    );
-  }
-  update();
-  void loadComments();
-  return () => {
-    commentLoad++;
-  };
+  useLayoutEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      commentLoad.current++;
+    };
+  }, []);
+  useEffect(() => {
+    void loadComments();
+  }, []);
+  const { comments, nextBefore, status, error, olderDisabled, busy } = local;
+  return html`<section class="item-comments">
+    ${panelHeadTemplate('Comments')}
+    <p
+      class=${error ? 'help error' : 'help'}
+      data-status-class="help"
+      hidden=${!status}
+      role=${error ? 'alert' : 'status'}
+      aria-live="polite"
+    >${status}</p>
+    <button
+      type="button"
+      class="comment-load-older"
+      hidden=${!nextBefore}
+      disabled=${olderDisabled}
+      onClick=${() => {
+        if (localRef.current.nextBefore && !localRef.current.busy)
+          void loadComments(localRef.current.nextBefore, true);
+      }}
+    >Load older comments</button>
+    <div class="comment-list">${keyedList(comments, (comment) => comment.id, commentTemplate)}</div>
+    ${
+      writer
+        ? html`<div class="comment-composer">
+            ${markdownEditorTemplate('comment_body', 'Add a comment', '', 4000, false, false, {
+              commentControl: true,
+              onReady: (ready) => {
+                editor.current = ready;
+              },
+            })}
+            <button
+              type="button"
+              class="primary"
+              data-comment-write="true"
+              ref=${syncDisabled(busy || !canComment())}
+              onClick=${addComment}
+            >Add comment</button>
+          </div>`
+        : helpTextTemplate('Viewers can read comments; members and admins can add them.')
+    }
+  </section>`;
 }
 export function itemCommentsTemplate(item) {
-  return html`<${Controller} as="section" class="item-comments" setup=${mountComments} args=${[item]} />`;
+  return html`<${ItemComments} key=${item.id} item=${item} />`;
 }

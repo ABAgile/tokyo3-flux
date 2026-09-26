@@ -3,7 +3,7 @@
 The planning UI is plain ES modules and CSS under `internal/planningui/static/`, embedded with `go:embed`.
 There is no application build step or runtime package installation.
 Preact and HTM are vendored in `modules/vendor-preact.js`; all dynamic views, widgets and dialog markup render Preact VNodes.
-The static shell and domain controllers remain plain ES modules.
+The static shell and domain/session command controllers remain plain ES modules; stateful UI widgets are Preact function components.
 
 ## Rendering with Preact
 
@@ -15,12 +15,12 @@ The static shell and domain controllers remain plain ES modules.
 - Each render root owns its host's children exclusively; the handwritten reconciler has been removed.
   Use `replaceContent(host, ...)` when replacing a static host's content and `unmountIsland(host)` before removing a render root.
   `mount(host, template)` starts a fresh form lifetime and returns an update function that ignores stale updates after replacement.
-- `Controller` is the Preact lifecycle boundary for existing stateful form controllers.
-  Its setup arguments are fixed for that instance; use a stable domain key or `withKey` when a different identity needs a fresh controller.
-  Setup must return cleanup for outside listeners, subscriptions, animation frames and observers.
-  Local controller renders are synchronous so native form values and focus are available to existing command handlers.
-- `attach(setup, ...args)` is only for one-time, element-local wiring such as drag/drop or chip decoration; handlers must read current data by stable ID at event time.
-  Use component effects or `Controller` for external resources, never `attach`.
+- Stateful widgets are function components.
+  Keep local interaction state in Preact hooks, pass domain data and actions as props, and use stable domain keys when an identity change needs a fresh lifetime.
+  Effects own outside listeners, subscriptions, animation frames and observers; every acquired resource needs cleanup.
+  Keep native form drafts uncontrolled unless the UI genuinely owns their changing value.
+- `attach(setup, ...args)` is only for one-time, element-local wiring such as board/list drag handlers or chip decoration; handlers must read current data by stable ID at event time.
+  Use component effects for external resources, never `attach`.
 - Native text fields are uncontrolled (`defaultValue`) unless their value is owned by reactive state, such as project search.
   Keep user edits intact across unrelated renders.
   `syncDisabled` synchronizes controls also written by `renderControls`; one writer per attribute remains the goal.
@@ -29,7 +29,7 @@ The static shell and domain controllers remain plain ES modules.
 - `nodeOf` is restricted to rendered-once shell nodes/form skeletons; dispose it before removing its host.
   Board/List updates always render VNodes, including observation icons.
   Keys preserve identity within a parent; cross-column card moves also restore logical focus and open attachment disclosures.
-- Use stable domain keys for lists, and effects with cleanup for lifecycle work.
+- Use stable domain keys for lists, and hook effects with cleanup for lifecycle work.
   Do not add module-level listeners or timers.
 - Rendered-once workspace and integration forms keep their submission controller's ownership of input values, busy flags and status lines.
   Do not add competing reactive bindings without migrating that controller too.

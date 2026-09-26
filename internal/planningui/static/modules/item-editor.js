@@ -4,7 +4,16 @@ import { itemPayloadFromForm } from './item-command.js';
 import { labelForeground } from './format.js';
 import { markdownEditorTemplate } from './markdown.js';
 import { fieldTemplate, helpTextTemplate } from './layout.js';
-import { Controller, html, mount, nodeOf, nothing, render, syncDisabled } from './preact.js';
+import {
+  html,
+  mount,
+  nodeOf,
+  nothing,
+  syncDisabled,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable, gitLabWritable } from './permissions.js';
@@ -49,15 +58,18 @@ const DATE_FIELDS = [
   ['end_date', 'End date'],
   ['due_date', 'Due date'],
 ];
-// The dates field is a stateful widget like the multi-select: the date inputs
-// carry the form values, and chips summarise them.
-function mountDatesField(group, item, draft) {
-  const inputsID = uid('item-dates');
+// The date inputs carry the form values, and chips summarise them.
+function DatesField({ item, draft }) {
+  const [inputsID] = useState(() => uid('item-dates'));
+  const [editing, setEditing] = useState(false);
+  // Date controls stay uncontrolled; this revision refreshes their summary chips.
+  const [, setRevision] = useState(0);
+  const group = useRef();
+  const wasEditing = useRef(false);
   const initial = Object.fromEntries(
     DATE_FIELDS.map(([name]) => [name, String(draft?.[name] ?? item[name] ?? '')]),
   );
-  let editing = false;
-  const input = (name) => group.querySelector(`[name="${name}"]`);
+  const input = (name) => group.current?.querySelector(`[name="${name}"]`);
   const value = (name) => input(name)?.value ?? initial[name];
   const clear = (name, title) => html`<button
     type="button"
@@ -70,77 +82,70 @@ function mountDatesField(group, item, draft) {
       target.focus();
     }}
   >×</button>`;
-  const toggle = () => {
-    editing = !editing;
-    update();
-    if (editing) input('start_date').focus();
-  };
-  function update() {
-    const [start, end, due] = DATE_FIELDS.map(([name]) => value(name));
-    const part = (name, title, text) => html`<span class="date-range-part"
-      ><span>${text || '-'}</span>${editing && text ? clear(name, title) : nothing}</span
-    >`;
-    render(
-      html`<div class="multi-select-header">
-          <span class="multi-select-heading"><span class="multi-select-label">Dates</span></span>
-          <button
-            type="button"
-            class="multi-select-edit"
-            data-multi-edit="true"
-            aria-label=${editing ? 'Done editing dates' : 'Edit Dates'}
-            aria-expanded=${String(editing)}
-            aria-controls=${inputsID}
-            onClick=${toggle}
-          >${editing ? 'Done' : 'Edit'}</button>
-        </div>
-        <div
-          class="multi-select date-field-content"
+  const toggle = () => setEditing((previous) => !previous);
+  useLayoutEffect(() => {
+    if (!wasEditing.current && editing) input('start_date')?.focus();
+    wasEditing.current = editing;
+  }, [editing]);
+  const [start, end, due] = DATE_FIELDS.map(([name]) => value(name));
+  const part = (name, title, text) => html`<span class="date-range-part"
+    ><span>${text || '-'}</span>${editing && text ? clear(name, title) : nothing}</span
+  >`;
+  return html`<div class="multi-select-field date-field" ref=${group}>
+    <div class="multi-select-header">
+      <span class="multi-select-heading"><span class="multi-select-label">Dates</span></span>
+      <button
+        type="button"
+        class="multi-select-edit"
+        data-multi-edit="true"
+        aria-label=${editing ? 'Done editing dates' : 'Edit Dates'}
+        aria-expanded=${String(editing)}
+        aria-controls=${inputsID}
+        onClick=${toggle}
+      >${editing ? 'Done' : 'Edit'}</button>
+    </div>
+    <div
+      class="multi-select date-field-content"
+      role="group"
+      aria-label="Dates"
+      onKeydown=${(event) => {
+        if (event.key !== 'Escape') return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!editing) return;
+        toggle();
+        group.current.querySelector('[data-multi-edit]').focus();
+      }}
+    >
+      <div class="multi-select-values date-field-values">
+        <span
+          class="multi-select-chip date-range-chip"
           role="group"
-          aria-label="Dates"
-          onKeydown=${(event) => {
-            if (event.key !== 'Escape') return;
-            event.preventDefault();
-            event.stopPropagation();
-            if (!editing) return;
-            toggle();
-            group.querySelector('[data-multi-edit]').focus();
-          }}
+          aria-label=${`Start date ${start || 'not set'}; End date ${end || 'not set'}`}
+          >${part('start_date', 'Start date', start)}<span class="date-range-separator">·</span
+          >${part('end_date', 'End date', end)}</span
         >
-          <div class="multi-select-values date-field-values">
-            <span
-              class="multi-select-chip date-range-chip"
-              role="group"
-              aria-label=${`Start date ${start || 'not set'}; End date ${end || 'not set'}`}
-              >${part('start_date', 'Start date', start)}<span class="date-range-separator">·</span
-              >${part('end_date', 'End date', end)}</span
-            >
-            ${
-              due
-                ? html`<span class="multi-select-chip date-due-chip" role="group" aria-label=${`Due date ${due}`}
-                    ><span>${`Due · ${due}`}</span>${editing ? clear('due_date', 'Due date') : nothing}</span
-                  >`
-                : nothing
-            }
-          </div>
-          <div class="date-field-inputs" id=${inputsID} hidden=${!editing}>
-            ${DATE_FIELDS.map(([name, title]) =>
-              fieldTemplate(name, title, initial[name], 'date', undefined, {
-                onInput: update,
-                onChange: update,
-              }),
-            )}
-          </div>
-        </div>`,
-      group,
-    );
-  }
-  update();
+        ${
+          due
+            ? html`<span class="multi-select-chip date-due-chip" role="group" aria-label=${`Due date ${due}`}
+                ><span>${`Due · ${due}`}</span>${editing ? clear('due_date', 'Due date') : nothing}</span
+              >`
+            : nothing
+        }
+      </div>
+      <div class="date-field-inputs" id=${inputsID} hidden=${!editing}>
+        ${DATE_FIELDS.map(([name, title]) =>
+          fieldTemplate(name, title, initial[name], 'date', undefined, {
+            onInput: () => setRevision((version) => version + 1),
+            onChange: () => setRevision((version) => version + 1),
+          }),
+        )}
+      </div>
+    </div>
+  </div>`;
 }
 function datesFieldTemplate(item, draft) {
-  return html`<${Controller}
-    class="multi-select-field date-field"
-    setup=${mountDatesField} args=${[item, draft]}
-  />`;
+  return html`<${DatesField} item=${item} draft=${draft} />`;
 }
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled

@@ -12,7 +12,17 @@ import {
   metricListTemplate,
   maintenanceListTemplate,
 } from './layout.js';
-import { Controller, classNames, html, withKey, nothing, render, keyedList } from './preact.js';
+import {
+  classNames,
+  html,
+  withKey,
+  nothing,
+  render,
+  keyedList,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -24,58 +34,52 @@ import { openEditor } from './dialog.js';
 import { persistPlanningURL } from './url-state.js';
 import { sprintVelocityTemplate } from './view-velocity.js';
 
-// The sprint goal is a stateful widget: it measures its rendered height to
-// decide whether to offer "Show more", keeping `clipped` and `expanded` in a
-// local state object. Until the first measurement the goal stays inert.
-function mountSprintGoal(goal, value) {
-  const contentID = uid('sprint-goal');
-  const local = { expanded: false, clipped: undefined };
-  const content = () => goal.querySelector('.sprint-goal-content');
+// The sprint goal measures its rendered height to decide whether to offer
+// "Show more". Until the first measurement the goal stays inert.
+function SprintGoal({ value }) {
+  const [contentID] = useState(() => uid('sprint-goal'));
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState();
+  const content = useRef();
   const measure = () => {
-    const node = content();
-    const clipped = node.scrollHeight > node.clientHeight + 1;
-    if (local.clipped === clipped) return;
-    local.clipped = clipped;
-    update();
+    const node = content.current;
+    if (!node) return;
+    const next = node.scrollHeight > node.clientHeight + 1;
+    setClipped((previous) => (previous === next ? previous : next));
   };
-  function update() {
-    const { expanded, clipped } = local;
-    const measured = clipped !== undefined;
-    render(
-      html`<div
-          class=${classNames({ 'sprint-goal-content': true, 'is-expanded': expanded })}
-          id=${contentID}
-          inert=${!measured || (!expanded && clipped)}
-        >${markdownTemplate(value)}</div
-        ><button
-          type="button"
-          class="sprint-goal-toggle"
-          hidden=${!measured || (!expanded && !clipped)}
-          aria-controls=${contentID}
-          aria-expanded=${String(expanded)}
-          onClick=${() => {
-            local.expanded = !local.expanded;
-            update();
-            measure();
-          }}
-        >${expanded ? 'Show less' : 'Show more'}</button>`,
-      goal,
-    );
-  }
-  update();
-  const observer = new ResizeObserver(measure);
-  const frame = requestAnimationFrame(() => {
-    if (!goal.isConnected) return;
-    measure();
-    observer.observe(content());
-  });
-  return () => {
-    cancelAnimationFrame(frame);
-    observer.disconnect();
-  };
+  useLayoutEffect(() => {
+    const observer = new ResizeObserver(measure);
+    const frame = requestAnimationFrame(() => {
+      if (!content.current?.isConnected) return;
+      measure();
+      observer.observe(content.current);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
+  useLayoutEffect(() => measure(), [expanded, value]);
+  const measured = clipped !== undefined;
+  return html`<div class="sprint-goal">
+    <div
+      class=${classNames({ 'sprint-goal-content': true, 'is-expanded': expanded })}
+      id=${contentID}
+      inert=${!measured || (!expanded && clipped)}
+      ref=${content}
+    >${markdownTemplate(value)}</div
+    ><button
+      type="button"
+      class="sprint-goal-toggle"
+      hidden=${!measured || (!expanded && !clipped)}
+      aria-controls=${contentID}
+      aria-expanded=${String(expanded)}
+      onClick=${() => setExpanded((previous) => !previous)}
+    >${expanded ? 'Show less' : 'Show more'}</button>
+  </div>`;
 }
 function sprintGoalTemplate(value) {
-  return html`<${Controller} class="sprint-goal" setup=${mountSprintGoal} args=${[value]} />`;
+  return html`<${SprintGoal} value=${value} />`;
 }
 function toggleBurndown(s) {
   if (state.burndownExpanded.has(s.id)) state.burndownExpanded.delete(s.id);

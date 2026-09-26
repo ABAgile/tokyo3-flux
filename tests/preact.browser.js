@@ -7,17 +7,16 @@ async function run(page) {
   const result = await page.evaluate(async () => {
     const {
       html,
-      render,
       renderIsland,
       unmountIsland,
       useLayoutEffect,
-      Controller,
+      useState,
       mount,
       nodeOf,
       syncDisabled,
     } = await import('/modules/preact.js');
     const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
-    const { markdownTemplate } = await import('/modules/markdown.js');
+    const { markdownTemplate, markdownEditorTemplate } = await import('/modules/markdown.js');
     const { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } = await import(
       '/modules/gate-components.js'
     );
@@ -25,6 +24,7 @@ async function run(page) {
     const check = (value, message) => {
       if (!value) throw new Error(message);
     };
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 60));
     const violations = [];
     document.addEventListener('securitypolicyviolation', (event) =>
       violations.push(event.violatedDirective),
@@ -72,56 +72,30 @@ async function run(page) {
     input.value = 'Local workspace';
     host.querySelector('form').requestSubmit();
     check(submitted === 'Local workspace', 'native submission retains field name');
-    let cleaned = 0;
+    let started = 0,
+      stopped = 0;
     function Lifecycle() {
-      useLayoutEffect(
-        () => () => {
-          cleaned++;
-        },
-        [],
-      );
-      return html`<span>Mounted</span>`;
+      const [count, setCount] = useState(0);
+      useLayoutEffect(() => {
+        started++;
+        return () => {
+          stopped++;
+        };
+      }, []);
+      return html`<button onClick=${() => setCount((value) => value + 1)}>Count ${count}</button>`;
     }
     renderIsland(host, html`<${Lifecycle} />`);
+    host.firstElementChild.click();
+    await flush();
+    check(started === 1 && host.textContent === 'Count 1', 'hook state updates a component');
     unmountIsland(host);
     unmountIsland(host);
-    check(cleaned === 1 && !host.children.length, 'unmount releases hooks exactly once');
-    let started = 0,
-      stopped = 0,
-      childStopped = 0;
-    function Child() {
-      useLayoutEffect(
-        () => () => {
-          childStopped++;
-        },
-        [],
-      );
-      return html`<input name="draft" defaultValue="Initial" />`;
-    }
-    function setup(node) {
-      started++;
-      render(html`<${Child} />`, node);
-      return () => {
-        stopped++;
-      };
-    }
-    renderIsland(host, html`<${Controller} setup=${setup} />`);
-    const draft = host.querySelector('input');
-    draft.value = 'Unsaved';
-    renderIsland(host, html`<${Controller} setup=${setup} />`);
-    check(
-      started === 1 && host.querySelector('input') === draft && draft.value === 'Unsaved',
-      'controllers retain local draft and initialize once',
-    );
-    renderIsland(host, null);
-    check(
-      stopped === 1 && childStopped === 1,
-      'component removal releases nested roots and resources',
-    );
-    const detached = nodeOf(html`<${Controller} setup=${setup} />`);
+    check(stopped === 1 && !host.children.length, 'unmount releases hooks exactly once');
+    const detached = nodeOf(html`<${Lifecycle} />`);
     host.append(detached);
+    await flush();
     unmountIsland(detached);
-    check(stopped === 2 && childStopped === 2, 'rendered-once shell nodes release both roots');
+    check(stopped === 2, 'rendered-once component releases its effects');
     const oldUpdate = mount(host, html`<p>Old form</p>`);
     mount(host, html`<p>New form</p>`);
     oldUpdate(html`<p>Stale response</p>`);
@@ -138,6 +112,35 @@ async function run(page) {
       !host.querySelector('script,a') && host.querySelector('strong')?.textContent === 'safe',
       'Markdown preserves safe formatting and rejects HTML/script URLs',
     );
+    renderIsland(
+      host,
+      markdownEditorTemplate('description', 'Description', 'Initial **draft**', 4000, false, true),
+    );
+    const textarea = host.querySelector('textarea');
+    check(
+      textarea?.name === 'description' && textarea.maxLength === 4000 && textarea.hidden,
+      'Markdown editor preserves the native field contract and preview default',
+    );
+    check(
+      host.querySelector('.markdown-preview strong')?.textContent === 'draft',
+      'initial Markdown preview renders',
+    );
+    host.querySelector('.markdown-mode').click();
+    await flush();
+    check(
+      !textarea.hidden && document.activeElement === textarea,
+      'Edit returns focus to the retained draft',
+    );
+    textarea.value = 'Changed **draft**';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    host.querySelector('.markdown-mode').click();
+    await flush();
+    check(
+      textarea.hidden &&
+        host.querySelector('.markdown-preview')?.textContent.includes('Changed') &&
+        host.querySelector('.markdown-preview strong')?.textContent === 'draft',
+      'preview reflects the current native draft',
+    );
     const listeners = new Set();
     const add = document.addEventListener;
     const remove = document.removeEventListener;
@@ -152,15 +155,36 @@ async function run(page) {
     try {
       renderIsland(host, helpPopoverTemplate('Context', 'Card'));
       host.querySelector('button').click();
+      await flush();
       check(listeners.size === 1, 'popover registers its outside listener');
       renderIsland(host, null);
       check(listeners.size === 0, 'popover releases its outside listener on removal');
-      renderIsland(host, multiSelectTemplate('labels', 'Labels', [['one', 'One']], []));
+      let pickerControls, changedValues;
+      renderIsland(
+        host,
+        multiSelectTemplate('labels', 'Labels', [['one', 'One']], [], undefined, undefined, {
+          onReady: (controls) => {
+            pickerControls = controls;
+          },
+          onChange: (values) => {
+            changedValues = values;
+          },
+        }),
+      );
+      check(
+        pickerControls.group === host.firstElementChild,
+        'picker exposes its component-owned controls',
+      );
       host.querySelector('[data-multi-edit]').click();
+      await flush();
       check(listeners.size === 1, 'picker registers its outside listener');
       const checkbox = host.querySelector('input[type="checkbox"]');
       checkbox.click();
-      check(checkbox.checked, 'native checkbox selection updates the picker');
+      await flush();
+      check(
+        checkbox.checked && changedValues?.[0] === 'one' && pickerControls.selected()[0] === 'one',
+        'native checkbox selection updates component state and its control API',
+      );
       renderIsland(host, null);
       check(listeners.size === 0, 'picker releases its outside listener on removal');
     } finally {
