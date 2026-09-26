@@ -1,7 +1,9 @@
-// Mutable planning-shell state shared by app.js and its feature modules.
-// Modules cannot assign to imported bindings, so every top-level variable the
-// shell reassigns lives here and is read and written as `state.<name>`.
-export const state = {
+// Shared planning state for app.js and feature modules.
+// Controllers use the compatibility facade as `state.<name>` while components
+// subscribe to immutable top-level snapshots through the store API.
+import { createStore } from './store.js';
+
+const initialState = {
   // Board reads are revalidated against the copy already in memory, so a refresh
   // that finds nothing new transfers no payload. The ETag is scoped to the root
   // it was issued for and discarded whenever the workspace changes.
@@ -16,6 +18,7 @@ export const state = {
   busy: false,
   loading: false,
   planningChangeNotice: false,
+  planningChangeText: 'Planning changed elsewhere · Refresh to review',
   overdueTimer: undefined,
   workspaceGate: 'loading',
   workspaceCreating: false,
@@ -66,7 +69,7 @@ export const state = {
   searchQuery: '',
   searchDebounce: undefined,
   searchIndexGeneration: 0,
-  noticeText: '',
+  noticeText: 'Loading planning data…',
   errorText: '',
   shortcutChord: 0,
   // The busy flag belongs to the region that is actually rebuilt, so the filter
@@ -84,3 +87,8 @@ export const state = {
   observationDigest: '',
   observationReadAt: 0,
 };
+
+// Compatibility view for existing domain controllers. New component code reads
+// snapshots with useStore and writes top-level patches with setState.
+const { state, setState, useStore } = createStore(initialState);
+export { state, setState, useStore };

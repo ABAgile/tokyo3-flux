@@ -61,7 +61,7 @@ These are synthetic board results, not a general browser benchmark or an end-to-
 Both library renderers inserted zero elements on unchanged refreshes and title-only updates.
 The original renderer inserted six elements on a title update.
 Cold-render ordering varies between runs; treat small differences as noise rather than a framework guarantee.
-The checked-in Preact/HTM runtime is 14,497 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
+The checked-in Preact/HTM runtime is 14,514 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
 The board measurements above predate the hook-component migration and are a historical hybrid-renderer baseline, not a benchmark of the current component implementation.
 Re-run both renderer probes on the same browser host before drawing performance conclusions from the migrated implementation.
 Normal application builds require no npm installation.

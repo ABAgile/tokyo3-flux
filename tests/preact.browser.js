@@ -10,11 +10,18 @@ async function run(page) {
       renderIsland,
       unmountIsland,
       useLayoutEffect,
+      useRef,
       useState,
+      useReducer,
       mount,
       nodeOf,
       syncDisabled,
     } = await import('/modules/preact.js');
+    const { useRequest, useDismiss } = await import('/modules/ui-hooks.js');
+    const { state, setState, useStore } = await import('/modules/state.js');
+    const { StatusBars, notice, showPlanningChangeNotice, clearPlanningChangeNotice } =
+      await import('/modules/notices.js');
+    const { api } = await import('/modules/api.js');
     const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
     const { markdownTemplate, markdownEditorTemplate } = await import('/modules/markdown.js');
     const { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } = await import(
@@ -96,6 +103,160 @@ async function run(page) {
     await flush();
     unmountIsland(detached);
     check(stopped === 2, 'rendered-once component releases its effects');
+    function ReducerCounter() {
+      const [count, dispatch] = useReducer((value, action) => value + action, 0);
+      return html`<button onClick=${() => dispatch(1)}>Reduced ${count}</button>`;
+    }
+    renderIsland(host, html`<${ReducerCounter} />`);
+    host.firstElementChild.click();
+    await flush();
+    check(host.textContent === 'Reduced 1', 'useReducer updates component state');
+    const initialChord = state.shortcutChord;
+    let storeRenders = 0;
+    function StoreProbe() {
+      storeRenders++;
+      const chord = useStore((current) => current.shortcutChord);
+      return html`<button onClick=${() =>
+        setState((current) => ({
+          shortcutChord: current.shortcutChord + 1,
+        }))}>Store ${chord}</button>`;
+    }
+    renderIsland(host, html`<${StoreProbe} />`);
+    host.firstElementChild.click();
+    await flush();
+    check(
+      host.textContent === `Store ${initialChord + 1}` && storeRenders === 2,
+      'store selector reacts to state updates',
+    );
+    setState({ errorText: 'Unrelated update' });
+    await flush();
+    check(storeRenders === 2, 'selector skips unrelated state changes');
+    setState({ errorText: '' });
+    state.shortcutChord = initialChord + 2;
+    await flush();
+    check(
+      host.textContent === `Store ${initialChord + 2}` && storeRenders === 3,
+      'compatibility state writes notify store selectors',
+    );
+    setState({ shortcutChord: initialChord });
+
+    let refreshes = 0;
+    renderIsland(host, html`<${StatusBars} refresh=${() => refreshes++} />`);
+    const status = host.querySelector('#notice');
+    check(status?.getAttribute('aria-live') === 'polite', 'status live region mounts politely');
+    const textChanges = [];
+    const observer = new MutationObserver((records) => textChanges.push(...records));
+    observer.observe(status, { subtree: true, characterData: true, childList: true });
+    notice('Workspace ready');
+    await flush();
+    const announcedChanges = textChanges.length;
+    setState({ shortcutChord: initialChord + 1 });
+    await flush();
+    check(
+      status.textContent === 'Workspace ready' && textChanges.length === announcedChanges,
+      'unrelated store updates do not rewrite the live announcement',
+    );
+    observer.disconnect();
+    notice('Permission denied', true);
+    await flush();
+    check(
+      !host.querySelector('#error-bar').hidden &&
+        host.querySelector('#error-bar').getAttribute('role') === 'alert',
+      'errors use the mounted assertive live region',
+    );
+    host.querySelector('#error-dismiss').click();
+    await flush();
+    check(host.querySelector('#error-bar').hidden, 'error dismissal updates store state');
+    showPlanningChangeNotice('Review workspace changes');
+    await flush();
+    check(
+      !host.querySelector('#planning-change').hidden &&
+        host.querySelector('#planning-change-text').textContent === 'Review workspace changes',
+      'planning-change notice reads reactive state',
+    );
+    host.querySelector('#planning-refresh').click();
+    check(refreshes === 1, 'planning-change action calls its prop');
+    clearPlanningChangeNotice();
+    await flush();
+    check(
+      host.querySelector('#planning-change').hidden,
+      'planning-change notice clears reactively',
+    );
+    renderIsland(host, null);
+
+    const originalFetch = window.fetch;
+    let forwardedSignal;
+    window.fetch = async (_path, options) => {
+      forwardedSignal = options.signal;
+      return new Response('{"ok":true}', {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    try {
+      const controller = new AbortController();
+      const response = await api('/api/v2/test', { signal: controller.signal });
+      check(response.ok && forwardedSignal === controller.signal, 'api forwards AbortSignal');
+    } finally {
+      window.fetch = originalFetch;
+    }
+
+    const requestSignals = [];
+    function RequestProbe({ root }) {
+      const result = useRequest(
+        (signal) =>
+          new Promise((_resolve, reject) => {
+            requestSignals.push(signal);
+            signal.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError')),
+            );
+          }),
+        [root],
+      );
+      return html`<span>${result.loading ? 'Loading' : 'Idle'}</span>`;
+    }
+    renderIsland(host, html`<${RequestProbe} root="one" />`);
+    await flush();
+    renderIsland(host, html`<${RequestProbe} root="two" />`);
+    await flush();
+    check(
+      requestSignals.length === 2 && requestSignals[0].aborted,
+      'request key aborts stale work',
+    );
+    unmountIsland(host);
+    check(requestSignals[1].aborted, 'request cleanup aborts work on unmount');
+
+    let dismissed = 0;
+    function DismissProbe() {
+      const [open, setOpen] = useState(true);
+      const ref = useRef(null);
+      useDismiss(ref, open, () => {
+        dismissed++;
+        setOpen(false);
+      });
+      return open ? html`<div ref=${ref}>Open menu</div>` : null;
+    }
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    renderIsland(host, html`<${DismissProbe} />`);
+    await flush();
+    host.firstElementChild.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await flush();
+    check(dismissed === 0, 'useDismiss ignores pointers inside its ref');
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await flush();
+    check(dismissed === 1 && !host.children.length, 'useDismiss handles outside pointers');
+    outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    await flush();
+    check(dismissed === 1, 'useDismiss cleans up after closing');
+    unmountIsland(host);
+    renderIsland(host, html`<${DismissProbe} />`);
+    await flush();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush();
+    check(dismissed === 2 && !host.children.length, 'useDismiss handles Escape');
+    unmountIsland(host);
+    outside.remove();
+
     const oldUpdate = mount(host, html`<p>Old form</p>`);
     mount(host, html`<p>New form</p>`);
     oldUpdate(html`<p>Stale response</p>`);

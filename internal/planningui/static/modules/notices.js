@@ -1,47 +1,81 @@
-// Status line, error bar and the "planning changed elsewhere" notice.
-import { $ } from './dom.js';
-import { state } from './state.js';
+// Status line, error bar and the planning-change notice.
+import { Fragment, html } from './preact.js';
+import { state, setState, useStore } from './state.js';
 
-// Transient progress and errors are separate surfaces. `#notice` is a polite
-// status line that is only written when its text actually changes, so screen
-// readers are not re-announced on every render pass. Errors persist in their
-// own assertive bar until dismissed or until a later success clears them.
+function sameStatus(left, right) {
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => Object.is(left[key], right[key]))
+  );
+}
+
+export function StatusBars({ refresh }) {
+  const {
+    noticeText,
+    errorText,
+    planningChangeNotice,
+    planningChangeText,
+    busy,
+    loading,
+    integrationFormOpen,
+  } = useStore(
+    (current) => ({
+      noticeText: current.noticeText,
+      errorText: current.errorText,
+      planningChangeNotice: current.planningChangeNotice,
+      planningChangeText: current.planningChangeText,
+      busy: current.busy,
+      loading: current.loading,
+      integrationFormOpen: current.integrationFormOpen,
+    }),
+    sameStatus,
+  );
+  return html`<${Fragment}>
+    <p id="notice" role="status" aria-live="polite">${noticeText}</p>
+    <div id="error-bar" class="notice-bar notice-bar-danger" hidden=${!errorText} role="alert">
+      <span id="error-text">${errorText}</span>
+      <button type="button" id="error-dismiss" aria-label="Dismiss error" onClick=${clearError}>Dismiss</button>
+    </div>
+    <div
+      id="planning-change"
+      class="notice-bar notice-bar-warning"
+      hidden=${!planningChangeNotice}
+      role="status"
+      aria-live="polite"
+    >
+      <span id="planning-change-text">${planningChangeText}</span>
+      <button
+        type="button"
+        id="planning-refresh"
+        disabled=${busy || loading || integrationFormOpen}
+        onClick=${refresh}
+      >Refresh</button>
+    </div>
+  </${Fragment}>`;
+}
+
+// Transient progress and errors are separate surfaces. Preact retains the live
+// regions and changes their text only when a new announcement is made.
 export function notice(text, error = false) {
   if (error) showError(text);
   else setStatus(text);
 }
 function setStatus(text) {
   const value = String(text || '');
-  if (value === state.noticeText) return;
-  state.noticeText = value;
-  $('notice').textContent = value;
+  if (value !== state.noticeText) setState({ noticeText: value });
 }
 function showError(text) {
   const value = String(text || '');
-  if (value === state.errorText && !$('error-bar').hidden) return;
-  state.errorText = value;
-  $('error-text').textContent = value;
-  $('error-bar').hidden = !value;
+  if (value !== state.errorText) setState({ errorText: value });
 }
 export function clearError() {
-  if (!state.errorText && $('error-bar').hidden) return;
-  state.errorText = '';
-  $('error-text').textContent = '';
-  $('error-bar').hidden = true;
+  if (state.errorText) setState({ errorText: '' });
 }
 export function showPlanningChangeNotice(text = 'Planning changed elsewhere · Refresh to review') {
-  const banner = $('planning-change');
-  if (
-    state.planningChangeNotice &&
-    !banner.hidden &&
-    $('planning-change-text').textContent === text
-  )
-    return;
-  state.planningChangeNotice = true;
-  $('planning-change-text').textContent = text;
-  banner.hidden = false;
+  if (state.planningChangeNotice && state.planningChangeText === text) return;
+  setState({ planningChangeNotice: true, planningChangeText: text });
 }
 export function clearPlanningChangeNotice() {
-  state.planningChangeNotice = false;
-  $('planning-change').hidden = true;
+  if (state.planningChangeNotice) setState({ planningChangeNotice: false });
 }

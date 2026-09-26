@@ -32,7 +32,6 @@ export function renderControls() {
   $('presentation-board').setAttribute('aria-pressed', String(state.presentation === 'board'));
   $('presentation-list').setAttribute('aria-pressed', String(state.presentation === 'list'));
   $('refresh').disabled = state.busy || state.loading || state.integrationFormOpen;
-  $('planning-refresh').disabled = state.busy || state.loading || state.integrationFormOpen;
   $('new-workspace').disabled =
     !state.session || state.busy || state.loading || state.integrationFormOpen;
   $('workspace-field').hidden = !state.board && state.workspaceGate !== 'loading';

@@ -22,6 +22,7 @@ function isRedirectResponse(response) {
     (response.status >= 300 && response.status < 400 && response.status !== 304)
   );
 }
+// Fetch options are forwarded, including `signal` for effect-owned cancellation.
 async function api(path, init = {}) {
   const r = await fetch(path, {
     ...init,

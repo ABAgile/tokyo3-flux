@@ -12,7 +12,7 @@ import {
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
-import { notice, clearError } from './modules/notices.js';
+import { StatusBars, notice, clearPlanningChangeNotice } from './modules/notices.js';
 import { activeSprints, labelOptionColors } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
@@ -92,6 +92,7 @@ Object.assign(hooks, {
   resetBurndown,
   selectItem,
 });
+renderTemplate(html`<${StatusBars} refresh=${refresh} />`, $('status-bars'));
 const theme =
   localStorage.getItem('flux-plan-theme') ||
   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -127,7 +128,7 @@ function render() {
     // Both hosts are rendered by Preact, so they are cleared through Preact.
     renderTemplate(nothing, $('sprint-summary'));
     $('count').textContent = '';
-    $('planning-change').hidden = true;
+    clearPlanningChangeNotice();
     $('filter-chips').hidden = true;
     renderTemplate(nothing, $('filter-chips'));
     if (state.workspaceGate === 'select') {
@@ -361,7 +362,6 @@ $('new-item').onclick = () => editItem();
 $('columns').onclick = setupBoard;
 $('new-workspace').onclick = showWorkspaceCreate;
 $('refresh').onclick = refresh;
-$('planning-refresh').onclick = refresh;
 $('presentation-board').onclick = () => setPresentation('board');
 $('presentation-list').onclick = () => setPresentation('list');
 $('scope').onchange = () => {
@@ -387,7 +387,6 @@ $('search').addEventListener('keydown', (event) => {
     if (flushSearch() && state.board) renderContent();
   }
 });
-$('error-dismiss').onclick = clearError;
 $('shortcuts-dismiss').onclick = $('shortcuts-close').onclick = () => $('shortcuts').close();
 initShortcuts();
 $('undo').onclick = async () => {

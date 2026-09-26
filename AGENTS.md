@@ -17,8 +17,38 @@ The static shell and domain/session command controllers remain plain ES modules;
   `mount(host, template)` starts a fresh form lifetime and returns an update function that ignores stale updates after replacement.
 - Stateful widgets are function components.
   Keep local interaction state in Preact hooks, pass domain data and actions as props, and use stable domain keys when an identity change needs a fresh lifetime.
+  Shared UI reads use a selector and state changes use `setState`; keep each selector focused on the values the component renders.
+  Replace top-level values for nested updates; do not mutate selected arrays, maps or sets in place.
+
+  ```js
+  const board = useStore((current) => current.board);
+  setState({ view: 'sprints' });
+  ```
+
+  Use `useReducer` for related state transitions; do not mirror reducer state in refs to work around stale closures.
+
+  ```js
+  const [state, dispatch] = useReducer(reducer, initialState);
+  dispatch({ type: 'loaded', data });
+  ```
+
   Effects own outside listeners, subscriptions, animation frames and observers; every acquired resource needs cleanup.
   Keep native form drafts uncontrolled unless the UI genuinely owns their changing value.
+- Async effects use `useRequest`; include every identity that should restart work, especially workspace root, in its dependency list.
+  It supplies an `AbortSignal`, keeps prior data while reloading, and suppresses results after abort.
+  `api(path, { signal })` forwards cancellation to `fetch`.
+
+  ```js
+  const result = useRequest((signal) => api(`/api/v2/items/${id}`, { signal }), [root, id]);
+  ```
+
+- Open popovers and menus use `useDismiss(ref, open, onDismiss)` instead of module-level document listeners.
+
+  ```js
+  const ref = useRef(null);
+  useDismiss(ref, open, onClose);
+  ```
+
 - `attach(setup, ...args)` is only for one-time, element-local wiring such as board/list drag handlers or chip decoration; handlers must read current data by stable ID at event time.
   Use component effects for external resources, never `attach`.
 - Native text fields are uncontrolled (`defaultValue`) unless their value is owned by reactive state, such as project search.
@@ -56,7 +86,7 @@ Feature modules export functions and constants only; any document listeners or t
 
 | Layer | Modules |
 |---|---|
-| Base | `vendor-preact`, `preact`, `gate-components`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
+| Base | `vendor-preact`, `preact`, `store`, `ui-hooks`, `gate-components`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
 | State | `state` (every reassigned shell variable, as `state.<name>`), `hooks` |
 | Services | `permissions`, `notices`, `items`, `controls`, `people`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
