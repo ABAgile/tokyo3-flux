@@ -8,7 +8,10 @@
 // attributes, own text and computed style (plus ::before/::after/::placeholder),
 // stored as a difference from its parent so the output stays small but lossless.
 // IDs, clock times, running animations and focus/hover state are masked so that unchanged
-// code produces identical output.
+// code produces identical output. Render bookkeeping is ignored too: the
+// data-render-signature attribute, whitespace inside class attributes, which
+// lit's classMap pads, and the counter at the end of generated ids, so
+// imperative and lit renders of one UI compare equal.
 // biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
 async function run(page) {
   page.setDefaultTimeout(15000);
@@ -70,6 +73,14 @@ async function run(page) {
           .replace(UID, '<uid>')
           .replace(STAMP, '<timestamp>')
           .replace(TIME, '<time>');
+      // Generated element ids end in a session counter; references mask it.
+      const ID_REFS = new Set([
+        'id',
+        'for',
+        'aria-controls',
+        'aria-describedby',
+        'aria-labelledby',
+      ]);
       const hash = (text) => {
         let h = 0x811c9dc5;
         for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
@@ -105,7 +116,17 @@ async function run(page) {
           pseudo[kind] = store(delta(read(style), values));
         }
         const attrs = [...node.attributes]
-          .map((a) => `${a.name}=${mask(a.value)}`)
+          .filter((a) => a.name !== 'data-render-signature')
+          .map(
+            (a) =>
+              `${a.name}=${mask(
+                a.name === 'class'
+                  ? a.value.trim().replace(/\s+/g, ' ')
+                  : ID_REFS.has(a.name)
+                    ? a.value.replace(/-\d+\b/g, '-<n>')
+                    : a.value,
+              )}`,
+          )
           .sort()
           .join(' ');
         const text = [...node.childNodes]
