@@ -13,10 +13,11 @@
 //           ├── .help                    guidance text (optional)
 //           └── body: .panel / .maintenance-list / .empty
 //
-// No module-level state: every export is a pure factory over its arguments, so
-// it is safe to import anywhere.
-import { el, options, uid, noAutofill } from './dom.js';
-import { html, nodeOf } from './lit.js';
+// Each component has a lit template form (`*Template`) and, while imperative
+// views remain, a node form that renders the template once. No module-level
+// state: every export is a pure factory over its arguments.
+import { el, uid, noAutofill } from './dom.js';
+import { html, live, nodeOf, nothing, render } from './lit.js';
 
 // #content holds exactly one page root. `data-content-view` names the
 // composition so a re-render can patch the existing DOM instead of replacing
@@ -26,56 +27,87 @@ function contentRoot(tag, className, contentView) {
   if (contentView) root.dataset.contentView = contentView;
   return root;
 }
+// Renders a view's template into its page root. The root persists while the
+// host shows the same view, so lit updates it in place; a new root is filled
+// while detached and then replaces the host's content in one insertion.
+function renderRoot(host, className, contentView, template, tag = 'div') {
+  const current = host.firstElementChild;
+  const root =
+    current?.dataset.contentView === contentView
+      ? current
+      : contentRoot(tag, className, contentView);
+  render(template, root);
+  if (root !== current) host.replaceChildren(root);
+  return root;
+}
 // The default page body: one single-column stack of sections with one gap, so
 // Projects, Sprints, Members, Labels and History space their sections alike.
 function pageStack(contentView) {
   return contentRoot('div', 'page-stack', contentView);
 }
+function renderPage(host, contentView, template) {
+  return renderRoot(host, 'page-stack', contentView, template);
+}
 // A bordered surface. Variants add their own padding and inner layout.
+function panelTemplate(className, content, tag = 'section') {
+  const classes = className ? `panel ${className}` : 'panel';
+  return tag === 'article'
+    ? html`<article class=${classes}>${content}</article>`
+    : html`<section class=${classes}>${content}</section>`;
+}
 function panel(className, tag = 'section') {
   return el(tag, undefined, className ? `panel ${className}` : 'panel');
 }
-
 // Page-level section title with optional right-aligned actions.
+function sectionHeadTemplate(title, ...actions) {
+  return html`<div class="section-head"><h2>${title}</h2>${actions.filter(Boolean)}</div>`;
+}
 function sectionHead(title, ...actions) {
-  const head = el('div', undefined, 'section-head');
-  head.append(el('h2', title), ...actions.filter(Boolean));
-  return head;
+  return nodeOf(sectionHeadTemplate(title, ...actions));
 }
 // Subordinate heading for a panel: an h3 title above optional guidance, used by
 // the read-only chart panels so their heads match the page heads. `description`
-// is either guidance text or a ready-made node.
-function panelHead(title, { id, description, className } = {}) {
-  const head = el('div', undefined, className ? `section-head ${className}` : 'section-head');
-  const heading = el('h3', title);
-  if (id) heading.id = id;
-  if (!description) {
-    head.append(heading);
-    return head;
-  }
+// is either guidance text or a ready-made template or node.
+function panelHeadTemplate(title, { id, description, className } = {}) {
+  const classes = className ? `section-head ${className}` : 'section-head';
+  const heading = html`<h3 id=${id || nothing}>${title}</h3>`;
+  if (!description) return html`<div class=${classes}>${heading}</div>`;
   // Title and guidance travel together so actions stay on the opposite edge.
-  const intro = el('div');
-  intro.append(heading, typeof description === 'string' ? helpText(description) : description);
-  head.append(intro);
-  return head;
+  const guidance = typeof description === 'string' ? helpTextTemplate(description) : description;
+  return html`<div class=${classes}><div>${heading}${guidance}</div></div>`;
+}
+function panelHead(title, options) {
+  return nodeOf(panelHeadTemplate(title, options));
 }
 // Guidance text. `variant` adds a page-specific class beside the shared one.
+function helpTextTemplate(text, variant) {
+  return html`<p class=${variant ? `help ${variant}` : 'help'}>${text}</p>`;
+}
 function helpText(text, variant) {
-  return el('p', text, variant ? `help ${variant}` : 'help');
+  return nodeOf(helpTextTemplate(text, variant));
 }
 // One inline live region for progress and validation: polite while it reports
 // progress, assertive while it carries an error, hidden while it says nothing.
+// Its class, text and role belong to setStatusText, so the template binds none
+// of them after creation.
+function statusLineTemplate(className = 'help') {
+  return html`<p
+    class=${className}
+    data-status-class=${className}
+    hidden
+    role="status"
+    aria-live="polite"
+  ></p>`;
+}
 function statusLine(className = 'help') {
-  const line = el('p', '', className);
-  line.dataset.statusClass = className;
-  line.hidden = true;
-  line.setAttribute('role', 'status');
-  line.setAttribute('aria-live', 'polite');
-  return line;
+  return nodeOf(statusLineTemplate(className));
 }
 // The assertive counterpart: a one-line error region, empty and hidden until a
 // write fails. Errors never share a node with progress, so they are announced
 // once and stay until the next attempt clears them.
+function errorLineTemplate(text = '', className = 'error') {
+  return html`<p class=${className} role="alert" ?hidden=${!text}>${text}</p>`;
+}
 function errorLine(text = '', className = 'error') {
   const line = el('p', text, className);
   line.setAttribute('role', 'alert');
@@ -103,42 +135,72 @@ function emptyState(text) {
 }
 // The one metric row: large value over its caption, shared by the project lens,
 // sprint panels, the delivery trend and burn-down charts.
+function metricListTemplate(entries, className) {
+  return html`<div class=${className ? `metrics ${className}` : 'metrics'}>
+    ${entries.map(
+      ([value, label]) =>
+        html`<span class="metric"><strong>${String(value)}</strong><span>${label}</span></span>`,
+    )}
+  </div>`;
+}
 function metricList(entries, className) {
-  const metrics = el('div', undefined, className ? `metrics ${className}` : 'metrics');
-  entries.forEach(([value, label]) => {
-    const metric = el('span', undefined, 'metric');
-    metric.append(el('strong', String(value)), el('span', label));
-    metrics.append(metric);
-  });
-  return metrics;
+  return nodeOf(metricListTemplate(entries, className));
 }
 
 // The only filter container: labeled native controls on the left, a
-// right-aligned visible record count. Callers append their controls.
-function filterBar() {
-  const bar = el('div', undefined, 'filter-bar');
-  const controls = el('div', undefined, 'actions');
-  const count = el('span', undefined, 'filter-bar-count muted');
-  count.setAttribute('aria-live', 'polite');
-  bar.append(controls, count);
-  return { bar, controls, count };
+// right-aligned visible record count.
+function filterBarTemplate(controls, count = '') {
+  return html`<div class="filter-bar">
+    <div class="actions">${controls}</div>
+    <span class="filter-bar-count muted" aria-live="polite">${count}</span>
+  </div>`;
 }
-// Add-a-filter select: it adds one value and returns to its All entry. Filter
-// controls are standalone page state, never form data, so they are identified
-// by a unique id rather than a submitted name.
+// Imperative form: callers append their controls and write the count.
+function filterBar() {
+  const bar = nodeOf(filterBarTemplate());
+  return { bar, controls: bar.firstElementChild, count: bar.lastElementChild };
+}
+// Filter controls are standalone page state, never form data, so they are
+// identified by a unique id rather than a submitted name. Ids are generated
+// once per control and passed in, so a re-render keeps them.
+function filterControlID(title) {
+  return uid(`filter-${controlSlug(title)}`);
+}
+// Add-a-filter select: it adds one value and returns to its All entry.
+function filterSelectTemplate(title, entries, id, onChange) {
+  return html`<label for=${id}
+    >${title}<select id=${id} aria-label=${title} @change=${onChange}>
+      ${entries.map(([value, text]) => html`<option value=${value}>${text}</option>`)}
+    </select></label
+  >`;
+}
 function filterSelect(title, entries) {
-  const select = el('select');
-  select.id = uid(`filter-${controlSlug(title)}`);
-  select.setAttribute('aria-label', title);
-  options(select, entries, 'all');
-  const label = el('label', title);
-  label.setAttribute('for', select.id);
-  label.append(select);
+  const label = nodeOf(filterSelectTemplate(title, entries, filterControlID(title)));
+  const select = label.querySelector('select');
+  select.value = 'all';
   return { label, select };
+}
+function filterSearchTemplate(
+  title,
+  id,
+  { value = '', placeholder = '', maxLength = 120 },
+  onInput,
+) {
+  return html`<label for=${id}
+    >${title}<input
+      id=${id}
+      type="search"
+      autocomplete="off"
+      .value=${live(value)}
+      placeholder=${placeholder}
+      maxlength=${maxLength}
+      aria-label=${title}
+      @input=${onInput}
+  /></label>`;
 }
 function filterSearch(title, { value = '', placeholder = '', maxLength = 120 } = {}) {
   const input = noAutofill(el('input'));
-  input.id = uid(`filter-${controlSlug(title)}`);
+  input.id = filterControlID(title);
   input.type = 'search';
   input.value = value;
   input.placeholder = placeholder;
@@ -158,15 +220,20 @@ function controlSlug(title) {
   );
 }
 // Removable chips are the authoritative view of a multi-value filter group.
+function filterChipRowTemplate(ariaLabel, chips) {
+  return html`<div class="filter-chips" role="group" aria-label=${ariaLabel} ?hidden=${!chips.length}>
+    ${chips}
+  </div>`;
+}
 function filterChipRow(ariaLabel) {
-  const chips = el('div', undefined, 'filter-chips');
-  chips.setAttribute('role', 'group');
-  chips.setAttribute('aria-label', ariaLabel);
-  chips.hidden = true;
-  return chips;
+  return nodeOf(filterChipRowTemplate(ariaLabel, []));
 }
 // Filter bars live in a slot so the shared planning bar can be relocated
-// between hosts rather than duplicated.
+// between hosts rather than duplicated. A slot that receives the relocated bar
+// must have no bound children, so lit never touches the moved node.
+function filterSlotTemplate(id, ...children) {
+  return html`<div class="filter-slot" id=${id || nothing}>${children.filter(Boolean)}</div>`;
+}
 function filterSlot(id, ...children) {
   const slot = el('div', undefined, 'filter-slot');
   if (id) slot.id = id;
@@ -174,44 +241,65 @@ function filterSlot(id, ...children) {
   return slot;
 }
 
+function maintenanceListTemplate(className, rows) {
+  return html`<div class=${className ? `maintenance-list ${className}` : 'maintenance-list'}>
+    ${rows}
+  </div>`;
+}
 function maintenanceList(className) {
   return el('div', undefined, className ? `maintenance-list ${className}` : 'maintenance-list');
 }
 // One row shape for Projects, Members and Labels: identity on the left,
 // optional actions on the right.
-function maintenanceRow({ tag = 'div', className = '', content = [], actions = [] } = {}) {
-  const row = el(tag, undefined, `setup-row maintenance-row${className ? ` ${className}` : ''}`);
-  const info = el('div', undefined, 'maintenance-row-info');
-  info.append(...content.filter(Boolean));
-  row.append(info);
+function maintenanceRowTemplate({ tag = 'div', className = '', content = [], actions = [] } = {}) {
+  const classes = `setup-row maintenance-row${className ? ` ${className}` : ''}`;
   const visible = actions.filter(Boolean);
-  if (visible.length) {
-    const group = el('div', undefined, 'actions');
-    group.append(...visible);
-    row.append(group);
-  }
-  return row;
+  const body = html`<div class="maintenance-row-info">${content.filter(Boolean)}</div>
+    ${visible.length ? html`<div class="actions">${visible}</div>` : nothing}`;
+  return tag === 'article'
+    ? html`<article class=${classes}>${body}</article>`
+    : html`<div class=${classes}>${body}</div>`;
+}
+function maintenanceRow(options) {
+  return nodeOf(maintenanceRowTemplate(options));
 }
 
 export {
   contentRoot,
+  renderRoot,
   pageStack,
+  renderPage,
   panel,
+  panelTemplate,
   sectionHead,
+  sectionHeadTemplate,
   panelHead,
+  panelHeadTemplate,
   helpText,
+  helpTextTemplate,
   statusLine,
+  statusLineTemplate,
   setStatusText,
   errorLine,
+  errorLineTemplate,
   setErrorText,
   emptyState,
   emptyStateTemplate,
   metricList,
+  metricListTemplate,
   filterBar,
+  filterBarTemplate,
+  filterControlID,
   filterSelect,
+  filterSelectTemplate,
   filterSearch,
+  filterSearchTemplate,
   filterChipRow,
+  filterChipRowTemplate,
   filterSlot,
+  filterSlotTemplate,
   maintenanceList,
+  maintenanceListTemplate,
   maintenanceRow,
+  maintenanceRowTemplate,
 };

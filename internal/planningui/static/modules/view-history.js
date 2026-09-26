@@ -1,8 +1,8 @@
 // The History page.
-import { el, button } from './dom.js';
 import { api } from './api.js';
 import { workspaceHistoryLabel } from './format.js';
-import { pageStack, emptyState } from './layout.js';
+import { renderPage, emptyStateTemplate } from './layout.js';
+import { html, nothing, repeat } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { notice } from './notices.js';
@@ -27,37 +27,46 @@ function historyActorLabel(subject) {
       : '';
   return name ? `${name} (${subject})` : subject;
 }
+async function loadOlderHistory() {
+  try {
+    await loadHistory();
+    hooks.renderContent();
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+function historyRowTemplate(event, label) {
+  const scope = event.legacy_project_id ? 'legacy project' : 'workspace';
+  const meta = `${historyActorLabel(event.actor)} · ${new Date(event.at).toLocaleString()} · ${label} · ${scope} revision ${event.revision}`;
+  return html`<article class="history-row">
+    <strong>${event.action.replaceAll('.', ' · ')}</strong>
+    <p class="muted">${meta}</p>
+    ${event.target ? html`<small class="card-id">${`Target ${event.target}`}</small>` : nothing}
+    ${event.reason ? html`<p>${event.reason}</p>` : nothing}
+  </article>`;
+}
 export function renderHistory(content) {
-  const page = pageStack('history');
   const label = workspaceHistoryLabel(state.board.workspace);
-  page.append(el('p', label, 'muted'));
-  if (!state.history.length) page.append(emptyState('No planning changes yet.'));
-  const list = el('div', undefined, 'history-list');
-  state.history.forEach((e) => {
-    const row = el('article', undefined, 'history-row');
-    row.append(
-      el('strong', e.action.replaceAll('.', ' · ')),
-      el(
-        'p',
-        `${historyActorLabel(e.actor)} · ${new Date(e.at).toLocaleString()} · ${label} · ${e.legacy_project_id ? 'legacy project' : 'workspace'} revision ${e.revision}`,
-        'muted',
-      ),
-    );
-    if (e.target) row.append(el('small', `Target ${e.target}`, 'card-id'));
-    if (e.reason) row.append(el('p', e.reason));
-    list.append(row);
-  });
-  if (list.childElementCount) page.append(list);
-  if (state.historyMore)
-    page.append(
-      button('Load older changes', async () => {
-        try {
-          await loadHistory();
-          hooks.renderContent();
-        } catch (e) {
-          notice(e.message, true);
-        }
-      }),
-    );
-  content.append(page);
+  renderPage(
+    content,
+    'history',
+    html`<p class="muted">${label}</p>
+      ${state.history.length ? nothing : emptyStateTemplate('No planning changes yet.')}
+      ${
+        state.history.length
+          ? html`<div class="history-list">
+              ${repeat(
+                state.history,
+                (event) => event.id,
+                (event) => historyRowTemplate(event, label),
+              )}
+            </div>`
+          : nothing
+      }
+      ${
+        state.historyMore
+          ? html`<button type="button" @click=${loadOlderHistory}>Load older changes</button>`
+          : nothing
+      }`,
+  );
 }

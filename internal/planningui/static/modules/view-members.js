@@ -1,16 +1,18 @@
 // The Members page and member dialogs.
 import { $, el, field } from './dom.js';
 import {
-  pageStack,
-  sectionHead,
+  renderPage,
+  sectionHeadTemplate,
   helpText,
-  emptyState,
-  maintenanceList,
-  maintenanceRow,
+  helpTextTemplate,
+  emptyStateTemplate,
+  maintenanceListTemplate,
+  maintenanceRowTemplate,
 } from './layout.js';
+import { html, nodeOf, nothing, repeat } from './lit.js';
 import { state } from './state.js';
-import { adminIconButton, adminWritable, adminButton } from './permissions.js';
-import { memberListingInfo, avatarView } from './people.js';
+import { adminIconTemplate, adminWritable, accessButtonTemplate } from './permissions.js';
+import { memberListingInfo, avatarTemplate } from './people.js';
 import { multiSelect } from './multi-select.js';
 import { memberUserEntries, loadGitLabUsers } from './gitlab-catalog.js';
 import { openEditor } from './dialog.js';
@@ -23,25 +25,29 @@ const MEMBER_ROLE_ENTRIES = [
 function memberRoleLabel(role) {
   return MEMBER_ROLE_ENTRIES.find(([value]) => value === role)?.[1] || role;
 }
-function memberRoleChip(role) {
+function memberRoleChipTemplate(role) {
   const roleClass = MEMBER_ROLE_ENTRIES.some(([value]) => value === role) ? role : 'unknown';
-  const chip = el('span', memberRoleLabel(role), `badge member-role member-role-${roleClass}`);
-  chip.setAttribute('aria-label', `Role: ${memberRoleLabel(role)}`);
-  return chip;
+  return html`<span
+    class=${`badge member-role member-role-${roleClass}`}
+    aria-label=${`Role: ${memberRoleLabel(role)}`}
+  >${memberRoleLabel(role)}</span>`;
+}
+function memberIdentityTemplate(member) {
+  const info = memberListingInfo(member);
+  const username = String(member.username || '').trim();
+  return html`<div class="member-identity">
+    ${avatarTemplate(info.name, info.avatarURL)}
+    <div class="member-identity-copy">
+      <strong>${info.name}</strong>
+      <div class="member-identity-meta">
+        ${username ? html`<small class="muted">${`@${username}`}</small>` : nothing}
+        ${memberRoleChipTemplate(member.role)}
+      </div>
+    </div>
+  </div>`;
 }
 function memberIdentityView(member) {
-  const info = memberListingInfo(member);
-  const identity = el('div', undefined, 'member-identity');
-  identity.append(avatarView(info.name, info.avatarURL));
-  const copy = el('div', undefined, 'member-identity-copy');
-  copy.append(el('strong', info.name));
-  const username = String(member.username || '').trim();
-  const meta = el('div', undefined, 'member-identity-meta');
-  if (username) meta.append(el('small', `@${username}`, 'muted'));
-  meta.append(memberRoleChip(member.role));
-  copy.append(meta);
-  identity.append(copy);
-  return identity;
+  return nodeOf(memberIdentityTemplate(member));
 }
 function editMember(member) {
   if (!adminWritable()) return;
@@ -192,39 +198,40 @@ function addMember() {
   $('save').textContent = 'Add member';
 }
 export function renderMembers(content) {
-  $('count').textContent =
-    `${state.board.members.length} member${state.board.members.length === 1 ? '' : 's'}`;
-  const page = pageStack('members');
+  const members = state.board.members;
+  $('count').textContent = `${members.length} member${members.length === 1 ? '' : 's'}`;
   const admin = state.board.role === 'admin';
-  page.append(
-    sectionHead(
-      'Workspace members',
-      admin ? adminButton('＋ Add member', addMember, 'primary') : undefined,
-    ),
-    helpText(
-      admin
-        ? 'Manage workspace access and roles. OAuth supplies the signed-in user’s GitLab profile; other numeric members need the server-side read connector for names, usernames, and avatars. Bootstrap, non-GitLab, or unavailable profiles may not have a username or avatar.'
-        : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.',
-    ),
-  );
-  content.append(page);
-  if (!state.board.members.length) {
-    page.append(emptyState('No workspace members yet.'));
-    return;
-  }
-  const list = maintenanceList();
-  state.board.members.forEach((member) =>
-    list.append(
-      maintenanceRow({
-        content: [memberIdentityView(member)],
+  const rows = repeat(
+    members,
+    (member) => member.subject,
+    (member) =>
+      maintenanceRowTemplate({
+        content: [memberIdentityTemplate(member)],
         actions: admin
           ? [
-              adminIconButton('Edit member', '✎', () => editMember(member)),
-              adminIconButton('Remove member', '−', () => removeMember(member), 'danger'),
+              adminIconTemplate('Edit member', '✎', () => editMember(member)),
+              adminIconTemplate('Remove member', '−', () => removeMember(member), 'danger'),
             ]
           : [],
       }),
-    ),
   );
-  page.append(list);
+  renderPage(
+    content,
+    'members',
+    html`${sectionHeadTemplate(
+      'Workspace members',
+      admin
+        ? accessButtonTemplate('＋ Add member', addMember, {
+            className: 'primary',
+            access: 'admin',
+          })
+        : undefined,
+    )}
+    ${helpTextTemplate(
+      admin
+        ? 'Manage workspace access and roles. OAuth supplies the signed-in user’s GitLab profile; other numeric members need the server-side read connector for names, usernames, and avatars. Bootstrap, non-GitLab, or unavailable profiles may not have a username or avatar.'
+        : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.',
+    )}
+    ${members.length ? maintenanceListTemplate('', rows) : emptyStateTemplate('No workspace members yet.')}`,
+  );
 }

@@ -1,6 +1,7 @@
 // Planning filters, work search and the filter chips.
-import { $, el, button } from './dom.js';
+import { $ } from './dom.js';
 import { labelForeground } from './format.js';
+import { html, render, styleProps } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import {
@@ -84,50 +85,40 @@ function filterOptionText(name, value) {
   return value;
 }
 // Chips are the removable, authoritative view of any filter group.
-export function filterChipNodes(group, names, onChange, { clearLabel = 'Clear filters' } = {}) {
+export function filterChipTemplates(group, names, onChange, { clearLabel = 'Clear filters' } = {}) {
+  const disabled = state.busy || state.loading;
   const chips = [];
   names.forEach((name) => {
     filterValues(name, group).forEach((value) => {
       const text = filterOptionText(name, value);
-      const chip = el('span', undefined, `filter-chip filter-chip-${name}`);
-      chip.append(
-        el(
-          'span',
-          `${{ project: 'Project', assignee: 'Assignee', label: 'Label' }[name]}: ${text}`,
-          'filter-chip-text',
-        ),
-      );
-      if (name === 'label' && value !== 'none') {
-        const color = labelInfo(value).color;
-        chip.style.backgroundColor = color;
-        chip.style.color = labelForeground(color);
-      }
-      const remove = button(
-        '×',
-        () => {
-          removeFilterValue(name, value, group);
-          onChange(name);
-        },
-        'filter-chip-remove',
-      );
-      remove.setAttribute('aria-label', `Remove ${name} filter ${text}`);
-      remove.disabled = state.busy || state.loading;
-      chip.append(remove);
-      chips.push(chip);
+      const title = { project: 'Project', assignee: 'Assignee', label: 'Label' }[name];
+      const color = name === 'label' && value !== 'none' ? labelInfo(value).color : '';
+      const colors = color ? { 'background-color': color, color: labelForeground(color) } : {};
+      chips.push(html`<span class=${`filter-chip filter-chip-${name}`} ${styleProps(colors)}>
+        <span class="filter-chip-text">${`${title}: ${text}`}</span>
+        <button
+          type="button"
+          class="filter-chip-remove"
+          aria-label=${`Remove ${name} filter ${text}`}
+          ?disabled=${disabled}
+          @click=${() => {
+            removeFilterValue(name, value, group);
+            onChange(name);
+          }}
+        >×</button>
+      </span>`);
     });
   });
-  if (chips.length > 1) {
-    const clear = button(
-      clearLabel,
-      () => {
+  if (chips.length > 1)
+    chips.push(html`<button
+      type="button"
+      class="filter-chip-clear"
+      ?disabled=${disabled}
+      @click=${() => {
         clearFilterGroup(group);
         onChange(names[0]);
-      },
-      'filter-chip-clear',
-    );
-    clear.disabled = state.busy || state.loading;
-    chips.push(clear);
-  }
+      }}
+    >${clearLabel}</button>`);
   return chips;
 }
 function filterSummaryText(name) {
@@ -217,9 +208,9 @@ export function placeFilters(host = $('planning-filter-slot')) {
 export function renderFilterChips() {
   const host = $('filter-chips');
   const names = FILTER_NAMES.filter((name) => !(name === 'label' && $('label-filter').hidden));
-  const chips = filterChipNodes(filters, names, applyFilterChange);
+  const chips = filterChipTemplates(filters, names, applyFilterChange);
   host.hidden = !chips.length || $('planning-filters').hidden;
-  host.replaceChildren(...chips);
+  render(html`${chips}`, host);
 }
 // Project and assignee filters feed the burn-down request, so changing them
 // invalidates any cached chart; label filtering is client-side only.

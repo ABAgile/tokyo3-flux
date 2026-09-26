@@ -7,24 +7,29 @@
 // sets properties through the CSSOM, which the policy allows.
 //
 // Ownership rule for lit-rendered DOM: a template binds an attribute, property
-// or class only if no other code writes it. `renderControls` owns `disabled` on
-// [data-write] controls and `draggable`; drag and drop, attachment drops and
-// tooltips toggle their own classes and attributes, which `classMap` leaves
-// alone. Code outside a template must never move, remove or re-text nodes lit
-// created; it asks for a re-render instead.
+// or class only if no other code writes it, or binds it with live() when other
+// code writes the same derived value (`disabled` on [data-write] controls, which
+// renderControls also sets). renderControls owns `draggable`; drag and drop,
+// attachment drops and tooltips toggle their own classes and attributes, which
+// classMap leaves alone. Code outside a template may change static parts of
+// lit-rendered DOM (an unbound status line's text) but never moves, removes or
+// re-texts bound parts; it asks for a re-render instead.
 import {
   classMap,
   Directive,
   directive,
+  guard,
   html,
   keyed,
+  live,
   nothing,
   PartType,
   render,
   repeat,
+  svg,
 } from './vendor-lit-html.js';
 
-export { classMap, html, keyed, nothing, render, repeat };
+export { classMap, guard, html, keyed, live, nothing, render, repeat, svg };
 
 class AttachDirective extends Directive {
   constructor(part) {

@@ -44,10 +44,11 @@ function avatarImageTemplate(avatarURL) {
     html`<img src=${avatarURL} alt="" decoding="async" referrerpolicy="no-referrer" @error=${removeImage}>`,
   );
 }
-export function avatarView(name, avatarURL) {
-  return nodeOf(
-    html`<span class="avatar" aria-hidden="true"><span class="avatar-fallback">${initials(name)}</span>${avatarImageTemplate(avatarURL)}</span>`,
-  );
+export function avatarTemplate(name, avatarURL) {
+  return html`<span class="avatar" aria-hidden="true">
+    <span class="avatar-fallback">${initials(name)}</span>
+    ${avatarImageTemplate(avatarURL)}
+  </span>`;
 }
 // Participants are derived server-side from assignment, cached reviewers and
 // comment authors, so a card states who is involved without one request per

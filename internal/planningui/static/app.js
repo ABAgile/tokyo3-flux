@@ -233,11 +233,11 @@ function render() {
 // Views that own their layout share one lifecycle: mount `#page-root`, keep the
 // root the view patches in place (if it has one), then build into the host.
 const PAGE_VIEWS = Object.freeze({
-  projects: { build: renderProjects },
+  projects: { build: renderProjects, patches: 'projects' },
   sprints: { build: renderSprintPage, patches: 'sprint-page' },
-  members: { build: renderMembers },
-  labels: { build: renderLabels },
-  history: { build: renderHistory },
+  members: { build: renderMembers, patches: 'members' },
+  labels: { build: renderLabels, patches: 'labels' },
+  history: { build: renderHistory, patches: 'history' },
 });
 function renderPageRoot(name) {
   if (!Object.hasOwn(PAGE_VIEWS, name)) return false;
