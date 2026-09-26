@@ -1,17 +1,18 @@
 // Sprint panels, the Sprints page, sprint history and sprint dialogs.
-import { $, el, button, field, uid } from './dom.js';
+import { $, uid } from './dom.js';
 import { api } from './api.js';
-import { renderMarkdown, markdownEditor } from './markdown.js';
+import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import {
   renderPage,
+  fieldTemplate,
   sectionHeadTemplate,
   panelHeadTemplate,
-  helpText,
+  helpTextTemplate,
   emptyStateTemplate,
   metricListTemplate,
   maintenanceListTemplate,
 } from './layout.js';
-import { guard, html, nothing, render, repeat } from './lit.js';
+import { attach, classMap, html, keyed, nothing, render, repeat } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -32,40 +33,52 @@ const sprintGoalResizeObserver = new ResizeObserver(() => {
     } else update();
   }
 });
-function sprintGoal(value) {
-  const goal = el('div', undefined, 'sprint-goal');
-  const content = el('div', undefined, 'sprint-goal-content');
-  content.id = uid('sprint-goal');
-  content.inert = true;
-  renderMarkdown(content, value);
-  let expanded = false;
-  const updateDisclosure = () => {
-    const clipped = content.scrollHeight > content.clientHeight + 1;
-    toggle.hidden = !expanded && !clipped;
-    content.inert = !expanded && clipped;
+// The sprint goal is a stateful widget: it measures its rendered height to
+// decide whether to offer "Show more", keeping `clipped` and `expanded` in a
+// local state object. Until the first measurement the goal stays inert.
+function mountSprintGoal(goal, value) {
+  const contentID = uid('sprint-goal');
+  const local = { expanded: false, clipped: undefined };
+  const content = () => goal.querySelector('.sprint-goal-content');
+  const measure = () => {
+    const node = content();
+    local.clipped = node.scrollHeight > node.clientHeight + 1;
+    update();
   };
-  const toggle = button(
-    'Show more',
-    () => {
-      expanded = !expanded;
-      toggle.textContent = expanded ? 'Show less' : 'Show more';
-      toggle.setAttribute('aria-expanded', String(expanded));
-      content.classList.toggle('is-expanded', expanded);
-      updateDisclosure();
-    },
-    'sprint-goal-toggle',
-  );
-  toggle.hidden = true;
-  toggle.setAttribute('aria-controls', content.id);
-  toggle.setAttribute('aria-expanded', 'false');
-  goal.append(content, toggle);
+  function update() {
+    const { expanded, clipped } = local;
+    const measured = clipped !== undefined;
+    render(
+      html`<div
+          class=${classMap({ 'sprint-goal-content': true, 'is-expanded': expanded })}
+          id=${contentID}
+          ?inert=${!measured || (!expanded && clipped)}
+        >${markdownTemplate(value)}</div
+        ><button
+          type="button"
+          class="sprint-goal-toggle"
+          ?hidden=${!measured || (!expanded && !clipped)}
+          aria-controls=${contentID}
+          aria-expanded=${String(expanded)}
+          @click=${() => {
+            local.expanded = !local.expanded;
+            update();
+            measure();
+          }}
+        >${expanded ? 'Show less' : 'Show more'}</button>`,
+      goal,
+    );
+  }
+  update();
   requestAnimationFrame(() => {
-    if (!content.isConnected) return;
-    updateDisclosure();
-    sprintGoalLayouts.set(content, updateDisclosure);
-    sprintGoalResizeObserver.observe(content);
+    if (!goal.isConnected) return;
+    measure();
+    sprintGoalLayouts.set(content(), measure);
+    sprintGoalResizeObserver.observe(content());
   });
-  return goal;
+}
+function sprintGoalTemplate(value) {
+  return html`<div class="sprint-goal" ${attach(mountSprintGoal, value)}></div>`;
 }
 function toggleBurndown(s) {
   if (state.burndownExpanded.has(s.id)) state.burndownExpanded.delete(s.id);
@@ -121,9 +134,8 @@ function sprintActionsTemplate(s, expanded) {
 }
 function sprintPanelTemplate(s, items = scopeItems(s)) {
   const expanded = state.burndownExpanded.has(s.id);
-  // The goal measures itself to decide on "Show more", so it stays an
-  // imperative widget; guard keeps it until the goal text changes.
-  const goal = guard([s.id, s.goal], () => sprintGoal(s.goal));
+  // keyed gives a changed goal a fresh widget; otherwise it keeps its state.
+  const goal = keyed(s.goal, sprintGoalTemplate(s.goal));
   return html`<article class="panel sprint-panel" data-sprint-id=${s.id}>
     <div class="sprint-info">
       <div class="sprint-title-row">
@@ -324,30 +336,26 @@ function editSprint(sprint) {
   };
   openEditor(
     existing ? 'Edit sprint' : 'Plan a sprint',
-    (fields) => {
-      const name = field(fields, 'name', 'Sprint name', sprint.name);
-      name.required = true;
-      name.maxLength = 120;
-      markdownEditor(
-        fields,
+    () => html`${fieldTemplate('name', 'Sprint name', sprint.name, 'text', undefined, {
+      required: true,
+      maxLength: 120,
+    })}
+      ${markdownEditorTemplate(
         'goal',
         'Sprint goal · what outcome matters?',
         sprint.goal,
         4000,
         false,
         false,
-        'sprint goal',
-      );
-      const grid = el('div', undefined, 'form-grid');
-      fields.append(grid);
-      field(grid, 'start', 'Start date', sprint.start, 'date').required = true;
-      field(grid, 'end', 'End date', sprint.end, 'date').required = true;
-      fields.append(
-        helpText(
-          'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
-        ),
-      );
-    },
+        { subject: 'sprint goal' },
+      )}
+      <div class="form-grid">
+        ${fieldTemplate('start', 'Start date', sprint.start, 'date', undefined, { required: true })}
+        ${fieldTemplate('end', 'End date', sprint.end, 'date', undefined, { required: true })}
+      </div>
+      ${helpTextTemplate(
+        'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
+      )}`,
     (data) => {
       const goal = String(data.get('goal') || '').trim();
       if (!goal) throw new Error('Sprint goal is required.');
@@ -368,30 +376,23 @@ function editSprint(sprint) {
 function closeSprint(sprint) {
   const items = scopeItems(sprint);
   const unfinished = items.filter((i) => !done(i));
+  const destinations = state.board.sprints
+    .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
+    .map((s) => [s.id, s.name]);
   openEditor(
     'Close sprint & decide carry-over',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `${sprint.name}: ${items.length} items in scope; ${unfinished.length} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`,
-        ),
-      );
-      field(fields, 'destination', 'Also assign unfinished work to', '', 'text', [
+    () => html`<p>${`${sprint.name}: ${items.length} items in scope; ${unfinished.length} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`}</p>
+      ${fieldTemplate('destination', 'Also assign unfinished work to', '', 'text', [
         ['', 'No additional sprint'],
-        ...state.board.sprints
-          .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
-          .map((s) => [s.id, s.name]),
-      ]);
-      fields.append(
-        helpText(
-          'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
-        ),
-      );
-      const reason = field(fields, 'reason', 'Closing decision / rationale', '', 'textarea');
-      reason.required = true;
-      reason.maxLength = 4000;
-    },
+        ...destinations,
+      ])}
+      ${helpTextTemplate(
+        'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
+      )}
+      ${fieldTemplate('reason', 'Closing decision / rationale', '', 'textarea', undefined, {
+        required: true,
+        maxLength: 4000,
+      })}`,
     (data) => ({
       kind: 'sprint.close',
       target: sprint.id,
@@ -404,19 +405,10 @@ function closeSprint(sprint) {
 function archiveSprint(sprint) {
   openEditor(
     'Archive sprint',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`,
-        ),
-      );
-      fields.append(
-        helpText(
-          'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
-        ),
-      );
-    },
+    () => html`<p>${`Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`}</p>
+      ${helpTextTemplate(
+        'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
+      )}`,
     () => ({ kind: 'sprint.archive', target: sprint.id }),
   );
   $('save').textContent = 'Archive sprint';

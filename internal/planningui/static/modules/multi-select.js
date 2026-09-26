@@ -138,7 +138,7 @@ function uniqueEntries(entries) {
 // status, select a value or read the selection. `settings.headingAction`
 // returns an optional template shown after the heading ("Assign me"), and
 // `settings.footer` one shown below the options; `controls.update()` re-renders
-// both.
+// both. `settings.disabled` disables every control of a read-only picker.
 export function multiSelect(parent, ...options) {
   const group = el('div', undefined, 'multi-select-field');
   parent.append(group);
@@ -182,10 +182,11 @@ function mountMultiSelect(
     onOpen,
     headingAction,
     footer,
+    disabled = false,
   } = settings;
   const menuID = `multi-select-${requestKey()}`;
   const filterID = uid('multi-select-filter');
-  const local = { entries: [], selected: new Set(), editing: false, query: '', status: '' };
+  const local = { entries: [], selected: new Set(), editing: false, status: '' };
   const help = helpText ? helpPopoverTemplate(helpText, title) : nothing;
   let controls, outside;
   const currentValues = () =>
@@ -260,7 +261,9 @@ function mountMultiSelect(
   };
   const decorateChip = (chip, value, text) => decorate?.(chip, value, text);
   function update() {
-    const { editing, query, status } = local;
+    const { editing, status } = local;
+    // Callers may clear the filter input directly, so read it on every render.
+    const query = group.querySelector('.multi-select-filter')?.value.trim() ?? '';
     const needle = query.toLowerCase();
     const chosen = local.entries.filter(([value]) => local.selected.has(value));
     const visible = local.entries.filter(
@@ -284,6 +287,7 @@ function mountMultiSelect(
             aria-haspopup="true"
             aria-expanded=${String(editing)}
             aria-controls=${menuID}
+            ?disabled=${disabled}
             @click=${toggle}
           >Edit</button>
         </div>
@@ -302,6 +306,7 @@ function mountMultiSelect(
                   class="multi-select-remove"
                   data-multi-remove="true"
                   ?hidden=${!editing}
+                  ?disabled=${disabled}
                   aria-label=${`Remove ${text}`}
                   @click=${() => {
                     local.selected.delete(value);
@@ -326,10 +331,10 @@ function mountMultiSelect(
               placeholder=${`Filter ${title.toLowerCase()}…`}
               aria-label=${`Filter ${title}`}
               autocomplete="off"
+              ?disabled=${disabled}
               @input=${(event) => {
-                local.query = event.currentTarget.value.trim();
                 update();
-                invoke(onFilter, local.query);
+                invoke(onFilter, event.currentTarget.value.trim());
               }}
             />
             <p
@@ -351,6 +356,7 @@ function mountMultiSelect(
                     name=${name}
                     value=${value}
                     .checked=${live(local.selected.has(value))}
+                    ?disabled=${disabled}
                     aria-label=${text}
                     @change=${(event) => toggleValue(value, event.currentTarget.checked)}
                   /><span>${text}</span></label

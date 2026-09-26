@@ -1,12 +1,13 @@
 // Bulk selection and bulk actions in the List presentation.
-import { $, el, field } from './dom.js';
-import { helpText, emptyState } from './layout.js';
-import { html, nothing } from './lit.js';
+import { $ } from './dom.js';
+import { labelForeground } from './format.js';
+import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
+import { html, mount, nothing, styleProps } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { accessButtonTemplate } from './permissions.js';
 import { notice } from './notices.js';
-import { styleLabelOptions, findItem } from './items.js';
+import { findItem } from './items.js';
 import { memberName } from './people.js';
 import { UNDO_TTL, offerUndo, runSequence } from './commands.js';
 
@@ -40,12 +41,11 @@ function openBulkDialog(title, saveText, build, plan, label, undoFor) {
   $('editor-form')
     .querySelectorAll('[data-item-footer]')
     .forEach((node) => node.remove());
-  $('fields').replaceChildren();
   $('form-error').textContent = '';
   $('save').hidden = false;
   $('save').disabled = false;
   $('save').textContent = saveText;
-  build($('fields'));
+  mount($('fields'), build());
   $('editor-form').onsubmit = async (event) => {
     event.preventDefault();
     if (state.busy) return;
@@ -67,17 +67,13 @@ function bulkAssign() {
   openBulkDialog(
     'Assign selected work',
     'Assign items',
-    (fields) => {
-      fields.append(
-        helpText(
-          `Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`,
-        ),
-      );
-      field(fields, 'assignee', 'Assignee', '', 'text', [
+    () => html`${helpTextTemplate(
+      `Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`,
+    )}
+      ${fieldTemplate('assignee', 'Assignee', '', 'text', [
         ['', 'Unassigned'],
         ...state.board.members.map((member) => [member.subject, memberName(member.subject)]),
-      ]);
-    },
+      ])}`,
     (data) => {
       const assignee = String(data.get('assignee') || '');
       return (item) =>
@@ -92,25 +88,21 @@ function bulkSprint() {
   openBulkDialog(
     'Add selected work to a sprint',
     'Add to sprint',
-    (fields) => {
+    () => {
       if (!open.length) {
-        fields.append(emptyState('No open sprint is available. Plan a sprint first.'));
         $('save').hidden = true;
-        return;
+        return emptyStateTemplate('No open sprint is available. Plan a sprint first.');
       }
-      fields.append(
-        helpText(
-          `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`,
-        ),
-      );
-      field(
-        fields,
+      return html`${helpTextTemplate(
+        `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`,
+      )}
+      ${fieldTemplate(
         'sprint',
         'Open sprint',
         open[0].id,
         'text',
         open.map((sprint) => [sprint.id, `${sprint.name} (${sprint.state})`]),
-      );
+      )}`;
     },
     (data) => {
       const sprint = String(data.get('sprint') || '');
@@ -128,27 +120,27 @@ function bulkLabel() {
   openBulkDialog(
     'Add a label to selected work',
     'Add label',
-    (fields) => {
+    () => {
       if (!state.board.labels.length) {
-        fields.append(emptyState('No workspace label exists yet. Create one in the Labels view.'));
         $('save').hidden = true;
-        return;
+        return emptyStateTemplate('No workspace label exists yet. Create one in the Labels view.');
       }
-      fields.append(
-        helpText(
-          `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`,
-        ),
-      );
-      styleLabelOptions(
-        field(
-          fields,
-          'label',
-          'Label',
-          state.board.labels[0].name,
-          'text',
-          state.board.labels.map((label) => [label.name, label.name]),
-        ),
-      );
+      return html`${helpTextTemplate(
+        `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`,
+      )}
+      <label
+        >Label<select name="label">
+          ${state.board.labels.map((label, index) => {
+            const colors = {
+              'background-color': label.color,
+              color: labelForeground(label.color),
+            };
+            return html`<option value=${label.name} .selected=${index === 0} ${styleProps(colors)}
+              >${label.name}</option
+            >`;
+          })}
+        </select></label
+      >`;
     },
     (data) => {
       const label = String(data.get('label') || '');
@@ -167,15 +159,10 @@ function bulkArchive() {
   openBulkDialog(
     'Archive selected work',
     'Archive items',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Archive ${count} selected work item${count === 1 ? '' : 's'} and remove them from all open sprints? History is retained and each item can be restored.`,
-        ),
-      );
-      field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
-    },
+    () => html`<p>${`Archive ${count} selected work item${count === 1 ? '' : 's'} and remove them from all open sprints? History is retained and each item can be restored.`}</p>
+      ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
+        maxLength: 4000,
+      })}`,
     (data) => {
       const reason = String(data.get('reason') || '');
       return (item) => ({ kind: 'item.archive', target: item.id, reason });

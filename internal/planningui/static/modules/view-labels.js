@@ -1,9 +1,9 @@
 // The Labels page and label dialogs.
-import { $, el, field } from './dom.js';
+import { $ } from './dom.js';
 import {
   renderPage,
+  fieldTemplate,
   sectionHeadTemplate,
-  helpText,
   helpTextTemplate,
   emptyStateTemplate,
   maintenanceListTemplate,
@@ -13,7 +13,7 @@ import { html, repeat } from './lit.js';
 import { state } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
-import { labelColorPicker } from './multi-select.js';
+import { labelColorPickerTemplate } from './multi-select.js';
 import { openEditor } from './dialog.js';
 
 function editLabel(label) {
@@ -23,17 +23,14 @@ function editLabel(label) {
     typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
   openEditor(
     originalName ? 'Rename label' : 'Create label',
-    (fields) => {
-      const input = field(fields, 'name', 'Label name', originalName);
-      input.required = true;
-      input.maxLength = 60;
-      labelColorPicker(fields, originalColor);
-      fields.append(
-        helpText(
-          'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
-        ),
-      );
-    },
+    () => html`${fieldTemplate('name', 'Label name', originalName, 'text', undefined, {
+      required: true,
+      maxLength: 60,
+    })}
+      ${labelColorPickerTemplate(originalColor)}
+      ${helpTextTemplate(
+        'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
+      )}`,
     (data) => ({
       kind: 'label.save',
       target: originalName,
@@ -44,16 +41,11 @@ function editLabel(label) {
 }
 function deleteLabel(label) {
   $('editor').close();
+  const count = state.board.items.filter((i) => i.labels.includes(label.name)).length;
   openEditor(
     'Delete label',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Remove “${label.name}” from the workspace and all ${state.board.items.filter((i) => i.labels.includes(label.name)).length} assigned cards, including archived work? Historical audit is retained.`,
-        ),
-      );
-    },
+    () =>
+      html`<p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>`,
     () => ({ kind: 'label.delete', target: label.name }),
   );
   $('save').textContent = 'Delete label';

@@ -1,10 +1,16 @@
 // Proposal review: list, import, review and reject.
-import { $, el, button, field } from './dom.js';
+import { $ } from './dom.js';
 import { api, requestKey } from './api.js';
-import { helpText, errorLine, emptyState } from './layout.js';
+import {
+  emptyStateTemplate,
+  errorLineTemplate,
+  fieldTemplate,
+  helpTextTemplate,
+} from './layout.js';
+import { html, nothing } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
-import { writable, writeButton } from './permissions.js';
+import { writable, accessButtonTemplate } from './permissions.js';
 import { notice } from './notices.js';
 import { openEditor } from './dialog.js';
 
@@ -17,31 +23,34 @@ export async function showProposals(before = 0) {
     $('editor').close();
     openEditor(
       'Planning proposals',
-      (fields) => {
-        fields.append(
-          helpText(
-            'Agent output is an unverified suggestion. Importing creates a draft only; a human must review the exact diff before any planning changes.',
-          ),
-        );
-        fields.append(writeButton('Import proposal or migration JSON', () => importProposal()));
-        if (!rows.length) fields.append(emptyState('No proposals on this page.'));
-        for (const row of rows) {
-          const card = el('article', undefined, 'setup-row');
-          card.append(
-            el('strong', row.title),
-            el(
-              'p',
-              `${row.state} · Imported by ${row.imported_by} · workspace revision ${row.revision}`,
-              'muted',
-            ),
-            button('Review ' + row.title, () => reviewProposal(row.id)),
-          );
-          fields.append(card);
+      () => html`${helpTextTemplate(
+        'Agent output is an unverified suggestion. Importing creates a draft only; a human must review the exact diff before any planning changes.',
+      )}
+        ${accessButtonTemplate('Import proposal or migration JSON', () => importProposal(), {
+          tracked: false,
+        })}
+        ${rows.length ? nothing : emptyStateTemplate('No proposals on this page.')}
+        ${rows.map(
+          (row) => html`<article class="setup-row">
+            <strong>${row.title}</strong>
+            <p class="muted">
+              ${`${row.state} · Imported by ${row.imported_by} · workspace revision ${row.revision}`}
+            </p>
+            <button type="button" @click=${() => reviewProposal(row.id)}>${`Review ${row.title}`}</button>
+          </article>`,
+        )}
+        ${
+          rows.length === 20
+            ? html`<button type="button" @click=${() => showProposals(rows.at(-1).sequence)}
+                >Older proposals</button
+              >`
+            : nothing
         }
-        if (rows.length === 20)
-          fields.append(button('Older proposals', () => showProposals(rows.at(-1).sequence)));
-        if (before) fields.append(button('Newest proposals', () => showProposals()));
-      },
+        ${
+          before
+            ? html`<button type="button" @click=${() => showProposals()}>Newest proposals</button>`
+            : nothing
+        }`,
       () => ({}),
       true,
     );
@@ -54,23 +63,18 @@ function importProposal(document) {
   const id = requestKey();
   openEditor(
     'Import proposal draft',
-    (fields) => {
-      fields.append(
-        helpText(
-          'Paste a version-1 proposal or the document/report from flux import. This saves a draft, not planning changes. Source identity and agent provenance are not verified.',
-        ),
-      );
-      const input = field(
-        fields,
+    () => html`${helpTextTemplate(
+      'Paste a version-1 proposal or the document/report from flux import. This saves a draft, not planning changes. Source identity and agent provenance are not verified.',
+    )}
+      ${fieldTemplate(
         'document',
         'Proposal JSON',
         document ? JSON.stringify(document, null, 2) : '',
         'textarea',
-      );
-      input.required = true;
-      input.maxLength = 60000;
-      field(fields, 'reason', 'Import rationale', '', 'textarea').required = true;
-    },
+        undefined,
+        { required: true, maxLength: 60000 },
+      )}
+      ${fieldTemplate('reason', 'Import rationale', '', 'textarea', undefined, { required: true })}`,
     (data) => {
       const parsed = JSON.parse(data.get('document'));
       if (parsed.unresolved?.length)
@@ -95,76 +99,64 @@ async function reviewProposal(id) {
     $('editor').close();
     openEditor(
       'Review planning proposal',
-      (fields) => {
-        fields.append(
-          el('h3', v.document.title, 'proposal-text'),
-          el('p', v.document.rationale, 'proposal-text'),
-          helpText(`Claimed provenance (unverified): ${v.document.provenance}`, 'proposal-text'),
-          el(
-            'p',
-            `Imported by ${v.imported_by} · ${v.state}${v.reviewed_by ? ' · Reviewed by ' + v.reviewed_by : ''}`,
-          ),
-        );
-        if (v.review_reason) fields.append(el('p', v.review_reason, 'proposal-text'));
-        if (preview.problem) fields.append(errorLine(preview.problem));
-        fields.append(
-          helpText(
-            `New imports: ${preview.created || 0} · Already imported, retained unchanged: ${Object.keys(preview.skipped || {}).length}`,
-          ),
-        );
-        if (Object.keys(preview.workspace_changes || {}).length)
-          fields.append(
-            el('h3', 'Workspace changes'),
-            el('pre', JSON.stringify(preview.workspace_changes, null, 2), 'proposal-data'),
-          );
-        for (const change of preview.changes || []) {
-          const row = el('section', undefined, 'setup-row');
-          row.append(el('strong', 'Native item ' + change.id));
-          for (const [name, values] of Object.entries(change.fields)) {
-            row.append(
-              el('h4', name),
-              el(
-                'pre',
-                'Before: ' +
-                  JSON.stringify(values.before, null, 2) +
-                  '\nAfter: ' +
-                  JSON.stringify(values.after, null, 2),
-                'proposal-data',
-              ),
-            );
-          }
-          fields.append(row);
+      () => html`<h3 class="proposal-text">${v.document.title}</h3>
+        <p class="proposal-text">${v.document.rationale}</p>
+        ${helpTextTemplate(`Claimed provenance (unverified): ${v.document.provenance}`, 'proposal-text')}
+        <p>
+          ${`Imported by ${v.imported_by} · ${v.state}${v.reviewed_by ? ` · Reviewed by ${v.reviewed_by}` : ''}`}
+        </p>
+        ${v.review_reason ? html`<p class="proposal-text">${v.review_reason}</p>` : nothing}
+        ${preview.problem ? errorLineTemplate(preview.problem) : nothing}
+        ${helpTextTemplate(
+          `New imports: ${preview.created || 0} · Already imported, retained unchanged: ${Object.keys(preview.skipped || {}).length}`,
+        )}
+        ${
+          Object.keys(preview.workspace_changes || {}).length
+            ? html`<h3>Workspace changes</h3>
+                <pre class="proposal-data">${JSON.stringify(preview.workspace_changes, null, 2)}</pre>`
+            : nothing
         }
-        const details = el('details');
-        details.append(
-          el('summary', 'Original document, evidence and skipped sources'),
-          el(
-            'pre',
-            JSON.stringify({ document: v.document, skipped: preview.skipped }, null, 2),
-            'proposal-data',
-          ),
-        );
-        fields.append(details);
-        if (v.state === 'draft') {
-          fields.append(
-            writeButton('Revise as new draft', () => importProposal(v.document)),
-            writeButton('Reject proposal', () => rejectProposal(v.id)),
-          );
+        ${(preview.changes || []).map(
+          (change) => html`<section class="setup-row">
+            <strong>${`Native item ${change.id}`}</strong>
+            ${Object.entries(change.fields).map(
+              ([name, values]) => html`<h4>${name}</h4>
+                <pre class="proposal-data">${`Before: ${JSON.stringify(values.before, null, 2)}\nAfter: ${JSON.stringify(values.after, null, 2)}`}</pre>`,
+            )}
+          </section>`,
+        )}
+        <details>
+          <summary>Original document, evidence and skipped sources</summary>
+          <pre class="proposal-data">${JSON.stringify({ document: v.document, skipped: preview.skipped }, null, 2)}</pre>
+        </details>
+        ${
+          v.state === 'draft'
+            ? html`${accessButtonTemplate('Revise as new draft', () => importProposal(v.document), {
+                tracked: false,
+              })}${accessButtonTemplate('Reject proposal', () => rejectProposal(v.id), {
+                tracked: false,
+              })}`
+            : nothing
         }
-        if (canAccept) {
-          field(fields, 'reason', 'Approval rationale', '', 'textarea').required = true;
-          const consent = field(
-            fields,
-            'consent',
-            'I reviewed and approve this exact diff',
-            'yes',
-            'checkbox',
-          );
-          consent.required = true;
-          consent.parentElement.classList.add('consent');
-          consent.parentElement.prepend(consent);
-        }
-      },
+        ${
+          canAccept
+            ? html`${fieldTemplate('reason', 'Approval rationale', '', 'textarea', undefined, {
+                required: true,
+              })}
+              ${fieldTemplate(
+                'consent',
+                'I reviewed and approve this exact diff',
+                'yes',
+                'checkbox',
+                undefined,
+                {
+                  required: true,
+                  className: 'consent',
+                  controlFirst: true,
+                },
+              )}`
+            : nothing
+        }`,
       (data) => {
         if (!data.get('consent')) throw new Error('Explicit approval is required.');
         return {
@@ -187,9 +179,8 @@ async function rejectProposal(id) {
   $('editor').close();
   openEditor(
     'Reject planning proposal',
-    (fields) => {
-      field(fields, 'reason', 'Rejection rationale', '', 'textarea').required = true;
-    },
+    () =>
+      fieldTemplate('reason', 'Rejection rationale', '', 'textarea', undefined, { required: true }),
     (data) => ({ kind: 'proposal.reject', target: id, reason: data.get('reason').trim() }),
   );
   $('save').textContent = 'Reject proposal';

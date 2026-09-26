@@ -1,16 +1,16 @@
 // The Kanban board: project lens, columns, cards and board setup.
-import { $, el, field } from './dom.js';
+import { $ } from './dom.js';
 import { columnWIPLabel } from './format.js';
 import {
   contentRoot,
-  helpText,
+  fieldTemplate,
   helpTextTemplate,
   emptyStateTemplate,
   metricListTemplate,
 } from './layout.js';
 import { attach, classMap, html, nothing, render, repeat } from './lit.js';
 import { state } from './state.js';
-import { writable, writeButton } from './permissions.js';
+import { writable, accessButtonTemplate } from './permissions.js';
 import {
   itemProjectIDs,
   projectBadgesTemplate,
@@ -306,31 +306,30 @@ function editColumn(column) {
   column ||= { name: '', category: 'todo', wip: 0 };
   openEditor(
     existing ? 'Edit board column' : 'Add board column',
-    (fields) => {
-      const name = field(fields, 'name', 'Column name', column.name);
-      name.required = true;
-      name.maxLength = 80;
-      field(fields, 'category', 'Lifecycle category', column.category, 'text', [
+    () => html`${fieldTemplate('name', 'Column name', column.name, 'text', undefined, {
+      required: true,
+      maxLength: 80,
+    })}
+      ${fieldTemplate('category', 'Lifecycle category', column.category, 'text', [
         ['todo', 'To do'],
         ['doing', 'In progress'],
         ['done', 'Done'],
-      ]);
-      const wip = field(
-        fields,
+      ])}
+      ${fieldTemplate(
         'wip',
         'WIP limit · 0 means unlimited',
         String(column.wip),
         'number',
-      );
-      wip.min = 0;
-      wip.max = 1000;
-      wip.required = true;
-      fields.append(
-        helpText(
-          'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.',
-        ),
-      );
-    },
+        undefined,
+        {
+          min: 0,
+          max: 1000,
+          required: true,
+        },
+      )}
+      ${helpTextTemplate(
+        'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.',
+      )}`,
     (data) => ({
       kind: 'column.save',
       target: column.id || '',
@@ -343,69 +342,51 @@ function editColumn(column) {
     }),
   );
 }
+function removeColumn(column) {
+  $('editor').close();
+  openEditor(
+    'Remove column & move cards',
+    () => html`<p>${`All cards in ${column.name}, including archived ones, must move to another column.`}</p>
+      ${fieldTemplate(
+        'destination',
+        'Destination column',
+        '',
+        'text',
+        state.board.columns.filter((v) => v.id !== column.id).map((v) => [v.id, v.name]),
+      )}`,
+    (data) => ({ kind: 'column.delete', target: column.id, destination: data.get('destination') }),
+  );
+}
+async function moveColumnLeft(column, index) {
+  await quick({
+    kind: 'column.rank',
+    target: column.id,
+    before: state.board.columns[index - 1].id,
+  });
+  $('editor').close();
+}
 export function setupBoard() {
+  const action = (text, fn) => accessButtonTemplate(text, fn, { tracked: false });
   openEditor(
     'Board setup',
-    (fields) => {
-      fields.append(
-        helpText(
-          'Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.',
-        ),
-      );
-      state.board.columns.forEach((c, index) => {
-        const row = el('div', undefined, 'setup-row');
-        row.append(
-          el('strong', c.name),
-          el('small', `${c.category} · WIP ${c.wip || 'unlimited'}`, 'muted'),
-        );
-        const actions = el('div', undefined, 'actions');
-        actions.append(writeButton('Edit', () => editColumn(c)));
-        if (index > 0)
-          actions.append(
-            writeButton('Move left', async () => {
-              await quick({
-                kind: 'column.rank',
-                target: c.id,
-                before: state.board.columns[index - 1].id,
-              });
-              $('editor').close();
-            }),
-          );
-        if (state.board.columns.length > 1)
-          actions.append(
-            writeButton('Remove…', () => {
-              $('editor').close();
-              openEditor(
-                'Remove column & move cards',
-                (f) => {
-                  f.append(
-                    el(
-                      'p',
-                      `All cards in ${c.name}, including archived ones, must move to another column.`,
-                    ),
-                  );
-                  field(
-                    f,
-                    'destination',
-                    'Destination column',
-                    '',
-                    'text',
-                    state.board.columns.filter((v) => v.id !== c.id).map((v) => [v.id, v.name]),
-                  );
-                },
-                (data) => ({
-                  kind: 'column.delete',
-                  target: c.id,
-                  destination: data.get('destination'),
-                }),
-              );
-            }),
-          );
-        row.append(actions);
-        fields.append(row);
-      });
-      fields.append(writeButton('＋ Add column', () => editColumn(), 'primary'));
-    },
+    () => html`${helpTextTemplate(
+      'Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.',
+    )}
+      ${state.board.columns.map(
+        (c, index) => html`<div class="setup-row">
+          <strong>${c.name}</strong>
+          <small class="muted">${`${c.category} · WIP ${c.wip || 'unlimited'}`}</small>
+          <div class="actions">
+            ${action('Edit', () => editColumn(c))}
+            ${index > 0 ? action('Move left', () => moveColumnLeft(c, index)) : nothing}
+            ${state.board.columns.length > 1 ? action('Remove…', () => removeColumn(c)) : nothing}
+          </div>
+        </div>`,
+      )}
+      ${accessButtonTemplate('＋ Add column', () => editColumn(), {
+        className: 'primary',
+        tracked: false,
+      })}`,
     () => ({}),
     true,
   );

@@ -1,5 +1,5 @@
 // The work-item editor form, its modal and the archive dialog.
-import { $, el, field, uid } from './dom.js';
+import { $, uid } from './dom.js';
 import { itemPayloadFromForm } from './item-command.js';
 import { labelForeground } from './format.js';
 import { markdownEditorTemplate } from './markdown.js';
@@ -532,15 +532,10 @@ function archiveItem(item, context) {
   if (context?.mode === 'modal') closeEditor();
   openEditor(
     'Archive work item',
-    (fields) => {
-      fields.append(
-        el(
-          'p',
-          `Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`,
-        ),
-      );
-      field(fields, 'reason', 'Archive rationale (optional)', '', 'textarea').maxLength = 4000;
-    },
+    () => html`<p>${`Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`}</p>
+      ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
+        maxLength: 4000,
+      })}`,
     (data) => ({ kind: 'item.archive', target: item.id, reason: data.get('reason') }),
     false,
     () => {

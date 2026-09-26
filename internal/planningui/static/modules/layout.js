@@ -221,6 +221,7 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
     id,
     required = false,
     readOnly = false,
+    disabled = false,
     maxLength,
     placeholder,
     min,
@@ -233,7 +234,13 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
   const text = typeof value === 'string' ? value : String(value ?? '');
   const choice = type === 'checkbox' || type === 'radio' || type === 'file';
   const control = entries
-    ? html`<select name=${name} id=${id || nothing} ?required=${required} @change=${onChange}>
+    ? html`<select
+        name=${name}
+        id=${id || nothing}
+        ?required=${required}
+        ?disabled=${disabled}
+        @change=${onChange}
+      >
         ${entries.map(
           ([optionValue, optionText]) =>
             html`<option value=${optionValue} .selected=${String(optionValue) === text}
@@ -248,6 +255,7 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
           autocomplete=${autocomplete || 'off'}
           ?required=${required}
           ?readonly=${readOnly}
+          ?disabled=${disabled}
           aria-readonly=${readOnly ? 'true' : nothing}
           maxlength=${maxLength ?? nothing}
           placeholder=${placeholder ?? nothing}
@@ -262,6 +270,7 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
           autocomplete=${choice ? nothing : autocomplete || 'off'}
           ?required=${required}
           ?readonly=${readOnly}
+          ?disabled=${disabled}
           aria-readonly=${readOnly ? 'true' : nothing}
           maxlength=${maxLength ?? nothing}
           placeholder=${placeholder ?? nothing}

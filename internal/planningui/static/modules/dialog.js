@@ -1,5 +1,6 @@
 // The shared editor dialog used by every create/edit flow.
 import { $ } from './dom.js';
+import { mount } from './lit.js';
 import { requestKey } from './api.js';
 import { state } from './state.js';
 import { change } from './commands.js';
@@ -41,14 +42,17 @@ export function openEditor(title, build, submit, readOnly = false, afterSave, af
   $('editor-form')
     .querySelectorAll('[data-item-footer]')
     .forEach((e) => e.remove());
-  $('fields').replaceChildren();
   $('form-error').textContent = '';
   $('save').textContent = 'Save changes';
   $('save').hidden = readOnly;
   $('save').disabled = false;
   const revision = state.board.workspace.revision;
   let pending, key;
-  build($('fields'));
+  // A builder returns the dialog's template, or renders into the fields itself
+  // (the item editor) and returns nothing.
+  $('fields').replaceChildren();
+  const content = build($('fields'));
+  if (content !== undefined) mount($('fields'), content);
   if (readOnly) {
     $('fields')
       .querySelectorAll(

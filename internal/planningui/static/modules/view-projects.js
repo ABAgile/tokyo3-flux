@@ -1,10 +1,10 @@
 // The Projects page and project dialogs.
-import { $, field } from './dom.js';
+import { $ } from './dom.js';
 import {
   renderPage,
   panelTemplate,
   sectionHeadTemplate,
-  helpText,
+  fieldTemplate,
   helpTextTemplate,
   emptyStateTemplate,
   filterBarTemplate,
@@ -16,7 +16,7 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { guard, html, nothing, repeat } from './lit.js';
+import { guard, html, keyed, nothing, repeat } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -38,23 +38,20 @@ import { closeDetail } from './item-detail.js';
 import {
   editIntegration,
   loadIntegrationCatalog,
-  renderIntegrationForm,
+  integrationFormTemplate,
 } from './view-integration.js';
 
 function editProject(project) {
   $('editor').close();
   openEditor(
     project ? 'Edit project' : 'Create project',
-    (fields) => {
-      const name = field(fields, 'name', 'Project name', project?.name || '');
-      name.required = true;
-      name.maxLength = 120;
-      fields.append(
-        helpText(
-          'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.',
-        ),
-      );
-    },
+    () => html`${fieldTemplate('name', 'Project name', project?.name || '', 'text', undefined, {
+      required: true,
+      maxLength: 120,
+    })}
+      ${helpTextTemplate(
+        'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.',
+      )}`,
     (data) => ({
       kind: 'project.save',
       target: project?.id || '',
@@ -97,9 +94,9 @@ function integrationProjectChipsTemplate(projectIDs) {
 }
 function integrationTemplate(approvedIDs) {
   const head = (...actions) => sectionHeadTemplate('GitLab integration', ...actions);
-  // The form is built imperatively. guard rebuilds it only when its inputs
-  // change (opening, catalog load, board refresh), so re-rendering the page for
-  // the project search does not discard what the user selected.
+  // guard rebuilds the form only when its inputs change (opening, catalog load,
+  // board refresh), and keyed gives each rebuild fresh DOM, so re-rendering the
+  // page for the project search does not discard what the user selected.
   if (state.integrationFormOpen) {
     const inputs = [
       state.board,
@@ -109,7 +106,7 @@ function integrationTemplate(approvedIDs) {
     ];
     return panelTemplate(
       'maintenance-section',
-      html`${head()}${guard(inputs, () => renderIntegrationForm())}`,
+      html`${head()}${guard(inputs, () => keyed({}, integrationFormTemplate()))}`,
     );
   }
   const configured = state.board.connector_instance || 'Not configured';

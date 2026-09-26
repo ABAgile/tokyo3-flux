@@ -1,13 +1,13 @@
 // Adding and reconciling GitLab links on a work item.
-import { $, field, uid } from './dom.js';
+import { $, uid } from './dom.js';
 import { api } from './api.js';
-import { helpText, errorLine } from './layout.js';
-import { html, live } from './lit.js';
+import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
+import { html, live, nothing } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { gitLabWritable } from './permissions.js';
 import { notice } from './notices.js';
-import { helpPopover, multiSelect } from './multi-select.js';
+import { helpPopover, multiSelectTemplate } from './multi-select.js';
 import {
   loadGitLabProjects,
   approvedGitLabProjectEntries,
@@ -220,9 +220,62 @@ export async function addGitLabLink(item, context) {
     catalogError = e.message;
   }
   if (state.board !== currentBoard || state.root !== currentRoot) return;
+  let projectPicker, mrPicker;
+  let searchTimer;
+  let searchGeneration = 0;
+  const editorForm = () => $('editor-form');
+  const pickerStatus = () =>
+    projectPicker.selected().length
+      ? 'Open the merge-request picker to load results.'
+      : 'Select an approved project first.';
+  const resetMergeRequests = () => {
+    searchGeneration++;
+    if (searchTimer) clearTimeout(searchTimer);
+    mrPicker.filter.value = '';
+    mrPicker.setEntries([], []);
+  };
+  const queueMergeRequestSearch = (query, controls) => {
+    if (searchTimer) clearTimeout(searchTimer);
+    const generation = ++searchGeneration;
+    const project = projectPicker.selected()[0];
+    if (!project) {
+      controls.setEntries([], []);
+      controls.setStatus('Select an approved project first.');
+      return;
+    }
+    controls.setStatus('Searching GitLab…');
+    searchTimer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          project,
+          scope: editorForm().elements.scope.value || 'recent',
+          search: query,
+        });
+        const data = await api(`${currentRoot}/gitlab/merge-requests?${params}`);
+        if (
+          generation !== searchGeneration ||
+          state.board !== currentBoard ||
+          state.root !== currentRoot
+        )
+          return;
+        if (!validGitLabMergeRequestCatalog(data))
+          throw new Error('GitLab merge-request results are invalid. Refresh to retry.');
+        const selected = controls.selected();
+        controls.setEntries(mergeRequestEntries(data, selected), selected);
+        controls.setStatus(data.length ? '' : 'No matching merge requests.');
+      } catch (e) {
+        if (
+          generation === searchGeneration &&
+          state.board === currentBoard &&
+          state.root === currentRoot
+        )
+          controls.setStatus(e.message);
+      }
+    }, 250);
+  };
   openEditor(
     'Add link',
-    (fields) => {
+    () => {
       $('editor-title').append(
         ' ',
         helpPopover(
@@ -230,123 +283,82 @@ export async function addGitLabLink(item, context) {
           'GitLab links',
         ),
       );
-      let mrPicker, manualMR;
-      let searchTimer;
-      let searchGeneration = 0;
-      if (catalogError) {
-        fields.append(
-          errorLine(
-            `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
-          ),
-        );
+      return html`${
+        catalogError
+          ? errorLineTemplate(
+              `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
+            )
+          : nothing
       }
-      const projectPicker = multiSelect(
-        fields,
-        'project',
-        'Approved GitLab project',
-        approvedGitLabProjectEntries(projects),
-        [],
-        undefined,
-        'Choose one approved project. The project list is provided by the configured GitLab connector and is searchable.',
-        {
-          single: true,
-          onChange: (values) => {
-            searchGeneration++;
-            if (searchTimer) clearTimeout(searchTimer);
-            if (!mrPicker) return;
-            mrPicker.filter.value = '';
-            mrPicker.setEntries([], []);
-            if (manualMR) manualMR.value = '';
-            mrPicker.setStatus(
-              values.length
-                ? 'Open the merge-request picker to load results.'
-                : 'Select an approved project first.',
-            );
+        ${multiSelectTemplate(
+          'project',
+          'Approved GitLab project',
+          approvedGitLabProjectEntries(projects),
+          [],
+          undefined,
+          'Choose one approved project. The project list is provided by the configured GitLab connector and is searchable.',
+          {
+            single: true,
+            onReady: (controls) => {
+              projectPicker = controls;
+            },
+            onChange: () => {
+              if (!mrPicker) return;
+              resetMergeRequests();
+              editorForm().elements.manual_mr_iid.value = '';
+              mrPicker.setStatus(pickerStatus());
+            },
           },
-        },
-      );
-      const scope = field(fields, 'scope', 'Quick scope', 'recent', 'text', [
-        ['recent', 'Recent merge requests'],
-        ['assigned_to_me', 'Assigned to me'],
-        ['board_members', 'Assigned to board members'],
-      ]);
-      const queueMergeRequestSearch = (query, controls) => {
-        if (searchTimer) clearTimeout(searchTimer);
-        const generation = ++searchGeneration;
-        const project = projectPicker.selected()[0];
-        if (!project) {
-          controls.setEntries([], []);
-          controls.setStatus('Select an approved project first.');
-          return;
-        }
-        controls.setStatus('Searching GitLab…');
-        searchTimer = setTimeout(async () => {
-          try {
-            const params = new URLSearchParams({
-              project,
-              scope: scope.value || 'recent',
-              search: query,
-            });
-            const data = await api(currentRoot + '/gitlab/merge-requests?' + params);
-            if (
-              generation !== searchGeneration ||
-              state.board !== currentBoard ||
-              state.root !== currentRoot
-            )
-              return;
-            if (!validGitLabMergeRequestCatalog(data))
-              throw new Error('GitLab merge-request results are invalid. Refresh to retry.');
-            const selected = controls.selected();
-            controls.setEntries(mergeRequestEntries(data, selected), selected);
-            controls.setStatus(data.length ? '' : 'No matching merge requests.');
-          } catch (e) {
-            if (
-              generation === searchGeneration &&
-              state.board === currentBoard &&
-              state.root === currentRoot
-            )
-              controls.setStatus(e.message);
-          }
-        }, 250);
-      };
-      mrPicker = multiSelect(
-        fields,
-        'merge_request',
-        'Merge request',
-        [],
-        [],
-        undefined,
-        'After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.',
-        {
-          single: true,
-          onFilter: queueMergeRequestSearch,
-          onOpen: queueMergeRequestSearch,
-          onChange: (values) => {
-            if (!values.length) return;
-            if (manualMR) manualMR.value = '';
+        )}
+        ${fieldTemplate(
+          'scope',
+          'Quick scope',
+          'recent',
+          'text',
+          [
+            ['recent', 'Recent merge requests'],
+            ['assigned_to_me', 'Assigned to me'],
+            ['board_members', 'Assigned to board members'],
+          ],
+          {
+            onChange: () => {
+              const wasOpen = mrPicker.isOpen();
+              resetMergeRequests();
+              mrPicker.setStatus(pickerStatus());
+              if (wasOpen) queueMergeRequestSearch('', mrPicker);
+            },
           },
-        },
-      );
-      mrPicker.filter.maxLength = 120;
-      manualMR = field(fields, 'manual_mr_iid', 'MR IID (optional fallback)', '', 'number');
-      manualMR.min = 1;
-      manualMR.max = Number.MAX_SAFE_INTEGER;
-      manualMR.step = 1;
-      scope.addEventListener('change', () => {
-        const wasOpen = mrPicker.isOpen();
-        searchGeneration++;
-        if (searchTimer) clearTimeout(searchTimer);
-        mrPicker.filter.value = '';
-        mrPicker.setEntries([], []);
-        mrPicker.setStatus(
-          projectPicker.selected().length
-            ? 'Open the merge-request picker to load results.'
-            : 'Select an approved project first.',
-        );
-        if (wasOpen) queueMergeRequestSearch('', mrPicker);
-      });
-      if (!projects.length && !catalogError && !state.board.integration.projects.length)
-        fields.append(helpText('No approved GitLab projects are available for linking.'));
+        )}
+        ${multiSelectTemplate(
+          'merge_request',
+          'Merge request',
+          [],
+          [],
+          undefined,
+          'After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.',
+          {
+            single: true,
+            onFilter: queueMergeRequestSearch,
+            onOpen: queueMergeRequestSearch,
+            onReady: (controls) => {
+              mrPicker = controls;
+              controls.filter.maxLength = 120;
+            },
+            onChange: (values) => {
+              if (values.length) editorForm().elements.manual_mr_iid.value = '';
+            },
+          },
+        )}
+        ${fieldTemplate('manual_mr_iid', 'MR IID (optional fallback)', '', 'number', undefined, {
+          min: 1,
+          max: Number.MAX_SAFE_INTEGER,
+          step: 1,
+        })}
+        ${
+          !projects.length && !catalogError && !state.board.integration.projects.length
+            ? helpTextTemplate('No approved GitLab projects are available for linking.')
+            : nothing
+        }`;
     },
     (data) => {
       const rawProject = String(data.get('project') || '');
