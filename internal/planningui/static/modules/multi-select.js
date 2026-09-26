@@ -1,5 +1,5 @@
 // Multi-select fields, the label color picker and help popovers.
-import { el, button, uid } from './dom.js';
+import { el, uid } from './dom.js';
 import { requestKey } from './api.js';
 import { attach, html, live, nodeOf, nothing, render, repeat, styleProps } from './lit.js';
 
@@ -69,46 +69,61 @@ const LABEL_PALETTE = Object.freeze([
   '#5a189a',
   '#3c096c',
 ]);
-export function helpPopover(text, name = 'Help') {
-  const wrapper = el('span', undefined, 'help-popover');
-  const trigger = button('?', () => toggle(), 'help-trigger');
-  const content = el('span', text, 'help-popover-content');
-  content.id = `help-${requestKey()}`;
-  content.hidden = true;
-  content.setAttribute('role', 'tooltip');
-  trigger.setAttribute('aria-label', `Help: ${name}`);
-  trigger.setAttribute('aria-expanded', 'false');
-  trigger.setAttribute('aria-controls', content.id);
-  trigger.setAttribute('aria-describedby', content.id);
+// A help popover is a small stateful widget: a trigger toggles a tooltip that
+// closes on Escape or an outside click. Its text is fixed per instance, so a
+// template that shows changing text should wrap it in keyed(text, ...).
+function mountHelpPopover(wrapper, text, name) {
+  const contentID = `help-${requestKey()}`;
+  let open = false;
   let outside;
+  const update = () =>
+    render(
+      html`<button
+          type="button"
+          class="help-trigger"
+          aria-label=${`Help: ${name}`}
+          aria-expanded=${String(open)}
+          aria-controls=${contentID}
+          aria-describedby=${contentID}
+          @click=${toggle}
+          @keydown=${(event) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            close(true);
+          }}
+        >?</button
+        ><span class="help-popover-content" id=${contentID} ?hidden=${!open} role="tooltip"
+          >${text}</span
+        >`,
+      wrapper,
+    );
   function close(focus = false) {
-    if (content.hidden) return;
-    content.hidden = true;
-    trigger.setAttribute('aria-expanded', 'false');
+    if (!open) return;
+    open = false;
     document.removeEventListener('click', outside);
-    if (focus) trigger.focus();
-  }
-  function open() {
-    content.hidden = false;
-    trigger.setAttribute('aria-expanded', 'true');
-    outside = (e) => {
-      if (!wrapper.contains(e.target)) close();
-    };
-    document.addEventListener('click', outside);
+    update();
+    if (focus) wrapper.querySelector('.help-trigger').focus();
   }
   function toggle() {
-    if (content.hidden) open();
-    else close(true);
-  }
-  trigger.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
+    if (open) {
       close(true);
+      return;
     }
-  });
-  wrapper.append(trigger, content);
-  return wrapper;
+    open = true;
+    outside = (event) => {
+      if (!wrapper.contains(event.target)) close();
+    };
+    document.addEventListener('click', outside);
+    update();
+  }
+  update();
+}
+export function helpPopoverTemplate(text, name = 'Help') {
+  return html`<span class="help-popover" ${attach(mountHelpPopover, text, name)}></span>`;
+}
+export function helpPopover(text, name = 'Help') {
+  return nodeOf(helpPopoverTemplate(text, name));
 }
 function uniqueEntries(entries) {
   const seen = new Set();
@@ -121,9 +136,36 @@ function uniqueEntries(entries) {
 // the form values. `decorate(chip, value, text)` runs once per chip, when lit
 // creates it. The returned controls let callers replace entries, report a
 // status, select a value or read the selection. `settings.headingAction`
-// returns an optional template shown after the heading ("Assign me").
-export function multiSelect(
-  parent,
+// returns an optional template shown after the heading ("Assign me"), and
+// `settings.footer` one shown below the options; `controls.update()` re-renders
+// both.
+export function multiSelect(parent, ...options) {
+  const group = el('div', undefined, 'multi-select-field');
+  parent.append(group);
+  return mountMultiSelect(group, ...options);
+}
+// Template form: `settings.onReady(controls)` receives the controls once the
+// widget has rendered.
+export function multiSelectTemplate(name, title, entries, selected, decorate, helpText, settings) {
+  return html`<div
+    class="multi-select-field"
+    ${attach((group) => {
+      const controls = mountMultiSelect(
+        group,
+        name,
+        title,
+        entries,
+        selected,
+        decorate,
+        helpText,
+        settings,
+      );
+      settings?.onReady?.(controls);
+    })}
+  ></div>`;
+}
+function mountMultiSelect(
+  group,
   name,
   title,
   entries,
@@ -132,13 +174,19 @@ export function multiSelect(
   helpText,
   settings = {},
 ) {
-  const { single = false, emptyValue, onChange, onFilter, onOpen, headingAction } = settings;
-  const group = el('div', undefined, 'multi-select-field');
-  parent.append(group);
+  const {
+    single = false,
+    emptyValue,
+    onChange,
+    onFilter,
+    onOpen,
+    headingAction,
+    footer,
+  } = settings;
   const menuID = `multi-select-${requestKey()}`;
   const filterID = uid('multi-select-filter');
   const local = { entries: [], selected: new Set(), editing: false, query: '', status: '' };
-  const help = helpText ? helpPopover(helpText, title) : nothing;
+  const help = helpText ? helpPopoverTemplate(helpText, title) : nothing;
   let controls, outside;
   const currentValues = () =>
     local.entries.filter(([value]) => local.selected.has(value)).map(([value]) => value);
@@ -311,7 +359,8 @@ export function multiSelect(
             </div>
             <p class="multi-select-empty" ?hidden=${visible.length > 0 || !!status}>No matches.</p>
           </div>
-        </div>`,
+        </div>
+        ${footer?.() ?? nothing}`,
       group,
     );
   }
@@ -330,6 +379,7 @@ export function multiSelect(
     setStatus,
     select: selectValue,
     selected: currentValues,
+    update,
   };
   return controls;
 }

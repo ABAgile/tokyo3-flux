@@ -70,7 +70,18 @@ class StylePropsDirective extends Directive {
 }
 // `styleProps({ 'background-color': value })` on an element, kebab-case names.
 export const styleProps = directive(StylePropsDirective);
+// Renders a template into `container`, replacing its children, and returns a
+// function that re-renders this mount. Use it for containers other code also
+// clears (the editor dialog's fields): lit keeps its bookkeeping on a fresh
+// fragment per mount, so a cleared container never leaves stale markers.
+export function mount(container, template) {
+  const root = document.createDocumentFragment();
+  render(template, root);
+  container.replaceChildren(root);
+  return (next) => render(next, root);
+}
 // A template as detached elements, for imperative callers that append nodes.
+// The returned nodes are plain DOM: lit no longer tracks them.
 export function nodesOf(template) {
   const fragment = document.createDocumentFragment();
   render(template, fragment);

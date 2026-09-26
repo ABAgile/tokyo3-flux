@@ -211,6 +211,71 @@ function filterSearch(title, { value = '', placeholder = '', maxLength = 120 } =
   label.append(input);
   return { label, input };
 }
+// A labeled form control, the template form of dom.js field(). `options`
+// carries the attributes callers used to set afterwards. Values are bound
+// once per mount: forms are rendered when opened and then belong to the user.
+function fieldTemplate(name, title, value = '', type = 'text', entries, options = {}) {
+  const {
+    className,
+    controlFirst = false,
+    id,
+    required = false,
+    readOnly = false,
+    maxLength,
+    placeholder,
+    min,
+    max,
+    step,
+    autocomplete,
+    onChange,
+    onInput,
+  } = options;
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  const choice = type === 'checkbox' || type === 'radio' || type === 'file';
+  const control = entries
+    ? html`<select name=${name} id=${id || nothing} ?required=${required} @change=${onChange}>
+        ${entries.map(
+          ([optionValue, optionText]) =>
+            html`<option value=${optionValue} .selected=${String(optionValue) === text}
+              >${optionText}</option
+            >`,
+        )}
+      </select>`
+    : type === 'textarea'
+      ? html`<textarea
+          name=${name}
+          id=${id || nothing}
+          autocomplete=${autocomplete || 'off'}
+          ?required=${required}
+          ?readonly=${readOnly}
+          aria-readonly=${readOnly ? 'true' : nothing}
+          maxlength=${maxLength ?? nothing}
+          placeholder=${placeholder ?? nothing}
+          .value=${text}
+          @input=${onInput}
+          @change=${onChange}
+        ></textarea>`
+      : html`<input
+          name=${name}
+          type=${type}
+          id=${id || nothing}
+          autocomplete=${choice ? nothing : autocomplete || 'off'}
+          ?required=${required}
+          ?readonly=${readOnly}
+          aria-readonly=${readOnly ? 'true' : nothing}
+          maxlength=${maxLength ?? nothing}
+          placeholder=${placeholder ?? nothing}
+          min=${min ?? nothing}
+          max=${max ?? nothing}
+          step=${step ?? nothing}
+          .value=${text}
+          @input=${onInput}
+          @change=${onChange}
+        />`;
+  return controlFirst
+    ? html`<label class=${className || nothing}>${control}${title}</label>`
+    : html`<label class=${className || nothing}>${title}${control}</label>`;
+}
 function controlSlug(title) {
   return (
     String(title)
@@ -298,6 +363,7 @@ export {
   filterChipRowTemplate,
   filterSlot,
   filterSlotTemplate,
+  fieldTemplate,
   maintenanceList,
   maintenanceListTemplate,
   maintenanceRow,

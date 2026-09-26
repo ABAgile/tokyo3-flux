@@ -37,7 +37,7 @@ function removeImage(event) {
 }
 // A failed image removes itself so the initials show; `keyed` gives a changed
 // URL a fresh <img> instead of reusing the removed one.
-function avatarImageTemplate(avatarURL) {
+export function avatarImageTemplate(avatarURL) {
   if (!avatarURL) return nothing;
   return keyed(
     avatarURL,

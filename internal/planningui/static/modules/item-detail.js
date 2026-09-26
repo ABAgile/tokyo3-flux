@@ -1,20 +1,16 @@
 // The List detail pane for the selected work item.
-import { el, button } from './dom.js';
+import { html, nodeOf } from './lit.js';
+import { helpPopover } from './multi-select.js';
 import { requestKey } from './api.js';
 import { itemPayloadFromForm } from './item-command.js';
-import { errorLine, setErrorText } from './layout.js';
+import { setErrorText } from './layout.js';
 import { state } from './state.js';
 import { notice } from './notices.js';
 import { renderControls } from './controls.js';
 import { receiptRevision, change } from './commands.js';
 import { setSharedItem } from './url-state.js';
 import { reconcileItemLinks } from './item-links.js';
-import {
-  itemEditorDraft,
-  refreshItemStatusSummary,
-  refreshEditorDueBadge,
-  buildItemEditor,
-} from './item-editor.js';
+import { itemEditorDraft, refreshEditorDueBadge, buildItemEditor } from './item-editor.js';
 
 export function syncListSelection() {
   document.querySelectorAll('.list-row').forEach((row) => {
@@ -103,34 +99,55 @@ function updateDetailHeader(item) {
   if (!state.detailState?.form || !item) return;
   state.detailState.item = item;
   const title = state.detailState.form.querySelector('.item-detail-title');
-  if (title?.firstChild) title.firstChild.nodeValue = item.title;
-  const help = title?.querySelector('.help-popover-content');
-  if (help) help.textContent = `Card ID: ${item.id}\nRevision: ${item.revision}`;
+  const text = [...(title?.childNodes || [])].find((node) => node.nodeType === Node.TEXT_NODE);
+  if (text) text.nodeValue = item.title;
+  // The popover is a widget with fixed text, so a new revision gets a new one.
+  title
+    ?.querySelector('.help-popover')
+    ?.replaceWith(
+      helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'),
+    );
+}
+// The form skeleton is rendered once per opened item and is then plain DOM:
+// the title text, the head's due badge, the footer's item actions and the
+// error line are written directly. The fields inside are a lit template
+// (buildItemEditor).
+function detailFormTemplate(item) {
+  return html`<form class="item-detail-form">
+    <div class="item-detail-head">
+      <h2 class="item-detail-title">${item.title}</h2>
+      <div class="item-detail-head-actions">
+        <button
+          type="button"
+          class="item-detail-close"
+          aria-label="Close item details"
+          @click=${() => closeDetail()}
+        >×</button>
+      </div>
+    </div>
+    <div class="item-detail-fields"></div>
+    <p class="item-detail-error" role="alert" hidden></p>
+    <div class="item-detail-footer">
+      <button type="button" class="detail-cancel" @click=${() => closeDetail()}>Cancel</button>
+      <button type="submit" class="primary" data-write="true">Save changes</button>
+    </div>
+  </form>`;
 }
 export function openItemDetail(item, draft, origin) {
   if (!state.detailPane) return;
   const readOnly = state.board.role === 'viewer' || item.archived;
-  const form = el('form', undefined, 'item-detail-form');
-  const heading = el('div', undefined, 'item-detail-head');
-  const title = el('h2', item.title, 'item-detail-title');
-  const actions = el('div', undefined, 'item-detail-head-actions');
-  const close = button('×', () => closeDetail(), 'item-detail-close');
-  close.setAttribute('aria-label', 'Close item details');
-  actions.append(close);
-  heading.append(title, actions);
-  const fields = el('div', undefined, 'item-detail-fields');
-  const error = errorLine('', 'item-detail-error');
-  const footer = el('div', undefined, 'item-detail-footer');
-  const cancel = button('Cancel', () => closeDetail(), 'detail-cancel');
-  const save = button('Save changes', undefined, 'primary');
-  save.type = 'submit';
-  save.dataset.write = 'true';
-  footer.append(cancel, save);
-  form.append(heading, fields, error, footer);
+  const form = nodeOf(detailFormTemplate(item));
+  const title = form.querySelector('.item-detail-title');
+  const close = form.querySelector('.item-detail-close');
+  const fields = form.querySelector('.item-detail-fields');
+  const error = form.querySelector('.item-detail-error');
+  const footer = form.querySelector('.item-detail-footer');
+  const cancel = footer.querySelector('.detail-cancel');
+  const save = footer.querySelector('[type="submit"]');
   state.detailPane.replaceChildren(form);
   state.detailPane.hidden = false;
   const context = { mode: 'detail', form, footer, origin };
-  buildItemEditor(fields, item, draft, readOnly, context, title);
+  const refreshEditor = buildItemEditor(fields, item, draft, readOnly, context, title);
   if (readOnly) {
     fields
       .querySelectorAll(
@@ -207,7 +224,7 @@ export function openItemDetail(item, draft, origin) {
       detail.initialDraft = itemEditorDraft(form);
       detail.dirty = false;
       updateDetailHeader(latest);
-      refreshItemStatusSummary(form, latest);
+      refreshEditor(latest);
       refreshEditorDueBadge(form, latest);
       notice('Changes saved.');
     } catch (err) {

@@ -351,8 +351,42 @@ function setInitialValue(input, value) {
 // The Markdown editor is a stateful widget: it renders itself with lit into a
 // host element and keeps its mode in a local state object. The textarea's
 // value belongs to the user after the initial value is set.
-function markdownEditor(
-  parent,
+function markdownEditor(parent, ...options) {
+  const group = el('div', undefined, 'markdown-field');
+  parent.append(group);
+  return mountMarkdownEditor(group, ...options);
+}
+// Template form. `settings.onReady(editor)` receives { input, refresh } and
+// `settings.commentControl` marks the textarea as a comment control.
+function markdownEditorTemplate(
+  name,
+  title,
+  value,
+  maxLength,
+  readOnly,
+  previewByDefault,
+  settings = {},
+) {
+  return html`<div
+    class="markdown-field"
+    ${attach((group) => {
+      const editor = mountMarkdownEditor(
+        group,
+        name,
+        title,
+        value,
+        maxLength,
+        readOnly,
+        previewByDefault,
+        settings.subject,
+        settings.commentControl,
+      );
+      settings.onReady?.(editor);
+    })}
+  ></div>`;
+}
+function mountMarkdownEditor(
+  group,
   name,
   title,
   value = '',
@@ -360,9 +394,8 @@ function markdownEditor(
   readOnly = false,
   previewByDefault = false,
   subject = title === 'Description' ? 'description' : 'comment',
+  commentControl = false,
 ) {
-  const group = el('div', undefined, 'markdown-field');
-  parent.append(group);
   const inputID = `markdown-${requestKey()}`;
   const label = html`<label class="markdown-label" for=${inputID}><span>${title}</span></label>`;
   if (readOnly) {
@@ -442,6 +475,7 @@ function markdownEditor(
             placeholder="Write Markdown…"
             spellcheck="true"
             data-markdown-control="true"
+            data-comment-control=${commentControl ? 'true' : nothing}
             autocomplete="off"
             ?hidden=${previewing}
             ${attach(setInitialValue, value || '')}
@@ -460,4 +494,4 @@ function markdownEditor(
   if (previewByDefault) setMode(true);
   return { input, refresh };
 }
-export { renderMarkdown, markdownEditor };
+export { markdownTemplate, renderMarkdown, markdownEditor, markdownEditorTemplate };

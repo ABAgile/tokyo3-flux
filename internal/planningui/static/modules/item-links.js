@@ -1,7 +1,8 @@
 // Adding and reconciling GitLab links on a work item.
-import { $, el, button, field, uid, noAutofill } from './dom.js';
+import { $, field, uid } from './dom.js';
 import { api } from './api.js';
-import { helpText, statusLine, setStatusText, errorLine } from './layout.js';
+import { helpText, errorLine } from './layout.js';
+import { html, live } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { gitLabWritable } from './permissions.js';
@@ -109,57 +110,78 @@ async function attachItemGitLabLink(item, link, context) {
     origin,
   );
 }
-export function inlineGitLabPaste(parent, item, readOnly, context) {
+// The paste-an-MR-URL row under the GitLab links picker. It is rendered as the
+// picker's footer, so it keeps its state here and asks the picker to re-render.
+export function gitLabPaste(item, readOnly, context) {
   const currentBoard = state.board,
     currentRoot = state.root;
-  const row = el('div', undefined, 'gitlab-paste-row');
-  const input = noAutofill(el('input'));
-  input.id = uid('gitlab-mr-url');
-  input.type = 'text';
-  input.inputMode = 'url';
-  input.placeholder = 'Paste GitLab MR URL, then press Enter or click Get';
-  input.maxLength = 2048;
-  input.setAttribute('aria-label', 'GitLab MR URL');
-  const get = button('Get', resolve, 'primary');
-  get.dataset.gitlabWrite = 'true';
-  get.disabled = readOnly || !gitLabWritable();
-  row.append(input, get);
-  const status = statusLine();
-  const setStatus = (text, error = false) => setStatusText(status, text, error);
-  let pending = false;
-  async function resolve() {
-    if (pending || get.disabled) return;
+  const local = { status: '', error: false, pending: false };
+  const inputID = uid('gitlab-mr-url');
+  let update = () => {};
+  const setStatus = (text, error = false) => {
+    local.status = text || '';
+    local.error = error;
+    update();
+  };
+  async function resolve(input) {
+    if (local.pending || readOnly || !gitLabWritable()) return;
     const raw = input.value.trim();
     if (!raw) {
       setStatus('Paste a GitLab merge-request URL first.', true);
       input.focus();
       return;
     }
-    pending = true;
-    get.disabled = true;
+    local.pending = true;
     setStatus('Resolving GitLab merge request…');
     try {
       const projects = await loadGitLabProjects(currentRoot);
-      if (!row.isConnected || state.board !== currentBoard || state.root !== currentRoot) return;
+      if (!input.isConnected || state.board !== currentBoard || state.root !== currentRoot) return;
       const link = resolveGitLabMRURL(raw, currentBoard, projects);
       await attachItemGitLabLink(item, link, context);
     } catch (error) {
-      if (row.isConnected) {
+      if (input.isConnected) {
         setStatus(error.message, true);
         input.focus();
       }
     } finally {
-      pending = false;
-      if (row.isConnected) get.disabled = !gitLabWritable();
+      local.pending = false;
+      if (input.isConnected) update();
     }
   }
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      resolve();
-    }
-  });
-  parent.append(row, status);
+  return {
+    bind(picker) {
+      update = picker.update;
+    },
+    template: () => html`<div class="gitlab-paste-row">
+        <input
+          id=${inputID}
+          type="text"
+          inputmode="url"
+          placeholder="Paste GitLab MR URL, then press Enter or click Get"
+          maxlength="2048"
+          aria-label="GitLab MR URL"
+          autocomplete="off"
+          @keydown=${(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            resolve(event.currentTarget);
+          }}
+        /><button
+          type="button"
+          class="primary"
+          data-gitlab-write="true"
+          ?disabled=${live(readOnly || local.pending || !gitLabWritable())}
+          @click=${(event) => resolve(event.currentTarget.previousElementSibling)}
+        >Get</button>
+      </div>
+      <p
+        class=${local.error ? 'help error' : 'help'}
+        data-status-class="help"
+        ?hidden=${!local.status}
+        role=${local.error ? 'alert' : 'status'}
+        aria-live="polite"
+      >${local.status}</p>`,
+  };
 }
 export async function addGitLabLink(item, context) {
   const currentBoard = state.board,
