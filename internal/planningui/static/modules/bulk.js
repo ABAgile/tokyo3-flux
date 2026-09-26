@@ -1,13 +1,13 @@
 // Bulk selection and bulk actions in the List presentation.
-import { $, el, button, field } from './dom.js';
+import { $, el, field } from './dom.js';
 import { helpText, emptyState } from './layout.js';
+import { html, nothing } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
-import { writeButton } from './permissions.js';
+import { accessButtonTemplate } from './permissions.js';
 import { notice } from './notices.js';
 import { styleLabelOptions, findItem } from './items.js';
 import { memberName } from './people.js';
-import { filteredItems } from './filters.js';
 import { UNDO_TTL, offerUndo, runSequence } from './commands.js';
 
 function bulkTargets() {
@@ -200,41 +200,44 @@ export function pruneBulkSelection(items) {
     if (!selectable.has(id)) state.bulkSelection.delete(id);
   });
 }
-export function renderBulkBar(bar, items) {
-  if (!bar) return;
+export function bulkBarTemplate(items) {
   const ids = bulkSelectableIDs(items);
-  if (!state.bulkSelection.size || state.board.role === 'viewer') {
-    bar.hidden = true;
-    bar.replaceChildren();
-    return;
-  }
-  const actions = el('div', undefined, 'actions bulk-actions');
-  actions.append(
-    writeButton('Assign…', bulkAssign),
-    writeButton('Add to sprint…', bulkSprint),
-    writeButton('Add label…', bulkLabel),
-    writeButton('Archive…', bulkArchive, 'danger'),
-  );
-  if (state.bulkSelection.size < ids.length)
-    actions.append(
-      button(`Select all ${ids.length} shown`, () => {
-        ids.forEach((id) => state.bulkSelection.add(id));
-        hooks.renderContent();
-      }),
-    );
-  actions.append(
-    button('Clear selection', () => {
-      state.bulkSelection.clear();
-      hooks.renderContent();
-    }),
-  );
-  bar.hidden = false;
-  bar.replaceChildren(
-    el('span', `${state.bulkSelection.size} of ${ids.length} shown selected`, 'bulk-count'),
-    actions,
-  );
-}
-export function refreshBulkBar() {
-  const bar = document.querySelector('[data-bulk-bar]');
-  if (bar) renderBulkBar(bar, filteredItems());
+  const show = state.bulkSelection.size > 0 && state.board.role !== 'viewer';
+  const action = (text, fn, className) =>
+    accessButtonTemplate(text, fn, { className, tracked: false });
+  const selectAll = () => {
+    for (const id of ids) state.bulkSelection.add(id);
+    hooks.renderContent();
+  };
+  const clear = () => {
+    state.bulkSelection.clear();
+    hooks.renderContent();
+  };
+  return html`<div
+    class="bulk-bar"
+    data-bulk-bar="true"
+    ?hidden=${!show}
+    role="group"
+    aria-label="Bulk actions"
+  >
+    ${
+      show
+        ? html`<span class="bulk-count"
+              >${`${state.bulkSelection.size} of ${ids.length} shown selected`}</span
+            >
+            <div class="actions bulk-actions">
+              ${action('Assign…', bulkAssign)}${action('Add to sprint…', bulkSprint)}
+              ${action('Add label…', bulkLabel)}${action('Archive…', bulkArchive, 'danger')}
+              ${
+                state.bulkSelection.size < ids.length
+                  ? html`<button type="button" @click=${selectAll}
+                      >${`Select all ${ids.length} shown`}</button
+                    >`
+                  : nothing
+              }
+              <button type="button" @click=${clear}>Clear selection</button>
+            </div>`
+        : nothing
+    }
+  </div>`;
 }

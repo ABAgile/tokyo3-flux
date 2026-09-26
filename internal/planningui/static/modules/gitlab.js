@@ -260,11 +260,12 @@ export function patchObservationUI(previousLinks, nextLinks) {
       observationSignature(previous.get(link.id)) !== observationSignature(link),
   );
   if (!changed.length) return false;
-  // Cards are lit templates: re-render them rather than patching their nodes.
+  // Cards and list rows are lit templates: re-render them rather than patching
+  // their nodes.
   let cards = false;
   const patch = (node, link, patcher) => {
     if (node.dataset.linkId !== link.id) return;
-    if (node.closest('.card')) cards = true;
+    if (node.closest('.card,.list-row')) cards = true;
     else patcher(node, link);
   };
   changed.forEach((link) => {

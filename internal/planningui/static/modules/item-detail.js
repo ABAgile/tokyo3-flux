@@ -16,13 +16,6 @@ import {
   buildItemEditor,
 } from './item-editor.js';
 
-export function createDetailPane() {
-  const pane = el('aside', undefined, 'item-detail-pane');
-  pane.hidden = true;
-  pane.setAttribute('aria-label', 'Selected work item');
-  state.detailPane = pane;
-  return pane;
-}
 export function syncListSelection() {
   document.querySelectorAll('.list-row').forEach((row) => {
     const selected = row.dataset.item === state.selectedItemID;

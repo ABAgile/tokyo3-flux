@@ -1,344 +1,285 @@
 // The List presentation of the board.
-import { el, button, syncAttributes } from './dom.js';
 import { columnWIPLabel } from './format.js';
-import { contentRoot, emptyState } from './layout.js';
+import { renderRoot, emptyStateTemplate } from './layout.js';
+import { attach, classMap, html, live, nothing, repeat } from './lit.js';
 import { state } from './state.js';
-import {
-  projectName,
-  itemProjectIDs,
-  projectBadges,
-  labelInfo,
-  labelBadge,
-  blocked,
-} from './items.js';
-import {
-  memberInfo,
-  memberName,
-  itemParticipants,
-  participantInfo,
-  participantStack,
-} from './people.js';
-import { patchNode, keyedNodeKey, reconcileKeyedChildren } from './reconcile.js';
-import { itemDateStatus, dueDateBadge, positionListDueBadge } from './due-dates.js';
+import { hooks } from './hooks.js';
+import { projectBadgesTemplate, labelBadgeTemplate, blocked, findItem } from './items.js';
+import { memberName, participantStackTemplate } from './people.js';
+import { itemDateStatus, dueDateBadgeTemplate } from './due-dates.js';
 import { filteredItems } from './filters.js';
 import {
-  attachmentsLoaded,
   attachmentCount,
   itemFileDropZone,
-  attachmentPaperclip,
+  attachmentPaperclipTemplate,
 } from './item-attachments.js';
-import { makeDraggable, dropZone } from './drag.js';
-import { cardLinkView, cardObservationIcon, showLinks } from './gitlab.js';
-import {
-  createDetailPane,
-  syncListSelection,
-  updateDetailPaneVisibility,
-  selectItem,
-} from './item-detail.js';
-import { pruneBulkSelection, renderBulkBar, refreshBulkBar } from './bulk.js';
+import { attachDrag, dropZone } from './drag.js';
+import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
+import { syncListSelection, updateDetailPaneVisibility, selectItem } from './item-detail.js';
+import { pruneBulkSelection, bulkBarTemplate } from './bulk.js';
 
-// A row's content fingerprint: an unchanged row is kept as it is on refresh.
-function cardRenderSignature(item, links) {
-  const linkIdentity = links.map((link) => ({
-    id: link.id,
-    project: link.project,
-    kind: link.kind,
-    number: link.number,
-    items: link.items,
-  }));
-  const due = itemDateStatus(item);
-  const itemView = {
-    id: item.id,
-    title: item.title,
-    column_id: item.column_id,
-    project_id: item.project_id,
-    project_ids: itemProjectIDs(item),
-    assignee: item.assignee,
-    labels: item.labels,
-    sprint_ids: item.sprint_ids,
-    archived: item.archived,
-    due_date: item.due_date,
-    overdue: due?.overdue || false,
-    attachments: attachmentsLoaded(item) ? item.attachments : null,
-    attachment_count: attachmentCount(item),
-  };
-  return JSON.stringify({
-    item: itemView,
-    links: linkIdentity,
-    projects: itemProjectIDs(item).map(projectName),
-    assignee: memberInfo(item.assignee),
-    participants: itemParticipants(item).map((participant) => [
-      participant.subject,
-      participant.roles,
-      participantInfo(participant).name,
-      participantInfo(participant).avatarURL,
-    ]),
-    sprints: item.sprint_ids.map((id) => state.board.sprints.find((s) => s.id === id)?.name || id),
-    labels: item.labels.map(labelInfo),
-    blocked: blocked(item),
-  });
+// Rows are lit templates like board cards. Selection (`is-selected`,
+// aria-current) belongs to syncListSelection, and the detail pane's content and
+// visibility to item-detail, so the templates bind neither.
+const LIST_HEADINGS = ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'];
+function listCellTemplate(label, className, content) {
+  return html`<div class=${`list-cell ${className}`} data-label=${label}>
+    <span class="list-cell-label">${label}</span>
+    ${content}
+  </div>`;
 }
-function listCell(label, className) {
-  const cell = el('div', undefined, `list-cell ${className || ''}`.trim());
-  cell.dataset.label = label;
-  cell.append(el('span', label, 'list-cell-label'));
-  return cell;
+const emptyCell = html`<span class="list-cell-empty">—</span>`;
+function selectFromRow(event, item) {
+  if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
+    return;
+  selectItem(item.id, event.currentTarget);
 }
-function listTableHeader() {
-  const header = el('div', undefined, 'list-table-head');
-  ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'].forEach((label) =>
-    header.append(el('span', label, 'list-table-heading')),
-  );
-  return header;
+function selectFromKey(event, item) {
+  if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+  event.preventDefault();
+  selectItem(item.id, event.currentTarget);
 }
-function listRow(item) {
-  const row = el('article', undefined, 'list-row');
-  row.dataset.item = item.id;
-  row.dataset.focusKey = `item:${item.id}:list-row`;
-  row.tabIndex = 0;
-  row.setAttribute('aria-label', `Open work item ${item.title}`);
-  const due = itemDateStatus(item);
-  row.classList.toggle('is-overdue', !!due?.overdue);
-  row.addEventListener('click', (event) => {
-    if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
-      return;
-    selectItem(item.id, row);
-  });
-  row.addEventListener('keydown', (event) => {
-    if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return;
-    event.preventDefault();
-    selectItem(item.id, row);
-  });
-  makeDraggable(row, 'card', item.id, item.title);
-  itemFileDropZone(row, item);
-  row.setAttribute('aria-label', `Open work item ${item.title}; draggable`);
-  dropZone(row, 'card', (id, after) => {
-    const current = state.board.items.find((value) => value.id === item.id) || item;
-    const currentPeers = filteredItems().filter((value) => value.column_id === current.column_id);
-    const index = currentPeers.findIndex((value) => value.id === current.id);
+function toggleBulk(event, item) {
+  if (event.currentTarget.checked) state.bulkSelection.add(item.id);
+  else state.bulkSelection.delete(item.id);
+  hooks.renderContent();
+}
+function attachRow(node, id) {
+  attachDrag(node, 'card', id);
+  itemFileDropZone(node, findItem(id));
+  dropZone(node, 'card', (dragged, after) => {
+    const current = findItem(id);
+    if (!current) return undefined;
+    const peers = filteredItems().filter((value) => value.column_id === current.column_id);
+    const index = peers.findIndex((value) => value.id === current.id);
     return {
       kind: 'item.move',
-      target: id,
+      target: dragged,
       destination: current.column_id,
-      before: after ? currentPeers[index + 1]?.id || '' : current.id,
+      before: after ? peers[index + 1]?.id || '' : current.id,
     };
   });
-  const title = listCell('Title', 'list-cell-title');
-  const titleDetails = el('div', undefined, 'list-row-title-details');
-  const titleLine = el('div', undefined, 'list-row-title-line');
-  const bulkSelected = state.bulkSelection.has(item.id);
-  if (state.board.role !== 'viewer' && !item.archived) {
-    const toggle = el('input');
-    toggle.id = `bulk-select-${item.id}`;
-    toggle.type = 'checkbox';
-    toggle.className = 'list-row-select';
-    toggle.checked = bulkSelected;
-    toggle.disabled = state.busy || state.loading;
-    toggle.dataset.focusKey = `item:${item.id}:bulk-select`;
-    toggle.setAttribute('aria-label', `Select ${item.title} for bulk actions`);
-    toggle.addEventListener('click', (event) => event.stopPropagation());
-    toggle.addEventListener('change', () => {
-      if (toggle.checked) state.bulkSelection.add(item.id);
-      else state.bulkSelection.delete(item.id);
-      row.classList.toggle('is-bulk-selected', toggle.checked);
-      refreshBulkBar();
-    });
-    titleLine.append(toggle);
-  }
-  const titleButton = button(item.title, () => selectItem(item.id, row), 'list-row-title');
-  titleButton.dataset.focusKey = `item:${item.id}:list-title`;
-  titleLine.append(titleButton);
-  titleDetails.append(titleLine);
-  if (due?.overdue) titleDetails.append(dueDateBadge(item));
-  title.append(titleDetails);
-  const project = listCell('Project', 'list-cell-project');
-  const projectValue = el('span', undefined, 'list-row-project');
-  projectValue.append(...projectBadges(item));
-  project.append(projectValue);
-  const status = listCell('Links / Status', 'list-cell-status');
-  const statusContent = el('div', undefined, 'list-row-status-content');
-  const statusBadges = el('div', undefined, 'list-row-status-badges');
-  if (blocked(item)) statusBadges.append(el('span', 'Blocked', 'badge warning'));
-  if (due && !due.overdue) {
-    const dueBadge = dueDateBadge(item);
-    if (dueBadge) statusBadges.append(dueBadge);
-  }
-  if (item.archived) statusBadges.append(el('span', 'Archived', 'badge'));
-  if (statusBadges.childElementCount || due?.overdue) statusContent.append(statusBadges);
+}
+function titleCellTemplate(item, overdue, bulkSelected) {
+  const selectable = state.board.role !== 'viewer' && !item.archived;
+  const busy = state.busy || state.loading;
+  return listCellTemplate(
+    'Title',
+    'list-cell-title',
+    html`<div class="list-row-title-details">
+      <div class="list-row-title-line">
+        ${
+          selectable
+            ? html`<input
+                id=${`bulk-select-${item.id}`}
+                type="checkbox"
+                class="list-row-select"
+                .checked=${live(bulkSelected)}
+                ?disabled=${live(busy)}
+                data-focus-key=${`item:${item.id}:bulk-select`}
+                aria-label=${`Select ${item.title} for bulk actions`}
+                @click=${(event) => event.stopPropagation()}
+                @change=${(event) => toggleBulk(event, item)}
+              />`
+            : nothing
+        }
+        <button
+          type="button"
+          class="list-row-title"
+          data-focus-key=${`item:${item.id}:list-title`}
+          @click=${(event) => selectItem(item.id, event.currentTarget.closest('.list-row'))}
+        >${item.title}</button>
+      </div>
+      ${overdue ? dueDateBadgeTemplate(item, ' list-title-due') : nothing}
+    </div>`,
+  );
+}
+function linksTemplate(item, links) {
+  const count = `${links.length} GitLab link${links.length === 1 ? '' : 's'}`;
+  return html`<div class="list-row-indicator list-row-links" aria-label=${count}>
+    <div class="card-links-head">
+      <span class="card-links-label">${`GitLab links · ${links.length}`}</span>
+      <button
+        type="button"
+        class="card-link-details list-row-observation-link"
+        data-focus-key=${`item:${item.id}:list-observations`}
+        aria-label=${`View observations · ${count}`}
+        title="Show linked GitLab observations"
+        @click=${() => showLinks(item)}
+      >View observations</button>
+    </div>
+    ${repeat(
+      links,
+      (link) => link.id,
+      (link) => html`<span class="list-row-link-line"
+        >${
+          link.kind === 'mr'
+            ? cardObservationIconTemplate(link, `item:${item.id}:list-observation:${link.id}`)
+            : nothing
+        }${cardLinkTemplate(link, `item:${item.id}:list-link:${link.id}`)}</span
+      >`,
+    )}
+  </div>`;
+}
+function statusCellTemplate(item, due) {
+  const overdue = !!due?.overdue;
+  const badges = [
+    blocked(item) ? html`<span class="badge warning">Blocked</span>` : nothing,
+    due && !overdue ? dueDateBadgeTemplate(item) : nothing,
+    item.archived ? html`<span class="badge">Archived</span>` : nothing,
+  ];
+  const hasBadges = blocked(item) || (due && !overdue) || item.archived;
   const links = state.board.links.filter((link) => link.items.includes(item.id));
-  if (links.length) {
-    const linkIndicator = el('div', undefined, 'list-row-indicator list-row-links');
-    linkIndicator.setAttribute(
-      'aria-label',
-      `${links.length} GitLab link${links.length === 1 ? '' : 's'}`,
-    );
-    const linkHead = el('div', undefined, 'card-links-head');
-    const linkLabel = el('span', `GitLab links · ${links.length}`, 'card-links-label');
-    const observationLink = button(
-      'View observations',
-      () => showLinks(item),
-      'card-link-details list-row-observation-link',
-    );
-    observationLink.dataset.focusKey = `item:${item.id}:list-observations`;
-    observationLink.setAttribute(
-      'aria-label',
-      `View observations · ${links.length} GitLab link${links.length === 1 ? '' : 's'}`,
-    );
-    observationLink.title = 'Show linked GitLab observations';
-    linkHead.append(linkLabel, observationLink);
-    linkIndicator.append(linkHead);
-    links.forEach((link) => {
-      const line = el('span', undefined, 'list-row-link-line');
-      if (link.kind === 'mr')
-        line.append(cardObservationIcon(link, `item:${item.id}:list-observation:${link.id}`));
-      line.append(cardLinkView(link, `item:${item.id}:list-link:${link.id}`));
-      linkIndicator.append(line);
-    });
-    statusContent.append(linkIndicator);
-  }
-  const attachmentTotal = attachmentCount(item);
-  if (attachmentTotal) {
-    const attachmentIndicator = el('span', undefined, 'list-row-indicator list-row-attachments');
-    attachmentIndicator.setAttribute(
-      'aria-label',
-      `${attachmentTotal} attachment${attachmentTotal === 1 ? '' : 's'}`,
-    );
-    attachmentIndicator.append(attachmentPaperclip(), el('span', String(attachmentTotal)));
-    statusContent.append(attachmentIndicator);
-  }
-  if (statusContent.childElementCount) status.append(statusContent);
-  else status.append(el('span', '—', 'list-cell-empty'));
+  const total = attachmentCount(item);
+  const content = [
+    // The badge row stays for an overdue item, whose due badge sits by the title.
+    hasBadges || overdue ? html`<div class="list-row-status-badges">${badges}</div>` : nothing,
+    links.length ? linksTemplate(item, links) : nothing,
+    total
+      ? html`<span
+          class="list-row-indicator list-row-attachments"
+          aria-label=${`${total} attachment${total === 1 ? '' : 's'}`}
+          >${attachmentPaperclipTemplate()}<span>${String(total)}</span></span
+        >`
+      : nothing,
+  ];
+  const empty = !(hasBadges || overdue || links.length || total);
+  return listCellTemplate(
+    'Links / Status',
+    'list-cell-status',
+    empty ? emptyCell : html`<div class="list-row-status-content">${content}</div>`,
+  );
+}
+function listRowTemplate(item) {
+  const due = itemDateStatus(item);
+  const overdue = !!due?.overdue;
+  const bulkSelected = state.bulkSelection.has(item.id);
+  const sprintName = (id) => state.board.sprints.find((s) => s.id === id)?.name || id;
   // The list shows the same participant aggregate as a card, and keeps the
   // assignee's name in text so the column stays scannable as a table.
-  const people = listCell('People', 'list-cell-people');
-  const peopleContent = el('div', undefined, 'list-row-people');
-  peopleContent.append(
-    participantStack(item),
-    el('span', memberName(item.assignee), 'list-row-assignee-name'),
-  );
-  people.append(peopleContent);
-  const labels = listCell('Labels', 'list-cell-labels');
-  item.labels.forEach((label) => labels.append(labelBadge(label)));
-  if (labels.childElementCount === 1) labels.append(el('span', '—', 'list-cell-empty'));
-  const sprints = listCell('Sprints', 'list-cell-sprints');
-  item.sprint_ids.forEach((id) =>
-    sprints.append(
-      el('span', state.board.sprints.find((s) => s.id === id)?.name || id, 'badge badge-sprint'),
-    ),
-  );
-  if (sprints.childElementCount === 1) sprints.append(el('span', '—', 'list-cell-empty'));
-  row.append(title, project, people, labels, sprints, status);
-  if (due?.overdue) positionListDueBadge(row.querySelector('.badge-due'), true);
-  row.classList.toggle('is-selected', state.selectedItemID === item.id);
-  row.classList.toggle('is-bulk-selected', bulkSelected);
-  row.dataset.renderSignature = `${cardRenderSignature(item, links)}|selected:${state.selectedItemID === item.id}|bulk:${bulkSelected}`;
-  return row;
+  return html`<article
+    class=${classMap({ 'list-row': true, 'is-overdue': overdue, 'is-bulk-selected': bulkSelected })}
+    data-item=${item.id}
+    data-focus-key=${`item:${item.id}:list-row`}
+    tabindex="0"
+    aria-label=${`Open work item ${item.title}; draggable`}
+    data-drag-type="card"
+    ${attach(attachRow, item.id)}
+    @click=${(event) => selectFromRow(event, item)}
+    @keydown=${(event) => selectFromKey(event, item)}
+  >
+    ${titleCellTemplate(item, overdue, bulkSelected)}
+    ${listCellTemplate(
+      'Project',
+      'list-cell-project',
+      html`<span class="list-row-project">${projectBadgesTemplate(item)}</span>`,
+    )}
+    ${listCellTemplate(
+      'People',
+      'list-cell-people',
+      html`<div class="list-row-people">
+        ${participantStackTemplate(item)}
+        <span class="list-row-assignee-name">${memberName(item.assignee)}</span>
+      </div>`,
+    )}
+    ${listCellTemplate(
+      'Labels',
+      'list-cell-labels',
+      item.labels.length ? item.labels.map(labelBadgeTemplate) : emptyCell,
+    )}
+    ${listCellTemplate(
+      'Sprints',
+      'list-cell-sprints',
+      item.sprint_ids.length
+        ? item.sprint_ids.map(
+            (id) => html`<span class="badge badge-sprint">${sprintName(id)}</span>`,
+          )
+        : emptyCell,
+    )}
+    ${statusCellTemplate(item, due)}
+  </article>`;
 }
-function listSection(column, items) {
-  const section = el('details', undefined, 'list-section');
-  section.dataset.column = column.id;
-  section.open = true;
-  section.setAttribute('aria-label', column.name);
-  const peers = items.filter((item) => item.column_id === column.id);
-  const total = state.board.items.filter(
-    (item) => !item.archived && item.column_id === column.id,
-  ).length;
-  const head = el('summary', undefined, 'list-section-head');
-  head.dataset.renderSignature = JSON.stringify({
-    id: column.id,
-    name: column.name,
-    category: column.category,
-    wip: column.wip,
-    shown: peers.length,
-    total,
-  });
-  const title = el('span', undefined, 'list-section-title');
-  title.append(el('h3', column.name));
-  const summary = el(
-    'span',
-    `${peers.length} shown · ${columnWIPLabel(column, total)}`,
-    'list-section-summary',
-  );
-  head.append(title, summary);
-  makeDraggable(head, 'list', column.id, column.name);
+function attachListSection(section, id) {
   dropZone(
     section,
     'card',
-    (id) => ({ kind: 'item.move', target: id, destination: column.id }),
+    (dragged) => ({ kind: 'item.move', target: dragged, destination: id }),
     'end',
   );
   dropZone(
     section,
     'list',
-    (id, after) => ({
-      kind: 'column.rank',
-      target: id,
-      before: after
-        ? state.board.columns[state.board.columns.findIndex((value) => value.id === column.id) + 1]
-            ?.id || ''
-        : column.id,
-    }),
+    (dragged, after) => {
+      const index = state.board.columns.findIndex((value) => value.id === id);
+      return {
+        kind: 'column.rank',
+        target: dragged,
+        before: after ? state.board.columns[index + 1]?.id || '' : id,
+      };
+    },
     'x',
   );
-  const body = el('div', undefined, 'list-section-body');
-  body.append(...peers.map((item) => listRow(item)));
-  if (!peers.length) body.append(emptyState('No work here'));
-  section.append(head, body);
-  section.dataset.renderSignature = JSON.stringify({
-    id: column.id,
-    name: column.name,
-    category: column.category,
-    wip: column.wip,
-  });
-  return section;
 }
-function patchListSection(target, next) {
-  const expanded = target.open;
-  syncAttributes(target, next);
-  const currentHead = target.querySelector(':scope > .list-section-head');
-  const nextHead = next.querySelector(':scope > .list-section-head');
-  if (currentHead && nextHead) patchNode(currentHead, nextHead);
-  const currentBody = target.querySelector(':scope > .list-section-body');
-  const nextBody = next.querySelector(':scope > .list-section-body');
-  if (currentBody && nextBody) {
-    syncAttributes(currentBody, nextBody);
-    reconcileKeyedChildren(currentBody, [...nextBody.children], keyedNodeKey, (current, fresh) =>
-      fresh.dataset.item ? patchNode(current, fresh) : patchNode(current, fresh),
-    );
-  }
-  target.open = expanded;
-  return target;
+// A section's open state belongs to the user: `open` is a static attribute, so
+// lit sets it once and never again.
+function listSectionTemplate(column, items) {
+  const peers = items.filter((item) => item.column_id === column.id);
+  const total = state.board.items.filter(
+    (item) => !item.archived && item.column_id === column.id,
+  ).length;
+  return html`<details
+    class="list-section"
+    data-column=${column.id}
+    open
+    aria-label=${column.name}
+    ${attach(attachListSection, column.id)}
+  >
+    <summary
+      class="list-section-head"
+      data-drag-type="list"
+      aria-label=${`Drag list ${column.name}`}
+      ${attach(attachDrag, 'list', column.id)}
+    >
+      <span class="list-section-title"><h3>${column.name}</h3></span>
+      <span class="list-section-summary"
+        >${`${peers.length} shown · ${columnWIPLabel(column, total)}`}</span
+      >
+    </summary>
+    <div class="list-section-body">
+      ${repeat(peers, (item) => item.id, listRowTemplate)}
+      ${peers.length ? nothing : emptyStateTemplate('No work here')}
+    </div>
+  </details>`;
+}
+function registerDetailPane(pane) {
+  state.detailPane = pane;
 }
 export function renderListPresentationContent(content, items) {
-  const current = content.firstElementChild;
-  let layout, sections;
-  if (!current || current.dataset.contentView !== 'list:board') {
-    layout = contentRoot('div', 'list-detail-layout', 'list:board');
-    const list = el('div', undefined, 'planning-list');
-    list.dataset.contentView = 'planning-list';
-    sections = el('div', undefined, 'list-sections');
-    const bar = el('div', undefined, 'bulk-bar');
-    bar.dataset.bulkBar = 'true';
-    bar.hidden = true;
-    bar.setAttribute('role', 'group');
-    bar.setAttribute('aria-label', 'Bulk actions');
-    list.append(bar, listTableHeader(), sections);
-    const pane = createDetailPane();
-    layout.append(list, pane);
-    content.replaceChildren(layout);
-  } else {
-    layout = current;
-    sections = layout.querySelector(':scope > .planning-list > .list-sections');
-  }
   pruneBulkSelection(items);
-  const nextSections = state.board.columns.map((column) => listSection(column, items));
-  reconcileKeyedChildren(
-    sections,
-    nextSections,
-    (node) => `column:${node.dataset.column}`,
-    patchListSection,
+  renderRoot(
+    content,
+    'list-detail-layout',
+    'list:board',
+    html`<div class="planning-list" data-content-view="planning-list">
+        ${bulkBarTemplate(items)}
+        <div class="list-table-head">
+          ${LIST_HEADINGS.map((label) => html`<span class="list-table-heading">${label}</span>`)}
+        </div>
+        <div class="list-sections">
+          ${repeat(
+            state.board.columns,
+            (column) => column.id,
+            (column) => listSectionTemplate(column, items),
+          )}
+        </div>
+      </div>
+      <aside
+        class="item-detail-pane"
+        hidden
+        aria-label="Selected work item"
+        ${attach(registerDetailPane)}
+      ></aside>`,
   );
-  renderBulkBar(layout.querySelector('[data-bulk-bar]'), items);
   syncListSelection();
   updateDetailPaneVisibility();
 }

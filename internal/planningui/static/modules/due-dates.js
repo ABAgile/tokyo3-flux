@@ -27,18 +27,6 @@ export function dueDateBadgeTemplate(item, extraClass = '') {
 export function dueDateBadge(item) {
   return itemDateStatus(item) ? nodeOf(dueDateBadgeTemplate(item)) : undefined;
 }
-export function positionListDueBadge(badge, overdue) {
-  const row = badge.closest('.list-row');
-  if (!row) return;
-  const title = row.querySelector('.list-row-title-details');
-  if (overdue && title) {
-    badge.classList.add('list-title-due');
-    if (!title.contains(badge)) title.append(badge);
-  } else if (!overdue && badge.classList.contains('list-title-due')) {
-    badge.classList.remove('list-title-due');
-    row.querySelector('.list-row-status-badges')?.append(badge);
-  }
-}
 export function editorDueBadgeHost(form) {
   if (form.classList.contains('item-editor-form')) return form.querySelector('.dialog-head');
   if (form.classList.contains('item-detail-form')) return form.querySelector('.item-detail-head');
@@ -69,11 +57,11 @@ function positionEditorDueBadge(badge, overdue) {
       title.removeAttribute('aria-describedby');
   }
 }
-// Cards are lit templates that compute their badges from the date, so they are
-// re-rendered; every other badge is patched in place.
+// Cards and list rows are lit templates that compute their badges from the
+// date, so they are re-rendered; editor badges are patched in place.
 export function refreshDueDateBadges(now = new Date()) {
   document.querySelectorAll('.badge-due[data-due-date-badge]').forEach((badge) => {
-    if (badge.closest('.card')) return;
+    if (badge.closest('.card,.list-row')) return;
     const status = dueDatePresentation(
       badge.dataset.dueDate,
       badge.dataset.dueCategory,
@@ -81,17 +69,14 @@ export function refreshDueDateBadges(now = new Date()) {
       now,
     );
     if (!status) {
-      badge.closest('.list-row')?.classList.remove('is-overdue');
       badge.remove();
       return;
     }
     badge.textContent = status.label;
     badge.classList.toggle('is-overdue', status.overdue);
-    badge.closest('.list-row')?.classList.toggle('is-overdue', status.overdue);
-    positionListDueBadge(badge, status.overdue);
     positionEditorDueBadge(badge, status.overdue);
   });
-  if (document.querySelector('.card')) hooks.renderContent();
+  if (document.querySelector('.card,.list-row')) hooks.renderContent();
 }
 export function scheduleOverdueRefresh() {
   clearTimeout(state.overdueTimer);
