@@ -5,6 +5,8 @@
     "includes": [
       "internal/planningui/static/**/*.js",
       "internal/planningui/static/**/*.css",
+      "!internal/planningui/static/modules/vendor-*.js",
+      "tools/**/*.js",
       "tests/**/*.js",
       "tests/**/*.mjs",
       ".pi/extensions/*.ts"

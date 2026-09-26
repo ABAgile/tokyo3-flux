@@ -1,0 +1,76 @@
+// The one import point for lit-html. Views render templates with `html` and
+// `render`; `attach` wires imperative behaviour (drag, file drops) to an element
+// once, when lit creates it, so re-renders never stack listeners.
+//
+// Never bind a `style` attribute or use lit's styleMap: its first render writes
+// the style attribute, which the `style-src 'self'` policy blocks. styleProps
+// sets properties through the CSSOM, which the policy allows.
+//
+// Ownership rule for lit-rendered DOM: a template binds an attribute, property
+// or class only if no other code writes it. `renderControls` owns `disabled` on
+// [data-write] controls and `draggable`; drag and drop, attachment drops and
+// tooltips toggle their own classes and attributes, which `classMap` leaves
+// alone. Code outside a template must never move, remove or re-text nodes lit
+// created; it asks for a re-render instead.
+import {
+  classMap,
+  Directive,
+  directive,
+  html,
+  keyed,
+  nothing,
+  PartType,
+  render,
+  repeat,
+} from './vendor-lit-html.js';
+
+export { classMap, html, keyed, nothing, render, repeat };
+
+class AttachDirective extends Directive {
+  constructor(part) {
+    super(part);
+    if (part.type !== PartType.ELEMENT) throw new Error('attach() must be used on an element');
+  }
+  render() {
+    return nothing;
+  }
+  update(part, [setup, ...args]) {
+    if (!this.attached) {
+      this.attached = true;
+      setup(part.element, ...args);
+    }
+    return nothing;
+  }
+}
+// `attach(setup, ...args)` calls setup(element, ...args) once per element. The
+// arguments of later renders are ignored, so pass stable values (ids), and read
+// anything that can change from the state at event time.
+export const attach = directive(AttachDirective);
+class StylePropsDirective extends Directive {
+  constructor(part) {
+    super(part);
+    if (part.type !== PartType.ELEMENT) throw new Error('styleProps() must be used on an element');
+  }
+  render() {
+    return nothing;
+  }
+  update(part, [properties]) {
+    const { style } = part.element;
+    for (const name of this.names || [])
+      if (!Object.hasOwn(properties, name)) style.removeProperty(name);
+    for (const [name, value] of Object.entries(properties)) style.setProperty(name, value);
+    this.names = Object.keys(properties);
+    return nothing;
+  }
+}
+// `styleProps({ 'background-color': value })` on an element, kebab-case names.
+export const styleProps = directive(StylePropsDirective);
+// A template as detached elements, for imperative callers that append nodes.
+export function nodesOf(template) {
+  const fragment = document.createDocumentFragment();
+  render(template, fragment);
+  return [...fragment.children];
+}
+export function nodeOf(template) {
+  return nodesOf(template)[0];
+}
