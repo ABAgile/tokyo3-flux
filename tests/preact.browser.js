@@ -21,6 +21,7 @@ async function run(page) {
     const { state, setState, useStore } = await import('/modules/state.js');
     const { StatusBars, notice, showPlanningChangeNotice, clearPlanningChangeNotice } =
       await import('/modules/notices.js');
+    const { App } = await import('/modules/app-shell.js');
     const { api } = await import('/modules/api.js');
     const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
     const { markdownTemplate, markdownEditorTemplate } = await import('/modules/markdown.js');
@@ -139,6 +140,24 @@ async function run(page) {
       'compatibility state writes notify store selectors',
     );
     setState({ shortcutChord: initialChord });
+
+    const previousGate = state.workspaceGate;
+    renderIsland(host, html`<${App} refresh=${() => {}} />`);
+    const legacyBody = host.querySelector('#planning-body');
+    check(
+      host.querySelector('#title')?.textContent === 'Loading planning data',
+      'app shell renders its initial title',
+    );
+    setState({ workspaceGate: 'select' });
+    await flush();
+    check(
+      host.querySelector('#title')?.textContent === 'Choose a workspace' &&
+        host.querySelector('nav')?.hidden &&
+        host.querySelector('#planning-body') === legacyBody,
+      'app shell updates gate content without replacing the planning mount',
+    );
+    unmountIsland(host);
+    setState({ workspaceGate: previousGate });
 
     let refreshes = 0;
     renderIsland(host, html`<${StatusBars} refresh=${() => refreshes++} />`);

@@ -7,7 +7,9 @@ It reuses the view/template boundaries developed on `lit-html` (`0a968f7`) rathe
 The old DOM reconciler, card signatures and per-section patch routines are removed.
 No Go, CSS, API, authentication or CSP behavior is intentionally changed.
 
-The shell still owns navigation, shared planning state, native dialogs and revision-checked commands.
+A body-level Preact `App` owns the sidebar, navigation, heading, status bars and stable legacy page/dialog mounts.
+The page hosts still retain their own controllers and lifetimes while their templates are incrementally migrated.
+Shared planning state and revision-checked commands remain in plain ES modules.
 Rendering factories return VNodes; Preact owns each render host's children.
 The adapter in `modules/preact.js` provides keyed lists, explicit mount/unmount boundaries and logical focus recovery.
 It does not implement another diff algorithm or reinterpret lit syntax.
@@ -16,9 +18,9 @@ HTM binds directly to Preact's `h`.
 Stateful widgets are Preact function components that own interaction state with hooks and acquire outside listeners, subscriptions and observers in effects with cleanup.
 This removes the former nested-controller roots and makes component identity, state, and lifetime visible to the renderer.
 Native form drafts remain uncontrolled unless the application owns their changing value, so unrelated renders do not reset user input.
-The shell, session state and revision-checked command flows remain plain ES modules; they are shared domain behavior rather than renderer-specific component state.
+Session state and revision-checked command flows remain plain ES modules; they are shared domain behavior rather than renderer-specific component state.
 
-The remaining imperative boundaries are intentional: shell control state, native form submission, drag/drop, tooltip positioning, rendered-once dialog skeletons and user-owned disclosure/focus state.
+The remaining imperative boundaries are intentional during migration: legacy control synchronization, native form submission, drag/drop, tooltip positioning, rendered-once dialog skeletons and user-owned disclosure/focus state.
 Do not let a second renderer patch component-owned children.
 A keyed card moving between columns changes its Preact parent and remounts; its logical focus and open attachment disclosure are explicitly restored.
 Within one parent, keyed nodes retain identity.
@@ -61,15 +63,15 @@ These are synthetic board results, not a general browser benchmark or an end-to-
 Both library renderers inserted zero elements on unchanged refreshes and title-only updates.
 The original renderer inserted six elements on a title update.
 Cold-render ordering varies between runs; treat small differences as noise rather than a framework guarantee.
-The checked-in Preact/HTM runtime is 14,514 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
+The checked-in Preact/HTM runtime is 14,529 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
 The board measurements above predate the hook-component migration and are a historical hybrid-renderer baseline, not a benchmark of the current component implementation.
 Re-run both renderer probes on the same browser host before drawing performance conclusions from the migrated implementation.
 Normal application builds require no npm installation.
 
 ## Decision considerations
 
-- Preact supplies component identity, hooks and effect cleanup for independently interactive widgets.
-  The comparison keeps shared shell/domain controllers outside both renderers while implementing widget-local state with each renderer's native model.
+- Preact supplies component identity, hooks and effect cleanup for independently interactive widgets and the shell.
+  Shared domain/session controllers stay outside both renderers while widget-local state uses each renderer's native model.
 - lit-html fits plain template rendering with the shared imperative shell and has a smaller bundle in the recorded sample.
   Widget lifetimes and cleanup still need an explicit owner outside its template primitives.
 - Import maps are not used for runtime delivery: browser import maps are inline script blocks, which conflicts with Flux's `script-src 'self'` policy and prohibition on inline scripts.

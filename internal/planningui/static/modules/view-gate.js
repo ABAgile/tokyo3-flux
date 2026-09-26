@@ -3,8 +3,7 @@ import { $ } from './dom.js';
 import { html } from './preact.js';
 import { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } from './gate-components.js';
 import { api, requestKey } from './api.js';
-import { workspaceLabel } from './format.js';
-import { renderRoot, renderOptions, setStatusText } from './layout.js';
+import { renderRoot, setStatusText } from './layout.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
@@ -40,24 +39,10 @@ export function workspaceListSignature(list) {
     list.map((workspace) => [workspace.id, workspace.name, workspace.role, workspace.revision]),
   );
 }
-function updateWorkspaceOptions(selected = '') {
-  const signature = workspaceListSignature(state.workspaces);
-  const select = $('workspace');
-  if (select.dataset.signature === signature && select.value === selected) return;
-  renderOptions(
-    select,
-    state.workspaces.map((workspace) => [workspace.id, workspaceLabel(workspace)]),
-    selected,
-  );
-  select.dataset.signature = signature;
-}
-export async function loadWorkspaces(selected = '') {
+export async function loadWorkspaces() {
   const next = await api('/api/v2/workspaces');
   if (!validWorkspaceList(next)) throw new Error('Workspace list is invalid. Refresh to retry.');
   state.workspaces = next;
-  updateWorkspaceOptions(
-    selected && state.workspaces.some((workspace) => workspace.id === selected) ? selected : '',
-  );
   return next;
 }
 export function enterWorkspaceGate(mode, message) {
@@ -83,7 +68,7 @@ export async function refreshWorkspaceGate() {
   renderControls();
   setContentBusy(true);
   try {
-    const next = await loadWorkspaces('');
+    const next = await loadWorkspaces();
     if (generation !== state.loadGeneration) return false;
     if (next.length === 1) {
       state.loading = false;
@@ -225,7 +210,7 @@ async function createWorkspace(event) {
     });
     if (!validWorkspaceList([created]))
       throw new Error('Workspace response is invalid. Refresh to retry.');
-    const next = await loadWorkspaces(created.id);
+    const next = await loadWorkspaces();
     if (!next.some((workspace) => workspace.id === created.id))
       throw new Error('The new workspace is not available yet. Refresh to retry.');
     state.pendingPlanningURLState = undefined;
@@ -277,7 +262,6 @@ export async function chooseWorkspace(workspaceID = '') {
   state.bulkSelection.clear();
   state.board = undefined;
   state.workspaceGate = 'loading';
-  updateWorkspaceOptions(selectedID);
   resetBurndown();
   state.burndownExpanded.clear();
   resetSprintHistory();

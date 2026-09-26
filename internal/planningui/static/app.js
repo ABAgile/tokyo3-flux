@@ -12,7 +12,8 @@ import {
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
-import { StatusBars, notice, clearPlanningChangeNotice } from './modules/notices.js';
+import { App } from './modules/app-shell.js';
+import { notice, clearPlanningChangeNotice } from './modules/notices.js';
 import { activeSprints, labelOptionColors } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
@@ -92,7 +93,7 @@ Object.assign(hooks, {
   resetBurndown,
   selectItem,
 });
-renderTemplate(html`<${StatusBars} refresh=${refresh} />`, $('status-bars'));
+renderTemplate(html`<${App} refresh=${refresh} />`, document.body);
 const theme =
   localStorage.getItem('flux-plan-theme') ||
   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -132,18 +133,10 @@ function render() {
     $('filter-chips').hidden = true;
     renderTemplate(nothing, $('filter-chips'));
     if (state.workspaceGate === 'select') {
-      $('title').textContent = 'Choose a workspace';
-      $('subtitle').textContent = 'Select a shared planning space to continue.';
       renderWorkspaceSelection(pageHost('workspace-select'));
     } else if (state.workspaceGate === 'create') {
-      $('title').textContent = state.workspaces.length
-        ? 'Create a workspace'
-        : 'Create your first workspace';
-      $('subtitle').textContent = 'Set up a shared planning space for your team.';
       renderWorkspaceCreation(pageHost('workspace-create'));
     } else {
-      $('title').textContent = 'Loading planning data';
-      $('subtitle').textContent = 'Checking workspace access…';
       pageHost().append(emptyState('Loading workspace access…'));
     }
     return;
@@ -184,30 +177,7 @@ function render() {
       filterValues(name).filter((value) => knownFilterValue(name, value)),
     ),
   );
-  const titles = {
-    board: state.presentation === 'list' ? 'Planning list' : 'Kanban board',
-    sprints: 'Sprints',
-    projects: 'Projects',
-    labels: 'Labels',
-    members: 'Members',
-    archive: 'Archive',
-    history: 'History',
-  };
-  const subtitles = {
-    projects: 'Organize workspace projects and GitLab integration.',
-    labels: 'Maintain labels used to classify work.',
-    members: 'Manage workspace members, roles, and names.',
-  };
-  $('title').textContent = titles[state.view];
-  $('subtitle').textContent =
-    state.board.role === 'viewer'
-      ? 'Read-only workspace access.'
-      : subtitles[state.view] || 'Plan intentionally. Keep work moving.';
   $('search').placeholder = state.view === 'sprints' ? 'Find sprints…' : 'Find work…';
-  document.querySelectorAll('[data-view]').forEach((b) => {
-    if (b.dataset.view === state.view) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  });
   const active = activeSprints();
   const selected = $('scope').value;
   renderOptions(
@@ -449,8 +419,7 @@ renderControls();
 (async () => {
   try {
     state.session = await api('/api/v2/session');
-    $('identity').textContent = state.session.name || state.session.subject;
-    const next = await loadWorkspaces('');
+    const next = await loadWorkspaces();
     const preferred = workspacePreference();
     if (!next.length) {
       state.pendingPlanningURLState = undefined;

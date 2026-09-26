@@ -137,7 +137,7 @@ export async function refresh(preloaded) {
   setContentBusy(true);
   try {
     const selectedID = state.board?.workspace?.id || $('workspace').value;
-    const memberships = await loadWorkspaces(selectedID);
+    const memberships = await loadWorkspaces();
     if (generation !== state.loadGeneration) return false;
     if (!selectedID || !memberships.some((workspace) => workspace.id === selectedID)) {
       enterWorkspaceGate(
@@ -321,7 +321,7 @@ export function startPolling() {
       before = workspaceListSignature(state.workspaces);
     state.membershipPoll = true;
     try {
-      const next = await loadWorkspaces(selectedID);
+      const next = await loadWorkspaces();
       if (
         state.board !== current ||
         state.busy ||

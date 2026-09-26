@@ -3,7 +3,8 @@
 The planning UI is plain ES modules and CSS under `internal/planningui/static/`, embedded with `go:embed`.
 There is no application build step or runtime package installation.
 Preact and HTM are vendored in `modules/vendor-preact.js`; all dynamic views, widgets and dialog markup render Preact VNodes.
-The static shell and domain/session command controllers remain plain ES modules; stateful UI widgets are Preact function components.
+The body is owned by the Preact `App` root in `modules/app-shell.js`; shared shell state and domain/session command controllers remain plain ES modules.
+Stateful UI widgets and shell chrome are Preact function components.
 
 ## Rendering with Preact
 
@@ -82,7 +83,7 @@ The static shell and domain/session command controllers remain plain ES modules;
 Modules live flat in `static/modules/`; the rank order below is the import direction.
 A module imports only modules above it; calls further down the list go through `modules/hooks.js`, which `app.js` fills at startup.
 No module imports `app.js`, and Biome's `noImportCycles` rule enforces an acyclic graph.
-Feature modules export functions and constants only; any document listeners or timers sit in an `init*()`/`start*()` function that `app.js` calls.
+Feature modules export functions and constants; any document listeners or timers sit in an `init*()`/`start*()` function that `app.js` calls.
 
 | Layer | Modules |
 |---|---|
@@ -91,7 +92,7 @@ Feature modules export functions and constants only; any document listeners or t
 | Services | `permissions`, `notices`, `items`, `controls`, `people`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
 | Views | `view-board`, `view-archive`, `bulk`, `view-list`, `view-velocity`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `shortcuts`, `view-gate`, `sync` |
-| Shell | `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, event wiring and startup |
+| Shell | `app-shell`: body-level `App` and stable legacy mounts; `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, event wiring and startup |
 
 ## CSS file map
 
@@ -101,7 +102,7 @@ Each file holds one feature, including its media queries; a feature's responsive
 
 | JS module | CSS files |
 |---|---|
-| `app.js`, `mount`, `layout` | `010-tokens`, `020-base`, `030-shell` (sidebar, notices, section heads, page stack, empty state, skip link), `130-motion` |
+| `app-shell`, `app.js`, `mount`, `layout` | `010-tokens`, `020-base`, `030-shell` (sidebar, notices, section heads, page stack, empty state, skip link), `130-motion` |
 | `view-sprints` | `031-panels` (panels, sprint panel, metrics), `210-sprint-goal` |
 | `view-board`, `drag` | `032-board` (columns, cards, drag cursors, drop marks), `036-summaries` (project lens) |
 | `view-gate` | `033-workspace-gate` (workspace choice and first run) |
