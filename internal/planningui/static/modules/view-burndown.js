@@ -1,8 +1,14 @@
 // The sprint burn-down chart, its table and its requests.
-import { el, button, svgNode } from './dom.js';
 import { api } from './api.js';
 import { burndownDateLabel } from './format.js';
-import { panel, panelHead, helpText, errorLine, emptyState, metricList } from './layout.js';
+import {
+  panelHeadTemplate,
+  helpTextTemplate,
+  errorLineTemplate,
+  emptyStateTemplate,
+  metricListTemplate,
+} from './layout.js';
+import { html, nothing, svg } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { setContentBusy } from './mount.js';
@@ -54,124 +60,82 @@ function burndownSVG(data) {
   const x = (index) =>
     points.length > 1 ? left + (index / (points.length - 1)) * plotWidth : left + plotWidth / 2;
   const y = (value) => top + ((maximum - value) / maximum) * plotHeight;
-  const svg = svgNode('svg', {
-    viewBox: `0 0 ${width} ${height}`,
-    role: 'img',
-    'aria-label': `Burn down for ${data.sprint.name}`,
-    class: 'burndown-svg',
-  });
-  const title = svgNode('title');
-  title.textContent = `Burn down for ${data.sprint.name}`;
-  svg.append(title);
-  [
+  const title = `Burn down for ${data.sprint.name}`;
+  const grid = [
     ...new Set(Array.from({ length: 5 }, (_, index) => Math.round(maximum * (1 - index / 4)))),
-  ].forEach((value) => {
-    const line = svgNode('line', {
-      class: 'burndown-grid',
-      x1: left,
-      x2: width - right,
-      y1: y(value),
-      y2: y(value),
-    });
-    svg.append(line);
-    const label = svgNode('text', {
-      class: 'burndown-axis-label',
-      x: left - 8,
-      y: y(value) + 4,
-      'text-anchor': 'end',
-    });
-    label.textContent = String(value);
-    svg.append(label);
-  });
+  ].map(
+    (value) =>
+      svg`<line class="burndown-grid" x1=${left} x2=${width - right} y1=${y(value)} y2=${y(value)}></line><text class="burndown-axis-label" x=${left - 8} y=${y(value) + 4} text-anchor="end">${String(value)}</text>`,
+  );
   const first = points.findIndex((point) => Number.isFinite(point.remaining));
-  if (first >= 0) {
-    const idealStart = Number.isFinite(points[first].scope)
-      ? points[first].scope
-      : points[first].remaining;
-    svg.append(
-      svgNode('line', {
-        class: 'burndown-ideal',
-        x1: x(first),
-        x2: x(points.length - 1),
-        y1: y(idealStart),
-        y2: y(0),
-      }),
+  const idealStart =
+    first >= 0
+      ? Number.isFinite(points[first].scope)
+        ? points[first].scope
+        : points[first].remaining
+      : 0;
+  const ideal =
+    first >= 0
+      ? svg`<line class="burndown-ideal" x1=${x(first)} x2=${x(points.length - 1)} y1=${y(idealStart)} y2=${y(0)}></line>`
+      : nothing;
+  const lines = (key, className) =>
+    burndownSegments(points, key, x, y).map(
+      (segment) => svg`<polyline class=${className} points=${segment}></polyline>`,
     );
-  }
-  burndownSegments(points, 'scope', x, y).forEach((segment) =>
-    svg.append(svgNode('polyline', { class: 'burndown-scope', points: segment })),
+  const dots = points.map((point, index) =>
+    Number.isFinite(point.remaining)
+      ? svg`<circle class="burndown-point" cx=${x(index)} cy=${y(point.remaining)} r="3"><title>${`${burndownDateLabel(point.date)} · ${point.remaining} remaining · ${point.scope} in scope`}</title></circle>`
+      : nothing,
   );
-  burndownSegments(points, 'remaining', x, y).forEach((segment) =>
-    svg.append(svgNode('polyline', { class: 'burndown-actual', points: segment })),
+  const dates = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])].map(
+    (index) => {
+      if (index < 0 || !points[index]) return nothing;
+      const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
+      return svg`<text class="burndown-axis-label" x=${x(index)} y=${height - 16} text-anchor=${anchor}>${burndownDateLabel(points[index].date)}</text>`;
+    },
   );
-  points.forEach((point, index) => {
-    if (!Number.isFinite(point.remaining)) return;
-    const circle = svgNode('circle', {
-      class: 'burndown-point',
-      cx: x(index),
-      cy: y(point.remaining),
-      r: 3,
-    });
-    const label = svgNode('title');
-    label.textContent = `${burndownDateLabel(point.date)} · ${point.remaining} remaining · ${point.scope} in scope`;
-    circle.append(label);
-    svg.append(circle);
-  });
-  [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])].forEach((index) => {
-    if (index < 0 || !points[index]) return;
-    const label = svgNode('text', {
-      class: 'burndown-axis-label',
-      x: x(index),
-      y: height - 16,
-      'text-anchor': index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle',
-    });
-    label.textContent = burndownDateLabel(points[index].date);
-    svg.append(label);
-  });
-  return svg;
+  return html`<svg
+    viewBox=${`0 0 ${width} ${height}`}
+    role="img"
+    aria-label=${title}
+    class="burndown-svg"
+  ><title>${title}</title>${grid}${ideal}${lines('scope', 'burndown-scope')}${lines('remaining', 'burndown-actual')}${dots}${dates}</svg>`;
 }
 function burndownLegendItem(className, text) {
-  const item = el('span', undefined, 'burndown-legend-item');
-  item.append(el('span', undefined, `burndown-swatch ${className}`), el('span', text));
-  return item;
+  return html`<span class="burndown-legend-item"
+    ><span class=${`burndown-swatch ${className}`}></span><span>${text}</span></span
+  >`;
 }
 function burndownTable(data) {
-  const details = el('details', undefined, 'burndown-data');
-  details.dataset.stateKey = `burndown-data:${data.sprint.id}`;
-  details.append(el('summary', 'View daily values'));
-  const scroll = el('div', undefined, 'burndown-table-scroll');
-  const table = el('table');
-  table.append(el('caption', 'Daily native work-item counts'));
-  const head = el('thead');
-  const heading = el('tr');
-  const metric = el('th', 'Metric');
-  metric.scope = 'col';
-  heading.append(metric);
-  data.points.forEach((point) => {
-    const date = el('th', burndownDateLabel(point.date));
-    date.scope = 'col';
-    heading.append(date);
-  });
-  head.append(heading);
-  table.append(head);
-  const body = el('tbody');
-  [
+  const rows = [
     ['In scope', 'scope'],
     ['Remaining', 'remaining'],
-  ].forEach(([label, key]) => {
-    const row = el('tr');
-    const metric = el('th', label);
-    metric.scope = 'row';
-    row.append(metric);
-    data.points.forEach((point) =>
-      row.append(el('td', point[key] == null ? '—' : String(point[key]))),
-    );
-    body.append(row);
-  });
-  table.append(body);
-  scroll.append(table);
-  details.append(scroll);
-  return details;
+  ];
+  // The <details> open state belongs to the user; the template never binds it.
+  return html`<details class="burndown-data" data-state-key=${`burndown-data:${data.sprint.id}`}>
+    <summary>View daily values</summary>
+    <div class="burndown-table-scroll">
+      <table>
+        <caption>Daily native work-item counts</caption>
+        <thead>
+          <tr>
+            <th scope="col">Metric</th>
+            ${data.points.map((point) => html`<th scope="col">${burndownDateLabel(point.date)}</th>`)}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            ([label, key]) => html`<tr>
+              <th scope="row">${label}</th>
+              ${data.points.map(
+                (point) => html`<td>${point[key] == null ? '—' : String(point[key])}</td>`,
+              )}
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>
+  </details>`;
 }
 function latestBurndownPoint(points, key) {
   return [...points].reverse().find((point) => Number.isFinite(point[key]));
@@ -179,78 +143,64 @@ function latestBurndownPoint(points, key) {
 function firstBurndownPoint(points, key) {
   return points.find((point) => Number.isFinite(point[key]));
 }
-export function renderBurndown(sprint) {
-  const chart = panel('burndown-panel');
-  chart.id = `burndown-${sprint.id}`;
-  const headingID = `burndown-heading-${sprint.id}`;
-  chart.setAttribute('aria-labelledby', headingID);
-  const filterCondition = el('div', undefined, 'burndown-filter-condition');
-  filterCondition.append(
-    el('p', `Project: ${selectedFilterText('project')}`, 'muted'),
-    el('p', `Assignee: ${selectedFilterText('assignee')}`, 'muted'),
-  );
-  const context = el('div', undefined, 'burndown-context');
-  context.append(
-    panelHead('Remaining work', {
-      id: headingID,
-      description: filterCondition,
-      className: 'burndown-head',
-    }),
-  );
+function burndownBody(sprint, context) {
   const key = currentBurndownKey(sprint.id);
   const data = state.burndownData.get(key);
   const error = state.burndownErrors.get(key);
-  if (error) {
-    const retry = button('Retry burn down', () => requestBurndown(sprint.id, true));
-    retry.disabled = state.busy || state.loading;
-    const message = errorLine(error);
-    chart.append(context, message, retry);
-    return chart;
-  }
+  if (error)
+    return html`${context()}${errorLineTemplate(error)}<button
+        type="button"
+        ?disabled=${state.busy || state.loading}
+        @click=${() => requestBurndown(sprint.id, true)}
+      >Retry burn down</button>`;
   if (!data) {
-    chart.append(context, emptyState('Loading native planning history…'));
     requestBurndown(sprint.id);
-    return chart;
+    return html`${context()}${emptyStateTemplate('Loading native planning history…')}`;
   }
-  if (!data.history_available) {
-    chart.append(context, emptyState(data.warning));
-    return chart;
-  }
-  const available = data.points.some((point) => Number.isFinite(point.remaining));
-  if (!available) {
-    chart.append(
-      context,
-      emptyState(data.warning || 'No matching work is available for this sprint and filter.'),
-    );
-    return chart;
-  }
+  if (!data.history_available) return html`${context()}${emptyStateTemplate(data.warning)}`;
+  if (!data.points.some((point) => Number.isFinite(point.remaining)))
+    return html`${context()}${emptyStateTemplate(
+      data.warning || 'No matching work is available for this sprint and filter.',
+    )}`;
   const first = firstBurndownPoint(data.points, 'remaining');
   const latest = latestBurndownPoint(data.points, 'remaining');
-  context.append(
-    metricList(
-      [
-        [firstBurndownPoint(data.points, 'scope')?.scope ?? first.remaining, 'Starting scope'],
-        [latest.remaining, 'Remaining'],
-        [latest.scope, 'Ending scope'],
-      ],
-      'burndown-metrics',
-    ),
+  const metrics = metricListTemplate(
+    [
+      [firstBurndownPoint(data.points, 'scope')?.scope ?? first.remaining, 'Starting scope'],
+      [latest.remaining, 'Remaining'],
+      [latest.scope, 'Ending scope'],
+    ],
+    'burndown-metrics',
   );
-  const note = helpText(data.warning, 'burndown-note');
-  context.append(note);
-  const figure = el('figure', undefined, 'burndown-figure');
-  figure.append(burndownSVG(data));
-  const legend = el('div', undefined, 'burndown-legend');
-  legend.append(
-    burndownLegendItem('actual', 'Remaining'),
-    burndownLegendItem('ideal', 'Ideal'),
-    burndownLegendItem('scope', 'Scope'),
-  );
-  figure.append(legend);
-  const row = el('div', undefined, 'burndown-chart-row');
-  row.append(context, figure);
-  chart.append(row, burndownTable(data));
-  return chart;
+  return html`<div class="burndown-chart-row">
+      ${context(metrics, helpTextTemplate(data.warning, 'burndown-note'))}
+      <figure class="burndown-figure">
+        ${burndownSVG(data)}
+        <div class="burndown-legend">
+          ${burndownLegendItem('actual', 'Remaining')}${burndownLegendItem('ideal', 'Ideal')}${burndownLegendItem('scope', 'Scope')}
+        </div>
+      </figure>
+    </div>
+    ${burndownTable(data)}`;
+}
+export function burndownTemplate(sprint) {
+  const headingID = `burndown-heading-${sprint.id}`;
+  const filterCondition = html`<div class="burndown-filter-condition">
+    <p class="muted">${`Project: ${selectedFilterText('project')}`}</p>
+    <p class="muted">${`Assignee: ${selectedFilterText('assignee')}`}</p>
+  </div>`;
+  const context = (...extra) => html`<div class="burndown-context">
+    ${panelHeadTemplate('Remaining work', {
+      id: headingID,
+      description: filterCondition,
+      className: 'burndown-head',
+    })}${extra}
+  </div>`;
+  return html`<section
+    class="panel burndown-panel"
+    id=${`burndown-${sprint.id}`}
+    aria-labelledby=${headingID}
+  >${burndownBody(sprint, context)}</section>`;
 }
 async function requestBurndown(sprintID, force = false) {
   if (!state.board || !state.burndownExpanded.has(sprintID) || state.loading) return;

@@ -1,6 +1,7 @@
 import { $, button, options } from './modules/dom.js';
 import { api } from './modules/api.js';
 import { emptyState } from './modules/layout.js';
+import { nothing, render as renderTemplate } from './modules/lit.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
@@ -117,11 +118,12 @@ function render() {
     setContentBusy(state.workspaceGate === 'loading' || state.loading);
     $('project-summary').hidden = true;
     $('project-summary').replaceChildren();
-    $('sprint-summary').replaceChildren();
+    // Both hosts are rendered by lit, so they are cleared through lit.
+    renderTemplate(nothing, $('sprint-summary'));
     $('count').textContent = '';
     $('planning-change').hidden = true;
     $('filter-chips').hidden = true;
-    $('filter-chips').replaceChildren();
+    renderTemplate(nothing, $('filter-chips'));
     if (state.workspaceGate === 'select') {
       $('title').textContent = 'Choose a workspace';
       $('subtitle').textContent = 'Select a shared planning space to continue.';
