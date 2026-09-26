@@ -477,6 +477,21 @@ docker compose config -q
 
 `make check` ends with `make check-web test-web`: pinned Biome and rumdl checks, `node --check` for `app.js` and every module, and the Node tests.
 Run `make fmt-web lint-web` after JS/CSS edits and `make fmt-md` after Markdown edits; [AGENTS.md](AGENTS.md) lists the frontend conventions.
+
+### Preact + HTM experiment
+
+The `preact-htm` branch starts an incremental migration from the imperative DOM implementation on `main`.
+Workspace selection, workspace creation markup and the first-run checklist now use Preact components with HTM templates; other views and the workspace submission controller remain unchanged.
+This is an initial migration slice, not yet a feature-complete alternative to the `lit-html` branch.
+
+The application still serves plain ES modules without an application build step, CDN access or relaxed CSP.
+The checked-in Preact/HTM bundle is rebuilt with `make vendor-web`; exact package versions and integrity hashes live in `tools/vendor/package-lock.json`, alongside the upstream licenses.
+Only rebuilding that bundle requires npm installation.
+Components receive data and callbacks explicitly; island hosts provide an ownership boundary and unmount hooks before legacy code removes them.
+
+For API-free browser regression tests, run `node tests/preact-fixture.mjs <private-host> 18195`, open that address with the configured remote `playwright-cli`, then use `run-code --filename=tests/preact.browser.js` (an absolute filename also works).
+The test covers escaping, keyed identity/focus, native forms, event callbacks, cleanup, disabled-state updates and light/dark responsive overflow under the existing CSP.
+It does not replace the database-backed planning tests or establish Board/List performance parity with lit-html.
 The stylesheet is authored as ordered files under `internal/planningui/static/styles/` and served joined, in name order, as `/styles.css`.
 
 Use a disposable test DB; PostgreSQL tests skip without its URL.

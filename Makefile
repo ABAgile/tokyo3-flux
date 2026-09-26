@@ -78,6 +78,11 @@ vet:
 lint:
 	staticcheck ./...
 
+.PHONY: vendor-web
+## vendor-web: Rebuild the checked-in Preact/HTM runtime (versions in tools/vendor/package-lock.json)
+vendor-web:
+	cd tools/vendor && npm ci --ignore-scripts && npm run build
+
 ## fmt-web: Format frontend JS/CSS, tests and the Pi extension with Biome
 fmt-web:
 	$(BIOME) format --write .

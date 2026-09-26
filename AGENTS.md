@@ -1,7 +1,23 @@
 # Flux frontend conventions
 
 The planning UI is plain ES modules and CSS under `internal/planningui/static/`, embedded with `go:embed`.
-There is no build step and there are no npm runtime dependencies.
+There is no application build step or runtime package installation.
+On the `preact-htm` experiment, Preact and HTM are vendored in `modules/vendor-preact.js`; the workspace gate and first-run checklist use components, while other views still use the existing DOM helpers.
+
+## Preact migration
+
+- Import the runtime only through `modules/preact.js`; use HTM templates, not JSX or raw HTML injection.
+- `tools/vendor/package-lock.json` pins the runtime and bundler; `make vendor-web` rebuilds the checked-in bundle.
+  Never edit the generated bundle by hand; preserve the licenses in `tools/vendor/`.
+- Components receive domain data and actions as props; keep API/session state in the existing controllers during this first migration slice.
+- Each component island owns its host's children; do not pass those children to the legacy reconciler.
+  Call `unmountIsland(host)` before removing an island host so hook cleanup runs.
+- Use stable domain keys for lists, and effects with cleanup for lifecycle work.
+  Do not add module-level listeners or timers.
+- Workspace submission still owns the creation input's value/disabled state and status line; these are deliberately not reactive component bindings yet.
+  Move the controller and those bindings together in a later slice, not one writer at a time.
+- No CSS, API or CSP changes are part of the migration; never introduce inline styles, scripts or `eval`.
+- `tests/preact-fixture.mjs` serves an API-free fixture for `tests/preact.browser.js`; it requires no database and must bind only to a private test interface.
 
 ## Rules
 
@@ -23,7 +39,7 @@ Feature modules export functions and constants only; any document listeners or t
 
 | Layer | Modules |
 |---|---|
-| Base | `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
+| Base | `vendor-preact`, `preact`, `gate-components`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
 | State | `state` (every reassigned shell variable, as `state.<name>`), `hooks` |
 | Services | `permissions`, `notices`, `items`, `controls`, `people`, `reconcile`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |

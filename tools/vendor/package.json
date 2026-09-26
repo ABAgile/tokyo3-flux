@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild preact.entry.js --bundle --format=esm --minify --legal-comments=inline --outfile=../../internal/planningui/static/modules/vendor-preact.js"
+  },
+  "dependencies": {
+    "htm": "3.1.1",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

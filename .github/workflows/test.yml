@@ -65,4 +65,9 @@ jobs:
           pip install rumdl==0.2.77
           npm install -g @earendil-works/pi-coding-agent@0.87.1
 
+      - name: Verify vendored frontend runtime
+        run: |
+          make vendor-web
+          git diff --exit-code -- internal/planningui/static/modules/vendor-preact.js
+
       - run: make check-web test-web BIOME=biome RUMDL=rumdl

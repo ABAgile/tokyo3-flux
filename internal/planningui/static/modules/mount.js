@@ -1,5 +1,6 @@
 // The two content mounts: the planning frame and the page root.
 import { $ } from './dom.js';
+import { unmountIsland } from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 
@@ -29,7 +30,10 @@ function mountPage(showPageRoot, keepView) {
   if (discarded.some((node) => node.contains($('planning-filters')))) hooks.placeFilters();
   $('planning-frame').hidden = showPageRoot;
   host.hidden = !showPageRoot;
-  discarded.forEach((node) => node.remove());
+  discarded.forEach((node) => {
+    unmountIsland(node);
+    node.remove();
+  });
   setContentBusy(state.contentBusy);
 }
 export function setContentBusy(value) {

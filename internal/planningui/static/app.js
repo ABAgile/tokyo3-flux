@@ -8,7 +8,7 @@ import { notice, clearError } from './modules/notices.js';
 import { activeSprints, styleLabelOptions } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
-import { patchNode } from './modules/reconcile.js';
+import { unmountIsland } from './modules/preact.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import { planningHost, pageHost, setContentBusy } from './modules/mount.js';
 import {
@@ -63,7 +63,7 @@ import {
   loadWorkspaces,
   renderWorkspaceSelection,
   renderWorkspaceCreation,
-  firstRunChecklist,
+  renderFirstRunChecklist,
   showFirstRun,
   showWorkspaceCreate,
   chooseWorkspace,
@@ -255,12 +255,10 @@ function renderContent() {
       ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${state.board.workspace.revision}`
       : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
   if (showFirstRun()) {
-    const next = firstRunChecklist();
-    const current = body.firstElementChild;
-    if (!current || current.dataset.contentView !== 'first-run') body.replaceChildren(next);
-    else patchNode(current, next);
+    renderFirstRunChecklist(body);
     return;
   }
+  unmountIsland(body.firstElementChild);
   if (state.view === 'board' && state.presentation === 'list')
     renderListPresentationContent(body, items);
   else if (state.view === 'board') renderBoardContent(body, items);

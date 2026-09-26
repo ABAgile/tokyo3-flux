@@ -1,11 +1,13 @@
 // The workspace gate, workspace list and creation, and the first-run checklist.
-import { $, el, button, options, field } from './dom.js';
+import { $, options } from './dom.js';
+import { html, renderIsland } from './preact.js';
+import { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } from './gate-components.js';
 import { api, requestKey } from './api.js';
 import { workspaceLabel } from './format.js';
-import { contentRoot, panel, helpText, statusLine, setStatusText } from './layout.js';
+import { contentRoot, panel, setStatusText } from './layout.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
-import { writeButton } from './permissions.js';
+import { writable } from './permissions.js';
 import { notice, clearError, clearPlanningChangeNotice } from './notices.js';
 import { renderControls } from './controls.js';
 import { setContentBusy } from './mount.js';
@@ -108,69 +110,24 @@ export async function refreshWorkspaceGate() {
 export function renderWorkspaceSelection(content) {
   const gate = panel('workspace-gate');
   gate.setAttribute('aria-label', 'Choose a workspace');
-  gate.append(
-    helpText(
-      'Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.',
-    ),
-  );
-  const list = el('div', undefined, 'workspace-choice-list');
-  list.setAttribute('role', 'list');
-  state.workspaces.forEach((workspace) => {
-    const choice = button(
-      '',
-      () => {
-        void chooseWorkspace(workspace.id);
-      },
-      'workspace-choice',
-    );
-    choice.dataset.workspaceChoice = workspace.id;
-    choice.setAttribute('aria-label', `Open ${workspace.name}`);
-    const copy = el('span', undefined, 'workspace-choice-copy');
-    copy.append(el('strong', workspace.name), el('small', `${workspace.role} access`, 'muted'));
-    choice.append(copy, el('span', 'Open →', 'workspace-choice-action'));
-    list.append(choice);
-  });
-  gate.append(list);
-  const actions = el('div', undefined, 'actions workspace-gate-actions');
-  actions.append(button('Create a workspace', showWorkspaceCreate, 'primary'));
-  gate.append(actions);
   content.append(gate);
+  renderIsland(
+    gate,
+    html`<${WorkspaceSelection} workspaces=${state.workspaces} choose=${chooseWorkspace} create=${showWorkspaceCreate} />`,
+  );
 }
 export function renderWorkspaceCreation(content) {
   const gate = panel('workspace-gate');
   gate.setAttribute('aria-label', 'Create a workspace');
-  gate.append(
-    helpText(
-      state.session?.name
-        ? `You are signed in as ${state.session.name}. Create a workspace to start planning; you will be its initial administrator.`
-        : 'Create a workspace to start planning; your signed-in account will be its initial administrator.',
-    ),
-  );
-  const form = el('form', undefined, 'workspace-create-form');
-  const input = field(form, 'name', 'Workspace name');
-  input.id = 'workspace-name';
-  input.required = true;
-  input.maxLength = 120;
-  input.autocomplete = 'organization';
-  input.placeholder = 'e.g. Team Alpha';
-  const status = statusLine('workspace-create-status');
-  status.dataset.workspaceCreateStatus = 'true';
-  form.append(status);
-  const actions = el('div', undefined, 'actions');
-  const submit = button('Create workspace', undefined, 'primary');
-  submit.type = 'submit';
-  actions.append(submit);
-  if (state.workspaces.length)
-    actions.append(button('Back to workspace selection', showWorkspaceSelection));
-  form.append(actions);
-  form.addEventListener('submit', createWorkspace);
-  gate.append(form);
   content.append(gate);
-  input.focus();
+  renderIsland(
+    gate,
+    html`<${WorkspaceCreation} name=${state.session?.name} hasWorkspaces=${state.workspaces.length > 0} submit=${createWorkspace} back=${showWorkspaceSelection} />`,
+  );
 }
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
-export function firstRunChecklist() {
+export function renderFirstRunChecklist(body) {
   const steps = [
     {
       done: state.board.projects.length > 0,
@@ -194,32 +151,16 @@ export function firstRunChecklist() {
       run: () => $('new-item').click(),
     },
   ];
-  const setup = contentRoot('section', 'panel first-run', 'first-run');
-  setup.setAttribute('aria-labelledby', 'first-run-heading');
-  const heading = el('h2', 'Set up your planning workspace');
-  heading.id = 'first-run-heading';
-  setup.append(
-    heading,
-    helpText(
-      'Three steps get this workspace to a board your team can use. You can do them in any order.',
-    ),
+  let setup = body.firstElementChild;
+  if (setup?.dataset.contentView !== 'first-run') {
+    setup = contentRoot('section', 'panel first-run', 'first-run');
+    setup.setAttribute('aria-labelledby', 'first-run-heading');
+    body.replaceChildren(setup);
+  }
+  renderIsland(
+    setup,
+    html`<${FirstRunChecklist} steps=${steps} disabled=${!writable() || state.integrationFormOpen} />`,
   );
-  const list = el('ol', undefined, 'first-run-steps');
-  steps.forEach((step, index) => {
-    const entry = el('li', undefined, `first-run-step${step.done ? ' is-done' : ''}`);
-    const mark = el('span', step.done ? '✓' : String(index + 1), 'first-run-mark');
-    mark.setAttribute('aria-hidden', 'true');
-    const copy = el('div', undefined, 'first-run-copy');
-    copy.append(el('strong', step.title), el('span', step.help, 'help'));
-    const action = writeButton(step.action, step.run, step.done ? undefined : 'primary');
-    action.setAttribute('aria-label', `${step.action}: ${step.title}`);
-    entry.append(mark, copy, action);
-    entry.setAttribute('aria-label', `${step.title} — ${step.done ? 'done' : 'not started'}`);
-    list.append(entry);
-  });
-  setup.append(list);
-  setup.dataset.renderSignature = JSON.stringify(steps.map((step) => step.done));
-  return setup;
 }
 export function showFirstRun() {
   return (

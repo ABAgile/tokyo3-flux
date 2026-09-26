@@ -23,4 +23,5 @@ go.work.sum
 
 # Build output and local Flux state
 /bin/
+node_modules/
 attachments/
