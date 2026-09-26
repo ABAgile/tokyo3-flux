@@ -4,6 +4,7 @@ import { itemPayloadFromForm } from './item-command.js';
 import { labelForeground } from './format.js';
 import { markdownEditor } from './markdown.js';
 import { helpText } from './layout.js';
+import { html } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable, gitLabWritable, writeButton } from './permissions.js';
@@ -312,7 +313,18 @@ export function buildItemEditor(fields, item, draft, readOnly, context, titleHos
   const selfSubject = state.board.members.find(
     (member) => member.subject === state.session?.subject,
   )?.subject;
-  const assigneePicker = multiSelect(
+  let assigneePicker;
+  const assignMe =
+    !readOnly && selfSubject
+      ? () =>
+          html`<button
+            type="button"
+            class="multi-select-edit"
+            aria-label="Assign me"
+            @click=${() => assigneePicker.select(selfSubject)}
+          >Assign me</button>`
+      : undefined;
+  assigneePicker = multiSelect(
     controls,
     'assignee',
     'Assignee',
@@ -320,17 +332,8 @@ export function buildItemEditor(fields, item, draft, readOnly, context, titleHos
     [draft?.assignee ?? item.assignee],
     undefined,
     undefined,
-    { single: true },
+    { single: true, headingAction: assignMe },
   );
-  if (!readOnly && selfSubject) {
-    const assignMe = button(
-      'Assign me',
-      () => assigneePicker.select(selfSubject),
-      'multi-select-edit',
-    );
-    assignMe.setAttribute('aria-label', 'Assign me');
-    assigneePicker.header.querySelector('.multi-select-heading').append(assignMe);
-  }
   multiSelect(
     controls,
     'labels',

@@ -1,8 +1,10 @@
-// Markdown rendering and the Markdown editor control. Rendering builds DOM
-// nodes directly and never assigns innerHTML, so item and comment bodies
-// cannot inject markup. Link targets are filtered through markdownURL.
-import { el, button, uid, noAutofill } from './dom.js';
+// Markdown rendering and the Markdown editor control. Rendering produces lit
+// templates whose text parts lit writes as text, never as markup, so item and
+// comment bodies cannot inject HTML. Link targets are filtered through
+// markdownURL.
+import { el, uid } from './dom.js';
 import { requestKey } from './api.js';
+import { attach, html, nothing, render, styleProps } from './lit.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
@@ -19,7 +21,22 @@ function markdownURL(value) {
 function markdownEscaped(value) {
   return value === String.fromCharCode(92) || '`*_[]~'.includes(value);
 }
-function appendMarkdownInline(parent, source) {
+function markdownLink(href, content) {
+  const external = new URL(href, location.href).origin !== location.origin;
+  return external
+    ? html`<a href=${href} target="_blank" rel="noopener noreferrer">${content}</a>`
+    : html`<a href=${href}>${content}</a>`;
+}
+// Inline Markdown as template parts. Plain text is gathered into runs and
+// rendered as text by lit, which never parses it as markup.
+function markdownInline(source) {
+  const parts = [];
+  let text = '';
+  const push = (part) => {
+    if (text) parts.push(text);
+    text = '';
+    parts.push(part);
+  };
   let i = 0;
   while (i < source.length) {
     if (
@@ -27,7 +44,7 @@ function appendMarkdownInline(parent, source) {
       i + 1 < source.length &&
       markdownEscaped(source[i + 1])
     ) {
-      parent.append(document.createTextNode(source[i + 1]));
+      text += source[i + 1];
       i += 2;
       continue;
     }
@@ -36,13 +53,15 @@ function appendMarkdownInline(parent, source) {
       const marker = match?.[0];
       const end = marker ? source.indexOf(marker, i + marker.length) : -1;
       if (marker && end > i + marker.length) {
-        parent.append(el('code', source.slice(i + marker.length, end), 'markdown-inline-code'));
+        push(
+          html`<code class="markdown-inline-code">${source.slice(i + marker.length, end)}</code>`,
+        );
         i = end + marker.length;
         continue;
       }
     }
     if (source.startsWith('![', i)) {
-      parent.append(document.createTextNode('!['));
+      text += '![';
       i += 2;
       continue;
     }
@@ -50,33 +69,18 @@ function appendMarkdownInline(parent, source) {
       source.slice(i).startsWith('[') ? source.slice(i).slice(1) : '',
     );
     if (source[i] === '[' && link) {
-      const whole = '[' + link[0];
+      const whole = `[${link[0]}`;
       const href = markdownURL(link[2]);
-      if (href) {
-        const anchor = el('a');
-        anchor.href = href;
-        if (new URL(href, location.href).origin !== location.origin) {
-          anchor.target = '_blank';
-          anchor.rel = 'noopener noreferrer';
-        }
-        appendMarkdownInline(anchor, link[1]);
-        parent.append(anchor);
-      } else parent.append(document.createTextNode(whole));
+      if (href) push(markdownLink(href, markdownInline(link[1])));
+      else text += whole;
       i += whole.length;
       continue;
     }
     const auto = /^<((?:https?|mailto):[^<>\s]+)>/.exec(source.slice(i));
     if (auto) {
       const href = markdownURL(auto[1]);
-      if (href) {
-        const anchor = el('a', auto[1]);
-        anchor.href = href;
-        if (new URL(href, location.href).origin !== location.origin) {
-          anchor.target = '_blank';
-          anchor.rel = 'noopener noreferrer';
-        }
-        parent.append(anchor);
-      } else parent.append(document.createTextNode(auto[0]));
+      if (href) push(markdownLink(href, auto[1]));
+      else text += auto[0];
       i += auto[0].length;
       continue;
     }
@@ -97,17 +101,24 @@ function appendMarkdownInline(parent, source) {
         continue;
       const end = source.indexOf(marker, i + marker.length);
       if (end <= i + marker.length) continue;
-      const node = el(tag);
-      appendMarkdownInline(node, source.slice(i + marker.length, end));
-      parent.append(node);
+      const content = markdownInline(source.slice(i + marker.length, end));
+      push(
+        tag === 'strong'
+          ? html`<strong>${content}</strong>`
+          : tag === 'del'
+            ? html`<del>${content}</del>`
+            : html`<em>${content}</em>`,
+      );
       i = end + marker.length;
       formatted = true;
       break;
     }
     if (formatted) continue;
-    parent.append(document.createTextNode(source[i]));
+    text += source[i];
     i++;
   }
+  if (text) parts.push(text);
+  return parts;
 }
 function markdownBlockStart(line) {
   return /^\s{0,3}(?:#{1,6}\s|`{3,}|~{3,}|>\s?|[-+*]\s+|\d+[.)]\s+|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(
@@ -133,8 +144,45 @@ function markdownTableCells(line) {
   cells.push(cell.trim());
   return cells;
 }
-function renderMarkdown(parent, source) {
-  parent.replaceChildren();
+const HEADINGS = {
+  1: (content) => html`<h1>${content}</h1>`,
+  2: (content) => html`<h2>${content}</h2>`,
+  3: (content) => html`<h3>${content}</h3>`,
+  4: (content) => html`<h4>${content}</h4>`,
+  5: (content) => html`<h5>${content}</h5>`,
+  6: (content) => html`<h6>${content}</h6>`,
+};
+function markdownTable(header, alignments, rows) {
+  const cell = (tag, value, index) => {
+    const align = alignments[index] ? { 'text-align': alignments[index] } : {};
+    return tag === 'th'
+      ? html`<th ${styleProps(align)}>${markdownInline(value)}</th>`
+      : html`<td ${styleProps(align)}>${markdownInline(value)}</td>`;
+  };
+  return html`<table class="markdown-table">
+    <thead>
+      <tr>${header.map((value, index) => cell('th', value, index))}</tr>
+    </thead>
+    <tbody>
+      ${rows.map((row) => html`<tr>${row.map((value, index) => cell('td', value, index))}</tr>`)}
+    </tbody>
+  </table>`;
+}
+function markdownTask(checked, content) {
+  return html`<li class="markdown-task">
+    <input
+      id=${uid('markdown-task')}
+      type="checkbox"
+      .checked=${checked}
+      disabled
+      tabindex="-1"
+      aria-label=${checked ? 'Completed task' : 'Incomplete task'}
+    />${content}
+  </li>`;
+}
+// Markdown blocks as a list of templates.
+function markdownTemplate(source) {
+  const blocks = [];
   const lines = String(source || '')
     .replace(/\r\n?/g, '\n')
     .split('\n');
@@ -151,7 +199,6 @@ function renderMarkdown(parent, source) {
       tableRule?.length === tableHeader.length &&
       tableRule.every((cell) => /^:?-{3,}:?$/.test(cell))
     ) {
-      const table = el('table', undefined, 'markdown-table');
       const alignments = tableRule.map((cell) =>
         cell.startsWith(':') && cell.endsWith(':')
           ? 'center'
@@ -161,28 +208,15 @@ function renderMarkdown(parent, source) {
               ? 'right'
               : '',
       );
-      const row = (tag, cells) => {
-        const result = el('tr');
-        cells.forEach((cell, cellIndex) => {
-          const node = el(tag);
-          if (alignments[cellIndex]) node.style.textAlign = alignments[cellIndex];
-          appendMarkdownInline(node, cell);
-          result.append(node);
-        });
-        return result;
-      };
-      const head = el('thead');
-      head.append(row('th', tableHeader));
-      const body = el('tbody');
+      const rows = [];
       index += 2;
       while (index < lines.length && lines[index].trim()) {
         const cells = markdownTableCells(lines[index]);
         if (!cells || cells.length !== tableHeader.length) break;
-        body.append(row('td', cells));
+        rows.push(cells);
         index++;
       }
-      table.append(head, body);
-      parent.append(table);
+      blocks.push(markdownTable(tableHeader, alignments, rows));
       continue;
     }
     const fence = /^\s{0,3}(`{3,}|~{3,})\s*(.*)$/.exec(lines[index]);
@@ -201,21 +235,17 @@ function renderMarkdown(parent, source) {
         }
         code.push(lines[index++]);
       }
-      const pre = el('pre', undefined, 'markdown-code-block');
-      pre.append(el('code', code.join('\n')));
-      parent.append(pre);
+      blocks.push(html`<pre class="markdown-code-block"><code>${code.join('\n')}</code></pre>`);
       continue;
     }
     const heading = /^\s{0,3}(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/.exec(lines[index]);
     if (heading) {
-      const node = el('h' + heading[1].length);
-      appendMarkdownInline(node, heading[2]);
-      parent.append(node);
+      blocks.push(HEADINGS[heading[1].length](markdownInline(heading[2])));
       index++;
       continue;
     }
     if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(lines[index])) {
-      parent.append(el('hr', undefined, 'markdown-rule'));
+      blocks.push(html`<hr class="markdown-rule" />`);
       index++;
       continue;
     }
@@ -228,53 +258,99 @@ function renderMarkdown(parent, source) {
         quoteLines.push(line[1]);
         index++;
       }
-      const blockquote = el('blockquote');
-      renderMarkdown(blockquote, quoteLines.join('\n'));
-      parent.append(blockquote);
+      blocks.push(html`<blockquote>${markdownTemplate(quoteLines.join('\n'))}</blockquote>`);
       continue;
     }
     const unordered = /^\s{0,3}[-+*]\s+(.+)$/.exec(lines[index]);
     const ordered = /^\s{0,3}\d+[.)]\s+(.+)$/.exec(lines[index]);
     if (unordered || ordered) {
-      const list = el(ordered ? 'ol' : 'ul');
       const pattern = ordered ? /^\s{0,3}\d+[.)]\s+(.+)$/ : /^\s{0,3}[-+*]\s+(.+)$/;
+      const items = [];
       while (index < lines.length) {
         const item = pattern.exec(lines[index]);
         if (!item) break;
-        const listItem = el('li');
         const task = /^\[([ xX])\]\s+(.+)$/.exec(item[1]);
-        if (task) {
-          const checkbox = el('input');
-          checkbox.id = uid('markdown-task');
-          checkbox.type = 'checkbox';
-          checkbox.checked = task[1].toLowerCase() === 'x';
-          checkbox.disabled = true;
-          checkbox.tabIndex = -1;
-          checkbox.setAttribute(
-            'aria-label',
-            checkbox.checked ? 'Completed task' : 'Incomplete task',
-          );
-          listItem.className = 'markdown-task';
-          listItem.append(checkbox);
-          appendMarkdownInline(listItem, task[2]);
-        } else appendMarkdownInline(listItem, item[1]);
-        list.append(listItem);
+        items.push(
+          task
+            ? markdownTask(task[1].toLowerCase() === 'x', markdownInline(task[2]))
+            : html`<li>${markdownInline(item[1])}</li>`,
+        );
         index++;
       }
-      parent.append(list);
+      blocks.push(ordered ? html`<ol>${items}</ol>` : html`<ul>${items}</ul>`);
       continue;
     }
     const paragraphLines = [lines[index++]];
     while (index < lines.length && lines[index].trim() && !markdownBlockStart(lines[index]))
       paragraphLines.push(lines[index++]);
-    const paragraph = el('p');
-    paragraphLines.forEach((line, lineIndex) => {
-      if (lineIndex) paragraph.append(el('br'));
-      appendMarkdownInline(paragraph, line);
-    });
-    parent.append(paragraph);
+    blocks.push(
+      html`<p>${paragraphLines.map((line, lineIndex) =>
+        lineIndex ? html`<br />${markdownInline(line)}` : markdownInline(line),
+      )}</p>`,
+    );
   }
+  return blocks;
 }
+// Renders Markdown into `parent`, which lit then owns.
+function renderMarkdown(parent, source) {
+  render(markdownTemplate(source), parent);
+}
+const prefixLines = (text, prefix) =>
+  text
+    .split('\n')
+    .map((line) => prefix + line)
+    .join('\n');
+// Toolbar entries in order; `null` is a divider.
+const MARKDOWN_TOOLS = [
+  null,
+  ['Bold', 'B', (text) => `**${text}**`, 'bold text'],
+  ['Italic', 'I', (text) => `_${text}_`, 'italic text'],
+  ['Strikethrough', 'S', (text) => `~~${text}~~`, 'struck text'],
+  null,
+  ['Inline code', '<>', (text) => `\`${text}\``, 'code'],
+  ['Code block', '▣', (text) => `\`\`\`\n${text}\n\`\`\``, 'code block'],
+  ['Link', '↗', (text) => `[${text}](https://example.com)`, 'link text'],
+  null,
+  ['Heading', 'H', (text) => prefixLines(text, '## '), 'heading'],
+  [
+    'Insert table',
+    '▦',
+    (text) => `\n\n| ${text} | Header 2 |\n| --- | --- |\n| Cell 1 | Cell 2 |\n\n`,
+    'Header 1',
+  ],
+  null,
+  ['Bulleted list', '•', (text) => prefixLines(text, '- '), 'list item'],
+  [
+    'Numbered list',
+    '1.',
+    (text) =>
+      text
+        .split('\n')
+        .map((line, index) => `${index + 1}. ${line}`)
+        .join('\n'),
+    'list item',
+  ],
+  ['Task list', '☑', (text) => prefixLines(text, '- [ ] '), 'task item'],
+  null,
+  ['Quote', '❝', (text) => prefixLines(text, '> '), 'quoted text'],
+  ['Horizontal rule', '—', () => '---', ''],
+];
+const MARKDOWN_SHORTCUTS = {
+  b: [(text) => `**${text}**`, 'bold text'],
+  i: [(text) => `_${text}_`, 'italic text'],
+  k: [(text) => `[${text}](https://example.com)`, 'link text'],
+};
+function markdownPreview(source, emptyText) {
+  return html`${markdownTemplate(source)}${
+    String(source || '').trim() ? nothing : html`<p class="help">${emptyText}</p>`
+  }`;
+}
+function setInitialValue(input, value) {
+  input.value = value;
+}
+// The Markdown editor is a stateful widget: it renders itself with lit into a
+// host element and keeps its mode in a local state object. The textarea's
+// value belongs to the user after the initial value is set.
 function markdownEditor(
   parent,
   name,
@@ -286,151 +362,102 @@ function markdownEditor(
   subject = title === 'Description' ? 'description' : 'comment',
 ) {
   const group = el('div', undefined, 'markdown-field');
-  const inputID = 'markdown-' + requestKey();
-  const label = el('label', undefined, 'markdown-label');
-  label.htmlFor = inputID;
-  label.append(el('span', title));
-  group.append(label);
+  parent.append(group);
+  const inputID = `markdown-${requestKey()}`;
+  const label = html`<label class="markdown-label" for=${inputID}><span>${title}</span></label>`;
   if (readOnly) {
-    const preview = el('div', undefined, 'markdown-preview');
-    renderMarkdown(preview, value);
-    if (!String(value || '').trim()) preview.append(el('p', 'No content.', 'help'));
-    group.append(preview);
-    parent.append(group);
+    render(
+      html`${label}<div class="markdown-preview">${markdownPreview(value, 'No content.')}</div>`,
+      group,
+    );
     return { input: null, refresh: () => {} };
   }
-  const editor = el('div', undefined, 'markdown-editor');
-  const toolbar = el('div', undefined, 'markdown-toolbar');
-  let previewing = previewByDefault;
-  const modeButton = button(
-    previewByDefault ? 'Edit' : 'Preview',
-    () => setMode(!previewing),
-    'markdown-mode',
-  );
-  modeButton.setAttribute('aria-label', `Preview ${subject}`);
-  modeButton.title = `Preview ${subject}`;
-  toolbar.append(modeButton);
-  const input = noAutofill(el('textarea'));
-  input.id = inputID;
-  input.name = name;
-  input.value = value || '';
-  input.maxLength = maxLength;
-  input.placeholder = 'Write Markdown…';
-  input.spellcheck = true;
-  input.dataset.markdownControl = 'true';
-  const preview = el('div', undefined, 'markdown-preview');
-  preview.hidden = true;
-  preview.tabIndex = 0;
-  function replaceSelection(transform, placeholder = 'text') {
+  const local = { previewing: previewByDefault, previewSource: null };
+  let input;
+  const replaceSelection = (transform, placeholder = 'text') => {
     const start = input.selectionStart ?? input.value.length;
     const end = input.selectionEnd ?? start;
     const selected = input.value.slice(start, end) || placeholder;
     input.setRangeText(transform(selected), start, end, 'select');
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.focus();
-  }
-  const tools = [],
-    dividers = [];
-  function addDivider() {
-    const divider = el('span', undefined, 'markdown-divider');
-    divider.setAttribute('role', 'separator');
-    divider.setAttribute('aria-orientation', 'vertical');
-    divider.setAttribute('aria-hidden', 'true');
-    dividers.push(divider);
-    toolbar.append(divider);
-  }
-  function addTool(label, icon, transform, placeholder) {
-    const tool = button(icon, () => replaceSelection(transform, placeholder), 'markdown-tool');
-    tool.setAttribute('aria-label', label);
-    tool.title = label;
-    tools.push(tool);
-    toolbar.append(tool);
-  }
-  const prefixLines = (text, prefix) =>
-    text
-      .split('\n')
-      .map((line) => prefix + line)
-      .join('\n');
-  addDivider();
-  addTool('Bold', 'B', (text) => `**${text}**`, 'bold text');
-  addTool('Italic', 'I', (text) => `_${text}_`, 'italic text');
-  addTool('Strikethrough', 'S', (text) => `~~${text}~~`, 'struck text');
-  addDivider();
-  addTool('Inline code', '<>', (text) => '`' + text + '`', 'code');
-  addTool('Code block', '▣', (text) => '```\n' + text + '\n```', 'code block');
-  addTool('Link', '↗', (text) => `[${text}](https://example.com)`, 'link text');
-  addDivider();
-  addTool('Heading', 'H', (text) => prefixLines(text, '## '), 'heading');
-  addTool(
-    'Insert table',
-    '▦',
-    (text) => '\n\n| ' + text + ' | Header 2 |\n| --- | --- |\n| Cell 1 | Cell 2 |\n\n',
-    'Header 1',
-  );
-  addDivider();
-  addTool('Bulleted list', '•', (text) => prefixLines(text, '- '), 'list item');
-  addTool(
-    'Numbered list',
-    '1.',
-    (text) =>
-      text
-        .split('\n')
-        .map((line, index) => `${index + 1}. ${line}`)
-        .join('\n'),
-    'list item',
-  );
-  addTool('Task list', '☑', (text) => prefixLines(text, '- [ ] '), 'task item');
-  addDivider();
-  addTool('Quote', '❝', (text) => prefixLines(text, '> '), 'quoted text');
-  addTool('Horizontal rule', '—', () => '---', '');
-  function renderPreview() {
-    renderMarkdown(preview, input.value);
-    if (!input.value.trim()) preview.append(el('p', 'Nothing to preview yet.', 'help'));
-  }
-  function updateModeButton() {
-    const label = previewing ? `Edit ${subject}` : `Preview ${subject}`;
-    modeButton.textContent = previewing ? 'Edit' : 'Preview';
-    modeButton.setAttribute('aria-label', label);
-    modeButton.title = label;
-  }
-  function setMode(next) {
-    previewing = next;
-    updateModeButton();
-    tools.concat(dividers).forEach((control) => {
-      control.hidden = next;
-    });
-    input.hidden = next;
-    preview.hidden = !next;
-    if (next) renderPreview();
-    else input.focus();
-  }
-  const refresh = () => {
-    if (previewing) renderPreview();
   };
-  input.addEventListener('input', refresh);
-  input.addEventListener('keydown', (event) => {
+  const refresh = () => {
+    if (!local.previewing) return;
+    local.previewSource = input.value;
+    update();
+  };
+  const setMode = (previewing) => {
+    local.previewing = previewing;
+    if (previewing) local.previewSource = input.value;
+    update();
+    if (!previewing) input.focus();
+  };
+  const shortcut = (event) => {
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
     const key = event.key.toLowerCase();
-    if (key === 'b') {
-      event.preventDefault();
-      replaceSelection((text) => `**${text}**`, 'bold text');
-    } else if (key === 'i') {
-      event.preventDefault();
-      replaceSelection((text) => `_${text}_`, 'italic text');
-    } else if (key === 'k') {
-      event.preventDefault();
-      replaceSelection((text) => `[${text}](https://example.com)`, 'link text');
-    } else if (event.shiftKey && key === 'x') {
-      event.preventDefault();
-      replaceSelection((text) => `~~${text}~~`, 'struck text');
-    }
-  });
-  editor.append(toolbar, input, preview);
-  group.append(editor);
-  parent.append(group);
+    const action =
+      MARKDOWN_SHORTCUTS[key] ||
+      (event.shiftKey && key === 'x' ? [(text) => `~~${text}~~`, 'struck text'] : undefined);
+    if (!action) return;
+    event.preventDefault();
+    replaceSelection(...action);
+  };
+  function update() {
+    const { previewing, previewSource } = local;
+    const mode = previewing ? `Edit ${subject}` : `Preview ${subject}`;
+    render(
+      html`${label}<div class="markdown-editor">
+          <div class="markdown-toolbar">
+            <button
+              type="button"
+              class="markdown-mode"
+              aria-label=${mode}
+              title=${mode}
+              @click=${() => setMode(!local.previewing)}
+            >${previewing ? 'Edit' : 'Preview'}</button>
+            ${MARKDOWN_TOOLS.map((tool) =>
+              tool
+                ? html`<button
+                    type="button"
+                    class="markdown-tool"
+                    aria-label=${tool[0]}
+                    title=${tool[0]}
+                    ?hidden=${previewing}
+                    @click=${() => replaceSelection(tool[2], tool[3])}
+                  >${tool[1]}</button>`
+                : html`<span
+                    class="markdown-divider"
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-hidden="true"
+                    ?hidden=${previewing}
+                  ></span>`,
+            )}
+          </div>
+          <textarea
+            id=${inputID}
+            name=${name}
+            maxlength=${maxLength}
+            placeholder="Write Markdown…"
+            spellcheck="true"
+            data-markdown-control="true"
+            autocomplete="off"
+            ?hidden=${previewing}
+            ${attach(setInitialValue, value || '')}
+            @input=${refresh}
+            @keydown=${shortcut}
+          ></textarea>
+          <div class="markdown-preview" ?hidden=${!previewing} tabindex="0">
+            ${previewSource === null ? nothing : markdownPreview(previewSource, 'Nothing to preview yet.')}
+          </div>
+        </div>`,
+      group,
+    );
+  }
+  update();
+  input = group.querySelector('textarea');
   if (previewByDefault) setMode(true);
-  else updateModeButton();
   return { input, refresh };
 }
-
 export { renderMarkdown, markdownEditor };

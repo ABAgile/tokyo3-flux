@@ -1,7 +1,7 @@
 // Multi-select fields, the label color picker and help popovers.
-import { el, button, uid, noAutofill } from './dom.js';
+import { el, button, uid } from './dom.js';
 import { requestKey } from './api.js';
-import { statusLine, setStatusText } from './layout.js';
+import { attach, html, live, nodeOf, nothing, render, repeat, styleProps } from './lit.js';
 
 const LABEL_PALETTE = Object.freeze([
   '#ff6b6b',
@@ -110,6 +110,18 @@ export function helpPopover(text, name = 'Help') {
   wrapper.append(trigger, content);
   return wrapper;
 }
+function uniqueEntries(entries) {
+  const seen = new Set();
+  return entries
+    .map(([value, text]) => [String(value), String(text)])
+    .filter(([value]) => !seen.has(value) && seen.add(value));
+}
+// A multi-select is a stateful widget: it renders itself with lit into its
+// group element from a local state object, and the checkboxes it renders carry
+// the form values. `decorate(chip, value, text)` runs once per chip, when lit
+// creates it. The returned controls let callers replace entries, report a
+// status, select a value or read the selection. `settings.headingAction`
+// returns an optional template shown after the heading ("Assign me").
 export function multiSelect(
   parent,
   name,
@@ -120,111 +132,48 @@ export function multiSelect(
   helpText,
   settings = {},
 ) {
-  const single = settings.single === true;
-  const emptyValue = settings.emptyValue;
-  const onChange = settings.onChange;
-  const onFilter = settings.onFilter;
-  const onOpen = settings.onOpen;
+  const { single = false, emptyValue, onChange, onFilter, onOpen, headingAction } = settings;
   const group = el('div', undefined, 'multi-select-field');
-  const label = el('span', title, 'multi-select-label');
-  const heading = el('span', undefined, 'multi-select-heading');
-  heading.append(label);
-  if (helpText) heading.append(helpPopover(helpText, title));
-  const root = el('div', undefined, 'multi-select');
-  root.setAttribute('role', 'group');
-  root.setAttribute('aria-label', title);
-  const values = el('div', undefined, 'multi-select-values');
-  const menu = el('div', undefined, 'multi-select-menu');
-  const filter = noAutofill(el('input'));
-  filter.id = uid('multi-select-filter');
-  filter.type = 'search';
-  filter.className = 'multi-select-filter';
-  filter.placeholder = `Filter ${title.toLowerCase()}…`;
-  filter.setAttribute('aria-label', `Filter ${title}`);
-  const list = el('div', undefined, 'multi-select-options');
-  const status = statusLine('multi-select-empty');
-  const empty = el('p', 'No matches.', 'multi-select-empty');
-  menu.append(filter, status, list, empty);
-  menu.hidden = true;
-  menu.id = `multi-select-${requestKey()}`;
-  menu.setAttribute('role', 'group');
-  menu.setAttribute('aria-label', `${title} options`);
-  const edit = button('Edit', toggle, 'multi-select-edit');
-  edit.dataset.multiEdit = 'true';
-  edit.setAttribute('aria-label', `Edit ${title}`);
-  edit.setAttribute('aria-haspopup', 'true');
-  edit.setAttribute('aria-expanded', 'false');
-  edit.setAttribute('aria-controls', menu.id);
-  const header = el('div', undefined, 'multi-select-header');
-  header.append(heading, edit);
-  header.addEventListener('click', (event) => {
-    if (!menu.hidden && !edit.contains(event.target)) close();
-  });
-  let choices = [],
-    controls,
-    editing = false;
-  function currentValues() {
-    return choices.filter((choice) => choice.input.checked).map((choice) => choice.value);
-  }
+  parent.append(group);
+  const menuID = `multi-select-${requestKey()}`;
+  const filterID = uid('multi-select-filter');
+  const local = { entries: [], selected: new Set(), editing: false, query: '', status: '' };
+  const help = helpText ? helpPopover(helpText, title) : nothing;
+  let controls, outside;
+  const currentValues = () =>
+    local.entries.filter(([value]) => local.selected.has(value)).map(([value]) => value);
+  const changed = (notifyForm) => {
+    update();
+    if (onChange) onChange(currentValues());
+    if (notifyForm) controls.root.dispatchEvent(new Event('change', { bubbles: true }));
+  };
   function replaceEntries(nextEntries, selectedValues = []) {
-    let selectedSet = new Set(selectedValues.map(String));
-    if (single && selectedValues.length > 1) selectedSet = new Set([String(selectedValues[0])]);
-    const seen = new Set();
-    list.replaceChildren();
-    choices = [];
-    nextEntries.forEach(([rawValue, rawText]) => {
-      const value = String(rawValue);
-      if (seen.has(value)) return;
-      seen.add(value);
-      const text = String(rawText);
-      const option = el('label', undefined, 'multi-select-option');
-      const input = el('input');
-      input.type = 'checkbox';
-      input.name = name;
-      input.value = value;
-      input.checked = selectedSet.has(value);
-      input.setAttribute('aria-label', text);
-      option.append(input, el('span', text));
-      list.append(option);
-      const choice = { value, text, input, option };
-      choices.push(choice);
-      input.addEventListener('change', () => {
-        if (single && input.checked)
-          choices.forEach((other) => {
-            if (other.input !== input) other.input.checked = false;
-          });
-        if (emptyValue !== undefined && input.checked)
-          choices.forEach((other) => {
-            if (
-              other.input !== input &&
-              (input.value === String(emptyValue) || other.value === String(emptyValue))
-            )
-              other.input.checked = false;
-          });
-        render();
-        if (onChange) onChange(currentValues());
-      });
-    });
-    render();
+    let values = selectedValues.map(String);
+    if (single && values.length > 1) values = [values[0]];
+    local.entries = uniqueEntries(nextEntries);
+    local.selected = new Set(values.filter((value) => local.entries.some(([v]) => v === value)));
+    update();
   }
-  function setEntries(nextEntries, selectedValues) {
-    replaceEntries(nextEntries, selectedValues === undefined ? currentValues() : selectedValues);
+  function toggleValue(value, checked) {
+    if (checked) {
+      if (single) local.selected.clear();
+      if (emptyValue !== undefined)
+        for (const other of [...local.selected])
+          if (value === String(emptyValue) || other === String(emptyValue))
+            local.selected.delete(other);
+      local.selected.add(value);
+    } else local.selected.delete(value);
+    changed(false);
   }
   function selectValue(value) {
-    if (!single) return false;
-    const choice = choices.find((candidate) => candidate.value === String(value));
-    if (!choice) return false;
-    choices.forEach((candidate) => {
-      candidate.input.checked = candidate === choice;
-    });
-    render();
-    if (onChange) onChange(currentValues());
-    root.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!single || !local.entries.some(([v]) => v === String(value))) return false;
+    local.selected = new Set([String(value)]);
+    changed(true);
     return true;
   }
   function setStatus(text) {
-    setStatusText(status, text);
-    render();
+    local.status = text || '';
+    update();
   }
   function invoke(handler, query) {
     if (!handler) return;
@@ -236,113 +185,175 @@ export function multiSelect(
       setStatus(error.message || String(error));
     }
   }
-  let outside;
   function close(focus = false) {
-    if (menu.hidden) return;
-    menu.hidden = true;
-    editing = false;
-    edit.setAttribute('aria-expanded', 'false');
+    if (!local.editing) return;
+    local.editing = false;
     document.removeEventListener('click', outside);
-    render();
-    if (focus) edit.focus();
+    update();
+    if (focus) controls.edit.focus();
   }
   function open() {
-    editing = true;
-    menu.hidden = false;
-    edit.setAttribute('aria-expanded', 'true');
-    outside = (e) => {
-      if (!group.contains(e.target)) close();
+    local.editing = true;
+    outside = (event) => {
+      if (!group.contains(event.target)) close();
     };
     document.addEventListener('click', outside);
-    render();
-    filter.focus();
-    filter.select();
-    invoke(onOpen, filter.value.trim());
+    update();
+    controls.filter.focus();
+    controls.filter.select();
+    invoke(onOpen, controls.filter.value.trim());
   }
-  function toggle() {
-    if (menu.hidden) open();
-    else close(true);
+  const toggle = () => (local.editing ? close(true) : open());
+  const closeOnEscape = (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    close(true);
+  };
+  const decorateChip = (chip, value, text) => decorate?.(chip, value, text);
+  function update() {
+    const { editing, query, status } = local;
+    const needle = query.toLowerCase();
+    const chosen = local.entries.filter(([value]) => local.selected.has(value));
+    const visible = local.entries.filter(
+      ([, text]) => !needle || text.toLowerCase().includes(needle),
+    );
+    render(
+      html`<div
+          class="multi-select-header"
+          @click=${(event) => {
+            if (local.editing && !controls.edit.contains(event.target)) close();
+          }}
+        >
+          <span class="multi-select-heading"
+            ><span class="multi-select-label">${title}</span>${help}${headingAction?.() ?? nothing}</span
+          >
+          <button
+            type="button"
+            class="multi-select-edit"
+            data-multi-edit="true"
+            aria-label=${`Edit ${title}`}
+            aria-haspopup="true"
+            aria-expanded=${String(editing)}
+            aria-controls=${menuID}
+            @click=${toggle}
+          >Edit</button>
+        </div>
+        <div class="multi-select" role="group" aria-label=${title}>
+          <div class="multi-select-values">
+            ${chosen.length ? nothing : html`<span class="multi-select-empty">None selected</span>`}
+            ${repeat(
+              chosen,
+              ([value]) => value,
+              ([value, text]) => html`<span
+                class="multi-select-chip"
+                ${attach(decorateChip, value, text)}
+                ><span>${text}</span
+                ><button
+                  type="button"
+                  class="multi-select-remove"
+                  data-multi-remove="true"
+                  ?hidden=${!editing}
+                  aria-label=${`Remove ${text}`}
+                  @click=${() => {
+                    local.selected.delete(value);
+                    changed(true);
+                  }}
+                >×</button></span
+              >`,
+            )}
+          </div>
+          <div
+            class="multi-select-menu"
+            ?hidden=${!editing}
+            id=${menuID}
+            role="group"
+            aria-label=${`${title} options`}
+            @keydown=${closeOnEscape}
+          >
+            <input
+              id=${filterID}
+              type="search"
+              class="multi-select-filter"
+              placeholder=${`Filter ${title.toLowerCase()}…`}
+              aria-label=${`Filter ${title}`}
+              autocomplete="off"
+              @input=${(event) => {
+                local.query = event.currentTarget.value.trim();
+                update();
+                invoke(onFilter, local.query);
+              }}
+            />
+            <p
+              class="multi-select-empty"
+              data-status-class="multi-select-empty"
+              ?hidden=${!status}
+              role="status"
+              aria-live="polite"
+            >${status}</p>
+            <div class="multi-select-options">
+              ${repeat(
+                local.entries,
+                ([value]) => value,
+                ([value, text]) => html`<label
+                  class="multi-select-option"
+                  ?hidden=${!visible.some(([v]) => v === value)}
+                  ><input
+                    type="checkbox"
+                    name=${name}
+                    value=${value}
+                    .checked=${live(local.selected.has(value))}
+                    aria-label=${text}
+                    @change=${(event) => toggleValue(value, event.currentTarget.checked)}
+                  /><span>${text}</span></label
+                >`,
+              )}
+            </div>
+            <p class="multi-select-empty" ?hidden=${visible.length > 0 || !!status}>No matches.</p>
+          </div>
+        </div>`,
+      group,
+    );
   }
-  function render() {
-    values.replaceChildren();
-    const chosen = choices.filter((choice) => choice.input.checked);
-    if (!chosen.length) values.append(el('span', 'None selected', 'multi-select-empty'));
-    chosen.forEach((choice) => {
-      const chip = el('span', undefined, 'multi-select-chip');
-      chip.append(el('span', choice.text));
-      if (decorate) decorate(chip, choice.value, choice.text);
-      const remove = button(
-        '×',
-        () => {
-          choice.input.checked = false;
-          render();
-          if (onChange) onChange(currentValues());
-          root.dispatchEvent(new Event('change', { bubbles: true }));
-        },
-        'multi-select-remove',
-      );
-      remove.dataset.multiRemove = 'true';
-      remove.hidden = !editing;
-      remove.setAttribute('aria-label', `Remove ${choice.text}`);
-      chip.append(remove);
-      values.append(chip);
-    });
-    const query = filter.value.trim().toLowerCase();
-    let visible = 0;
-    choices.forEach((choice) => {
-      const match = !query || choice.text.toLowerCase().includes(query);
-      choice.option.hidden = !match;
-      if (match) visible++;
-    });
-    empty.hidden = visible > 0 || !status.hidden;
-  }
+  replaceEntries(entries, selected);
+  const header = group.querySelector('.multi-select-header');
   controls = {
-    root,
+    root: group.querySelector('.multi-select'),
     group,
     header,
-    edit,
-    filter,
+    edit: header.querySelector('[data-multi-edit]'),
+    filter: group.querySelector('.multi-select-filter'),
     close,
-    isOpen: () => !menu.hidden,
-    setEntries,
+    isOpen: () => local.editing,
+    setEntries: (nextEntries, selectedValues) =>
+      replaceEntries(nextEntries, selectedValues === undefined ? currentValues() : selectedValues),
     setStatus,
     select: selectValue,
     selected: currentValues,
   };
-  filter.addEventListener('input', () => {
-    render();
-    invoke(onFilter, filter.value.trim());
-  });
-  menu.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close(true);
-    }
-  });
-  root.append(values, menu);
-  group.append(header, root);
-  parent.append(group);
-  replaceEntries(entries, selected);
   return controls;
 }
-export function labelColorPicker(parent, value) {
-  const palette = el('fieldset', undefined, 'label-palette');
-  palette.append(el('legend', 'Label color'));
+export function labelColorPickerTemplate(value) {
   const selected = String(value || '')
     .trim()
     .toLowerCase();
-  LABEL_PALETTE.forEach((color) => {
-    const input = el('input');
-    input.type = 'radio';
-    input.name = 'color';
-    input.value = color;
-    input.checked = color === selected;
-    input.setAttribute('aria-label', color);
-    input.title = color;
-    input.style.backgroundColor = color;
-    palette.append(input);
-  });
+  return html`<fieldset class="label-palette">
+    <legend>Label color</legend>
+    ${LABEL_PALETTE.map(
+      (color) => html`<input
+        type="radio"
+        name="color"
+        value=${color}
+        .checked=${color === selected}
+        aria-label=${color}
+        title=${color}
+        ${styleProps({ 'background-color': color })}
+      />`,
+    )}
+  </fieldset>`;
+}
+export function labelColorPicker(parent, value) {
+  const palette = nodeOf(labelColorPickerTemplate(value));
   parent.append(palette);
   return palette;
 }
