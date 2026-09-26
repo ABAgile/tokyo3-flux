@@ -1,11 +1,12 @@
 // The workspace gate, workspace list and creation, and the first-run checklist.
-import { $, el, button, options, field } from './dom.js';
+import { $, options } from './dom.js';
 import { api, requestKey } from './api.js';
 import { workspaceLabel } from './format.js';
-import { contentRoot, panel, helpText, statusLine, setStatusText } from './layout.js';
+import { renderRoot, helpTextTemplate, setStatusText } from './layout.js';
+import { html, nothing, repeat } from './lit.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
-import { writeButton } from './permissions.js';
+import { accessButtonTemplate } from './permissions.js';
 import { notice, clearError, clearPlanningChangeNotice } from './notices.js';
 import { renderControls } from './controls.js';
 import { setContentBusy } from './mount.js';
@@ -105,72 +106,95 @@ export async function refreshWorkspaceGate() {
     }
   }
 }
+// Gate pages keep their root while the gate mode is unchanged, so a render
+// during loading keeps what the user typed.
 export function renderWorkspaceSelection(content) {
-  const gate = panel('workspace-gate');
-  gate.setAttribute('aria-label', 'Choose a workspace');
-  gate.append(
-    helpText(
+  const gate = renderRoot(
+    content,
+    'panel workspace-gate',
+    'workspace-select',
+    html`${helpTextTemplate(
       'Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.',
-    ),
+    )}
+      <div class="workspace-choice-list" role="list">
+        ${repeat(
+          state.workspaces,
+          (workspace) => workspace.id,
+          (workspace) => html`<button
+            type="button"
+            class="workspace-choice"
+            data-workspace-choice=${workspace.id}
+            aria-label=${`Open ${workspace.name}`}
+            @click=${() => {
+              void chooseWorkspace(workspace.id);
+            }}
+          >
+            <span class="workspace-choice-copy">
+              <strong>${workspace.name}</strong>
+              <small class="muted">${`${workspace.role} access`}</small>
+            </span>
+            <span class="workspace-choice-action">Open →</span>
+          </button>`,
+        )}
+      </div>
+      <div class="actions workspace-gate-actions">
+        <button type="button" class="primary" @click=${showWorkspaceCreate}>Create a workspace</button>
+      </div>`,
+    'section',
   );
-  const list = el('div', undefined, 'workspace-choice-list');
-  list.setAttribute('role', 'list');
-  state.workspaces.forEach((workspace) => {
-    const choice = button(
-      '',
-      () => {
-        void chooseWorkspace(workspace.id);
-      },
-      'workspace-choice',
-    );
-    choice.dataset.workspaceChoice = workspace.id;
-    choice.setAttribute('aria-label', `Open ${workspace.name}`);
-    const copy = el('span', undefined, 'workspace-choice-copy');
-    copy.append(el('strong', workspace.name), el('small', `${workspace.role} access`, 'muted'));
-    choice.append(copy, el('span', 'Open →', 'workspace-choice-action'));
-    list.append(choice);
-  });
-  gate.append(list);
-  const actions = el('div', undefined, 'actions workspace-gate-actions');
-  actions.append(button('Create a workspace', showWorkspaceCreate, 'primary'));
-  gate.append(actions);
-  content.append(gate);
+  gate.setAttribute('aria-label', 'Choose a workspace');
 }
+// The name input, submit button and status line belong to createWorkspace
+// while a request runs, so the template binds none of their state.
 export function renderWorkspaceCreation(content) {
-  const gate = panel('workspace-gate');
-  gate.setAttribute('aria-label', 'Create a workspace');
-  gate.append(
-    helpText(
+  const created = content.firstElementChild?.dataset.contentView !== 'workspace-create';
+  const gate = renderRoot(
+    content,
+    'panel workspace-gate',
+    'workspace-create',
+    html`${helpTextTemplate(
       state.session?.name
         ? `You are signed in as ${state.session.name}. Create a workspace to start planning; you will be its initial administrator.`
         : 'Create a workspace to start planning; your signed-in account will be its initial administrator.',
-    ),
+    )}
+      <form class="workspace-create-form" @submit=${createWorkspace}>
+        <label
+          >Workspace name<input
+            name="name"
+            type="text"
+            id="workspace-name"
+            required
+            maxlength="120"
+            autocomplete="organization"
+            placeholder="e.g. Team Alpha"
+        /></label>
+        <p
+          class="workspace-create-status"
+          data-status-class="workspace-create-status"
+          data-workspace-create-status="true"
+          hidden
+          role="status"
+          aria-live="polite"
+        ></p>
+        <div class="actions">
+          <button type="submit" class="primary">Create workspace</button>
+          ${
+            state.workspaces.length
+              ? html`<button type="button" @click=${showWorkspaceSelection}
+                  >Back to workspace selection</button
+                >`
+              : nothing
+          }
+        </div>
+      </form>`,
+    'section',
   );
-  const form = el('form', undefined, 'workspace-create-form');
-  const input = field(form, 'name', 'Workspace name');
-  input.id = 'workspace-name';
-  input.required = true;
-  input.maxLength = 120;
-  input.autocomplete = 'organization';
-  input.placeholder = 'e.g. Team Alpha';
-  const status = statusLine('workspace-create-status');
-  status.dataset.workspaceCreateStatus = 'true';
-  form.append(status);
-  const actions = el('div', undefined, 'actions');
-  const submit = button('Create workspace', undefined, 'primary');
-  submit.type = 'submit';
-  actions.append(submit);
-  if (state.workspaces.length)
-    actions.append(button('Back to workspace selection', showWorkspaceSelection));
-  form.append(actions);
-  form.addEventListener('submit', createWorkspace);
-  gate.append(form);
-  content.append(gate);
-  input.focus();
+  gate.setAttribute('aria-label', 'Create a workspace');
+  if (created) gate.querySelector('#workspace-name').focus();
 }
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
-export function firstRunChecklist() {
+export function renderFirstRun(content) {
   const steps = [
     {
       done: state.board.projects.length > 0,
@@ -194,32 +218,36 @@ export function firstRunChecklist() {
       run: () => $('new-item').click(),
     },
   ];
-  const setup = contentRoot('section', 'panel first-run', 'first-run');
-  setup.setAttribute('aria-labelledby', 'first-run-heading');
-  const heading = el('h2', 'Set up your planning workspace');
-  heading.id = 'first-run-heading';
-  setup.append(
-    heading,
-    helpText(
-      'Three steps get this workspace to a board your team can use. You can do them in any order.',
-    ),
+  const setup = renderRoot(
+    content,
+    'panel first-run',
+    'first-run',
+    html`<h2 id="first-run-heading">Set up your planning workspace</h2>
+      ${helpTextTemplate(
+        'Three steps get this workspace to a board your team can use. You can do them in any order.',
+      )}
+      <ol class="first-run-steps">
+        ${steps.map(
+          (step, index) => html`<li
+            class=${`first-run-step${step.done ? ' is-done' : ''}`}
+            aria-label=${`${step.title} — ${step.done ? 'done' : 'not started'}`}
+          >
+            <span class="first-run-mark" aria-hidden="true">${step.done ? '✓' : String(index + 1)}</span>
+            <div class="first-run-copy">
+              <strong>${step.title}</strong>
+              <span class="help">${step.help}</span>
+            </div>
+            ${accessButtonTemplate(step.action, step.run, {
+              className: step.done ? undefined : 'primary',
+              tracked: false,
+              label: `${step.action}: ${step.title}`,
+            })}
+          </li>`,
+        )}
+      </ol>`,
+    'section',
   );
-  const list = el('ol', undefined, 'first-run-steps');
-  steps.forEach((step, index) => {
-    const entry = el('li', undefined, `first-run-step${step.done ? ' is-done' : ''}`);
-    const mark = el('span', step.done ? '✓' : String(index + 1), 'first-run-mark');
-    mark.setAttribute('aria-hidden', 'true');
-    const copy = el('div', undefined, 'first-run-copy');
-    copy.append(el('strong', step.title), el('span', step.help, 'help'));
-    const action = writeButton(step.action, step.run, step.done ? undefined : 'primary');
-    action.setAttribute('aria-label', `${step.action}: ${step.title}`);
-    entry.append(mark, copy, action);
-    entry.setAttribute('aria-label', `${step.title} — ${step.done ? 'done' : 'not started'}`);
-    list.append(entry);
-  });
-  setup.append(list);
-  setup.dataset.renderSignature = JSON.stringify(steps.map((step) => step.done));
-  return setup;
+  setup.setAttribute('aria-labelledby', 'first-run-heading');
 }
 export function showFirstRun() {
   return (

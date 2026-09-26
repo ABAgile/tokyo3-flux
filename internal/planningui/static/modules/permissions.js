@@ -37,12 +37,13 @@ export function adminIconTemplate(label, icon, fn, className) {
 export function accessButtonTemplate(
   text,
   fn,
-  { className, access = 'write', tracked = true } = {},
+  { className, access = 'write', tracked = true, label } = {},
 ) {
   const mark = tracked ? access : undefined;
   return html`<button
     type="button"
     class=${className || nothing}
+    aria-label=${label || nothing}
     data-write=${mark === 'write' ? 'true' : nothing}
     data-admin-write=${mark === 'admin' ? 'true' : nothing}
     ?disabled=${live(writeDisabled(access))}

@@ -9,7 +9,6 @@ import { notice, clearError } from './modules/notices.js';
 import { activeSprints, styleLabelOptions } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
-import { patchNode } from './modules/reconcile.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import { planningHost, pageHost, setContentBusy } from './modules/mount.js';
 import {
@@ -64,7 +63,7 @@ import {
   loadWorkspaces,
   renderWorkspaceSelection,
   renderWorkspaceCreation,
-  firstRunChecklist,
+  renderFirstRun,
   showFirstRun,
   showWorkspaceCreate,
   chooseWorkspace,
@@ -117,7 +116,7 @@ function render() {
   if (!state.board) {
     setContentBusy(state.workspaceGate === 'loading' || state.loading);
     $('project-summary').hidden = true;
-    $('project-summary').replaceChildren();
+    renderTemplate(nothing, $('project-summary'));
     // Both hosts are rendered by lit, so they are cleared through lit.
     renderTemplate(nothing, $('sprint-summary'));
     $('count').textContent = '';
@@ -127,13 +126,13 @@ function render() {
     if (state.workspaceGate === 'select') {
       $('title').textContent = 'Choose a workspace';
       $('subtitle').textContent = 'Select a shared planning space to continue.';
-      renderWorkspaceSelection(pageHost());
+      renderWorkspaceSelection(pageHost('workspace-select'));
     } else if (state.workspaceGate === 'create') {
       $('title').textContent = state.workspaces.length
         ? 'Create a workspace'
         : 'Create your first workspace';
       $('subtitle').textContent = 'Set up a shared planning space for your team.';
-      renderWorkspaceCreation(pageHost());
+      renderWorkspaceCreation(pageHost('workspace-create'));
     } else {
       $('title').textContent = 'Loading planning data';
       $('subtitle').textContent = 'Checking workspace access…';
@@ -257,10 +256,7 @@ function renderContent() {
       ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${state.board.workspace.revision}`
       : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
   if (showFirstRun()) {
-    const next = firstRunChecklist();
-    const current = body.firstElementChild;
-    if (!current || current.dataset.contentView !== 'first-run') body.replaceChildren(next);
-    else patchNode(current, next);
+    renderFirstRun(body);
     return;
   }
   if (state.view === 'board' && state.presentation === 'list')

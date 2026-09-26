@@ -1,7 +1,13 @@
 // The Kanban board: project lens, columns, cards and board setup.
 import { $, el, field } from './dom.js';
 import { columnWIPLabel } from './format.js';
-import { contentRoot, helpText, emptyStateTemplate, metricList } from './layout.js';
+import {
+  contentRoot,
+  helpText,
+  helpTextTemplate,
+  emptyStateTemplate,
+  metricListTemplate,
+} from './layout.js';
 import { attach, classMap, html, nothing, render, repeat } from './lit.js';
 import { state } from './state.js';
 import { writable, writeButton } from './permissions.js';
@@ -30,13 +36,15 @@ import { attachDrag, dropZone } from './drag.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
 import { editItem } from './item-editor.js';
 
+// #project-summary is a static host: its hidden state and label are set here,
+// its children rendered by lit.
 export function renderProjectSummary() {
   const summary = $('project-summary');
   const projectID = singleFilterValue('project');
   const project = state.board.projects.find((value) => value.id === projectID);
   if (state.view !== 'board' || !project || ['all', 'none'].includes(projectID)) {
     summary.hidden = true;
-    summary.replaceChildren();
+    render(nothing, summary);
     return;
   }
   const items = state.board.items.filter(
@@ -50,34 +58,37 @@ export function renderProjectSummary() {
   const completed = items.filter(done).length;
   const blockedCount = items.filter(blocked).length;
   const unscheduled = items.filter((item) => !done(item) && !item.sprint_ids.length).length;
-  const head = el('div', undefined, 'project-summary-head');
-  const intro = el('div', undefined, 'project-summary-title');
-  intro.append(
-    el('p', 'PROJECT LENS', 'eyebrow'),
-    el('h2', `${project.name} project`),
-    helpText('Current work only · archived history is excluded.'),
-  );
-  head.append(intro);
-  const metrics = metricList(
-    [
-      [items.length, 'In scope'],
-      [completed, 'Done'],
-      [blockedCount, 'Blocked'],
-      [unscheduled, 'Unscheduled'],
-    ],
-    'project-summary-metrics',
-  );
-  const coverage = el('div', undefined, 'project-sprint-coverage');
-  coverage.append(el('span', 'Active sprint coverage', 'project-sprint-coverage-label'));
-  active.forEach((sprint) => {
+  const coverage = active.map((sprint) => {
     const count = items.filter((item) => item.sprint_ids.includes(sprint.id)).length;
-    coverage.append(el('span', `${sprint.name} · ${count}`, 'badge'));
+    return html`<span class="badge">${`${sprint.name} · ${count}`}</span>`;
   });
-  if (unscheduled) coverage.append(el('span', `Backlog · ${unscheduled}`, 'badge'));
-  if (!active.length && !unscheduled) coverage.append(el('span', 'None', 'muted'));
   summary.hidden = false;
   summary.setAttribute('aria-label', `${project.name} project summary`);
-  summary.replaceChildren(head, metrics, coverage);
+  render(
+    html`<div class="project-summary-head">
+        <div class="project-summary-title">
+          <p class="eyebrow">PROJECT LENS</p>
+          <h2>${`${project.name} project`}</h2>
+          ${helpTextTemplate('Current work only · archived history is excluded.')}
+        </div>
+      </div>
+      ${metricListTemplate(
+        [
+          [items.length, 'In scope'],
+          [completed, 'Done'],
+          [blockedCount, 'Blocked'],
+          [unscheduled, 'Unscheduled'],
+        ],
+        'project-summary-metrics',
+      )}
+      <div class="project-sprint-coverage">
+        <span class="project-sprint-coverage-label">Active sprint coverage</span>
+        ${coverage}
+        ${unscheduled ? html`<span class="badge">${`Backlog · ${unscheduled}`}</span>` : nothing}
+        ${!active.length && !unscheduled ? html`<span class="muted">None</span>` : nothing}
+      </div>`,
+    summary,
+  );
 }
 // Cards and columns are lit templates: every render describes the whole board
 // and lit updates only what changed, so focus, hover, open <details> and
