@@ -87,9 +87,10 @@ vendor-web:
 fmt-web:
 	$(BIOME) format --write .
 
-## lint-web: Lint frontend JS/CSS, tests and the Pi extension with Biome
+## lint-web: Lint frontend JS/CSS, tests and the Pi extension, and check rendering guardrails
 lint-web:
 	$(BIOME) lint .
+	node tools/lint-web.mjs
 
 ## fmt-md: Reflow Markdown docs to one sentence per line
 fmt-md:
@@ -98,6 +99,7 @@ fmt-md:
 ## check-web: Verify frontend and Markdown formatting and lint without changes
 check-web:
 	$(BIOME) ci --diagnostic-level=error .
+	node tools/lint-web.mjs
 	$(RUMDL) check .
 
 ## test-web: Syntax-check browser modules and run the Node tests

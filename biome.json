@@ -6,6 +6,7 @@
       "internal/planningui/static/**/*.js",
       "!internal/planningui/static/modules/vendor-preact.js",
       "tools/vendor/*.js",
+      "tools/*.mjs",
       "internal/planningui/static/**/*.css",
       "tests/**/*.js",
       "tests/**/*.mjs",

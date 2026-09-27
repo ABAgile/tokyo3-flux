@@ -65,6 +65,7 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
 - Native form drafts stay uncontrolled (`defaultValue`) unless the UI owns the changing value; widgets report committed changes with `useCommittedChange`.
 - Document and window listeners, timers, observers and focus lookups live in `modules/ui-hooks.js` effects (`useEventListener`, `useDismiss`, `useFocusRestore`, `focusByKey`); every resource needs cleanup.
   Drag and drop are `useDraggable`/`useDropZone` props; tooltips are `useAttachmentTooltip`/`useObservationTooltip` props.
+  `make lint-web` fails on `$(`, `document.querySelector`, `addEventListener` and `state.x =` outside `api.js`, `actions.js` and `ui-hooks.js`.
 - Use Preact style objects for dynamic colors and CSS variables; Preact applies these through CSSOM, which preserves the existing CSP.
   Never pass a style string or use `dangerouslySetInnerHTML`.
 - No CSS, API or CSP changes are part of rendering work; never introduce inline styles, scripts or `eval`.
