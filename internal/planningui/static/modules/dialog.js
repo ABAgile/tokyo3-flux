@@ -1,14 +1,6 @@
 // The shared Preact editor dialog used by every create/edit flow.
 import { $ } from './dom.js';
-import {
-  html,
-  mount,
-  replaceContent,
-  unmountIsland,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from './preact.js';
+import { html, useMemo, unmountIsland, useLayoutEffect, useRef, useState } from './preact.js';
 import { requestKey } from './api.js';
 import { state, setState } from './state.js';
 import { change } from './commands.js';
@@ -23,7 +15,6 @@ function clearEditorTitleExtras() {
   }
 }
 function disposeEditorContent() {
-  replaceContent($('fields'));
   unmountIsland($('editor-title'));
   clearEditorTitleExtras();
 }
@@ -45,6 +36,8 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
   const formRef = useRef(null);
   const pending = useRef({ serialized: undefined, key: undefined });
   const [saving, setSaving] = useState(false);
+  // Editor fields are an uncontrolled snapshot; builders return VNodes without DOM side effects.
+  const content = useMemo(() => config?.build?.(), [config]);
   const disabled = saving || busy;
 
   useLayoutEffect(() => {
@@ -53,7 +46,6 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
     if (!config || !dialog || !form) return;
     const fields = form.querySelector('#fields');
     pending.current = { serialized: undefined, key: undefined };
-    replaceContent(fields);
     unmountIsland(form.querySelector('#editor-title'));
     clearEditorTitleExtras();
     form.querySelectorAll('[data-item-footer]').forEach((node) => {
@@ -63,8 +55,7 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
       'item-editor-form',
       ['Work item', 'Create work item'].includes(config.title),
     );
-    const content = config.build(fields);
-    if (content !== undefined) mount(fields, content);
+    config.onOpen?.(form);
     if (config.readOnly) {
       fields
         .querySelectorAll(
@@ -149,7 +140,7 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
         <div id="editor-title-badge"></div>
         <button type="button" id="dismiss" aria-label="Close editor" disabled=${disabled} onClick=${dismiss}>×</button>
       </div>
-      <div id="fields"></div>
+      <div id="fields">${content}</div>
       <p id="form-error" role="alert" hidden=${!errorText}>${errorText}</p>
       <div class="dialog-foot">
         <span id="editor-footer-actions"></span>
@@ -206,6 +197,7 @@ export function openEditor(
     readOnly,
     afterSave,
     onSubmit: options.onSubmit,
+    onOpen: options.onOpen,
     hideSave: !!options.hideSave,
     saveText: options.saveText,
     revision: state.board.workspace.revision,

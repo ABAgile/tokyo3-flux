@@ -207,16 +207,21 @@ async function run(page) {
         links: [],
       },
     });
+    let editorBuilds = 0;
     openEditor(
       'Dialog snapshot',
-      () => html`<div><p id="dialog-field-root">Reactive dialog content</p>
-        <label>Probe<input name="probe" defaultValue="initial" /></label></div>`,
+      () => {
+        editorBuilds++;
+        return html`<div><p id="dialog-field-root">Reactive dialog content</p>
+          <label>Probe<input name="probe" defaultValue="initial" /></label></div>`;
+      },
       () => ({ kind: 'probe' }),
     );
     await flush();
     check(
       host.querySelector('#editor')?.open &&
-        host.querySelector('#dialog-field-root')?.textContent === 'Reactive dialog content',
+        host.querySelector('#dialog-field-root')?.textContent === 'Reactive dialog content' &&
+        editorBuilds === 1,
       'EditorDialog opens and mounts a Preact snapshot',
     );
     host.querySelector('[name="probe"]').value = 'draft';
@@ -236,7 +241,8 @@ async function run(page) {
         host.querySelector('#planning-body') === legacyBody &&
         host.querySelector('#dialog-field-root')?.textContent === 'Reactive dialog content' &&
         host.querySelector('[name="probe"]')?.value === 'draft' &&
-        host.querySelector('#editor-title')?.textContent === 'Dialog snapshot',
+        host.querySelector('#editor-title')?.textContent === 'Dialog snapshot' &&
+        editorBuilds === 1,
       'App owns workspace page content without replacing mounts or editor snapshots',
     );
     const pageBoard = {
@@ -292,7 +298,10 @@ async function run(page) {
     setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
     openEditor(
       'Replacement snapshot',
-      () => html`<p id="dialog-field-root">Replacement content</p>`,
+      () => {
+        editorBuilds++;
+        return html`<p id="dialog-field-root">Replacement content</p>`;
+      },
       () => ({ kind: 'probe' }),
     );
     await flush();
@@ -301,7 +310,8 @@ async function run(page) {
         dialogNode.open &&
         host.querySelector('#editor-title')?.textContent === 'Replacement snapshot' &&
         host.querySelector('#dialog-field-root')?.textContent === 'Replacement content' &&
-        !host.querySelector('[name="probe"]'),
+        !host.querySelector('[name="probe"]') &&
+        editorBuilds === 2,
       'changing the editor config replaces its snapshot without replacing the dialog',
     );
     setState({ board: previousBoard });

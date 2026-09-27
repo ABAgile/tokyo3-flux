@@ -275,21 +275,13 @@ export async function addGitLabLink(item, context) {
   };
   openEditor(
     'Add link',
-    () => {
-      $('editor-title-extra').append(
-        ' ',
-        helpPopover(
-          'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
-          'GitLab links',
-        ),
-      );
-      return html`${
-        catalogError
-          ? errorLineTemplate(
-              `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
-            )
-          : nothing
-      }
+    () => html`${
+      catalogError
+        ? errorLineTemplate(
+            `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
+          )
+        : nothing
+    }
         ${multiSelectTemplate(
           'project',
           'Approved GitLab project',
@@ -358,8 +350,7 @@ export async function addGitLabLink(item, context) {
           !projects.length && !catalogError && !state.board.integration.projects.length
             ? helpTextTemplate('No approved GitLab projects are available for linking.')
             : nothing
-        }`;
-    },
+        }`,
     (data) => {
       const rawProject = String(data.get('project') || '');
       const selectedMR = String(data.get('merge_request') || '');
@@ -380,6 +371,16 @@ export async function addGitLabLink(item, context) {
     false,
     undefined,
     returnToCard,
+    {
+      onOpen: () =>
+        $('editor-title-extra').append(
+          ' ',
+          helpPopover(
+            'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
+            'GitLab links',
+          ),
+        ),
+    },
   );
 }
 export async function reconcileItemLinks(itemID, desiredIDs) {

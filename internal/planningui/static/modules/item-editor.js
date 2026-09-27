@@ -476,14 +476,16 @@ function addItemFooterAction(item, readOnly, context) {
   const cancel = footer?.querySelector('#cancel,.detail-cancel');
   if (footer) footer.insertBefore(action, cancel || footer.lastElementChild);
 }
-// Renders the editor into `fields` and returns a function that re-renders it
-// for a newer revision of the item (after a save in the detail pane). Widgets
-// keep their state across that re-render; plain fields show the saved values.
+function prepareItemEditorForm(item, readOnly, context) {
+  if (context?.form) showEditorOverdueBadge(context.form, item);
+  addItemFooterAction(item, readOnly, context);
+}
+// Renders the detail-pane editor into its stable fields host and returns an
+// update function for post-save revisions. Modal fields render in EditorDialog.
 export function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
   if (item.id && titleHost) decorateItemTitle(titleHost, item);
   const update = mount(fields, itemEditorTemplate(item, draft, readOnly, context));
-  if (context?.form) showEditorOverdueBadge(context.form, item);
-  addItemFooterAction(item, readOnly, context);
+  prepareItemEditorForm(item, readOnly, context);
   return (latest) => update(itemEditorTemplate(latest, undefined, readOnly, context));
 }
 export function reopenItemEditor(item, draft, mode, origin) {
@@ -515,10 +517,7 @@ export function editItemModal(item, draft) {
   if (existing) setSharedItem(item.id);
   openEditor(
     existing ? 'Work item' : 'Create work item',
-    (fields) => {
-      context.form = $('editor-form');
-      buildItemEditor(fields, item, draft, readOnly, context, $('editor-title-extra'));
-    },
+    () => itemEditorTemplate(item, draft, readOnly, context),
     (data) => {
       if (existing) desiredLinkIDs = data.getAll('link_ids');
       return {
@@ -529,6 +528,14 @@ export function editItemModal(item, draft) {
     },
     readOnly,
     existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined,
+    undefined,
+    {
+      onOpen: (form) => {
+        context.form = form;
+        if (item.id) decorateItemTitle($('editor-title-extra'), item);
+        prepareItemEditorForm(item, readOnly, context);
+      },
+    },
   );
 }
 export function editItem(item, draft) {
