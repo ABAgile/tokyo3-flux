@@ -1,5 +1,17 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
+  "plugins": [
+    "./tools/lint/no-active-element.grit",
+    "./tools/lint/no-add-event-listener.grit",
+    "./tools/lint/no-captured-state.grit",
+    "./tools/lint/no-document-query.grit",
+    "./tools/lint/no-dollar-lookup.grit",
+    "./tools/lint/no-store-alias.grit",
+    "./tools/lint/no-store-import-alias.grit",
+    "./tools/lint/no-store-writes.grit",
+    "./tools/lint/pure-board-helpers.grit",
+    "./tools/lint/pure-templates.grit"
+  ],
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "includes": [

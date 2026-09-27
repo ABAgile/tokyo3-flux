@@ -89,10 +89,9 @@ vendor-web:
 fmt-web:
 	$(BIOME) format --write .
 
-## lint-web: Lint frontend JS/CSS, tests and the Pi extension, and check rendering guardrails
+## lint-web: Lint frontend JS/CSS, tests and the Pi extension, including the tools/lint rendering guardrails
 lint-web:
 	$(BIOME) lint .
-	node tools/lint-web.mjs
 
 ## typecheck-web: Type-check the frontend modules against their JSDoc and tools/types/flux.d.ts
 typecheck-web:
@@ -105,7 +104,6 @@ fmt-md:
 ## check-web: Verify frontend and Markdown formatting and lint without changes
 check-web:
 	$(BIOME) ci --diagnostic-level=error .
-	node tools/lint-web.mjs
 	$(TSC) -p tools/types/tsconfig.json
 	$(RUMDL) check .
 

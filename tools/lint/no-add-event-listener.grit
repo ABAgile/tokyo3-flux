@@ -1,0 +1,18 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Listeners live in ui-hooks.js effects, Preact event props, or api.js for XHR progress.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+or {
+    `$target.addEventListener($type, $handler)`,
+    `$target.addEventListener($type, $handler, $options)`
+  } as $listen where {
+    $filename <: r".*/internal/planningui/static/.*",
+    $filename <: not or { r".*/modules/ui-hooks\.js$", r".*/modules/api\.js$" },
+    register_diagnostic(
+      span=$listen,
+      message="Use useEventListener, useDismiss or a Preact event prop.",
+      severity="error"
+    )
+  }

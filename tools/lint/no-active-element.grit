@@ -1,0 +1,16 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Focus is read only in ui-hooks.js and by the dialog opener in dialog-state.js;
+// other code moves focus with a focus request.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+`document.activeElement` as $active where {
+    $filename <: r".*/internal/planningui/static/.*",
+    $filename <: not or { r".*/modules/ui-hooks\.js$", r".*/modules/dialog-state\.js$" },
+    register_diagnostic(
+      span=$active,
+      message="Read focus only in ui-hooks.js or the dialog opener; move focus with a focus request.",
+      severity="error"
+    )
+  }

@@ -1,0 +1,14 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Components own their DOM through Preact: no jQuery-style lookups.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+`$($selector)` as $call where {
+    $filename <: r".*/internal/planningui/static/.*",
+    register_diagnostic(
+      span=$call,
+      message="Use a ref or store state instead of $(…).",
+      severity="error"
+    )
+  }

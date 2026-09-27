@@ -1,0 +1,28 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// *Template functions are pure: everything they render arrives as arguments;
+// the component that calls them subscribes to the store.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+or {
+  `function $name($params) { $body }`,
+  `const $name = ($params) => $body`,
+  `const $name = $param => $body`
+} where {
+  $filename <: r".*/internal/planningui/static/.*",
+  $name <: r"^[a-z]\w*Template$",
+  $body <: contains or {
+    `state.$property`,
+    `pointer.$property`,
+    `useStore($selector)`,
+    `useStore($selector, $equal)`,
+    `usePointer($selector)`,
+    `usePointer($selector, $equal)`
+  } as $read,
+  register_diagnostic(
+    span=$read,
+    message="Template functions take their data as arguments; read the store in the component that calls them.",
+    severity="error"
+  )
+}

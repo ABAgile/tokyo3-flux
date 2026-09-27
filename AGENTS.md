@@ -92,7 +92,9 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   Local focus follows a nonce or flag in component state and a layout effect, as the detail pane's `focusNonce` does.
   Drag and drop are `useDraggable`/`useDropZone` props; tooltips are `useAttachmentTooltip`/`useObservationTooltip` props.
   Values that change at pointer-event rate live in `modules/pointer-state.js`, a separate store, so a drag-over or hover notifies only drop zones and tooltip triggers; text a user is typing stays component state until it is committed, as the search field does after its debounce.
-  `make lint-web` fails on `$(`, `document.querySelector`, `addEventListener` and `state.x =` outside `api.js`, `actions.js` and `ui-hooks.js`.
+  The guardrails are Biome GritQL plugins in `tools/lint/`, one rule per file (a combined rule defeats Biome's node prefilter and is several times slower), matched on the syntax tree so layout and nesting do not hide a violation.
+  They reject `$(`, document queries and `addEventListener` outside `ui-hooks.js` (and `api.js` for XHR progress), `document.activeElement` outside `ui-hooks.js` and `dialog-state.js`, writes to or aliases of the `state` and `pointer` views, `useState` capturing store state, store reads inside `*Template` functions, and store imports in `items.js`, `people.js` and `lookups.js`.
+  GritQL regexes must not use capture groups, and plugins listed under Biome `overrides` are silently ignored.
 - The planning content, the List detail pane and the dialog host each render inside an `ErrorBoundary` (`modules/error-boundary.js`), keyed or reset by what they show, so a render failure replaces only that part with a Retry notice.
   A store selector that throws re-selects during render, so its error reaches the nearest boundary instead of interrupting `setState`.
 - Use Preact style objects for dynamic colors and CSS variables; Preact applies these through CSSOM, which preserves the existing CSP.

@@ -1,0 +1,22 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// The store views `state` and `pointer` are read-only: every change is a
+// setState or setPointer patch. Matches compound assignments, updates and
+// deletes whatever their layout or nesting.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+or {
+  JsAssignmentExpression(left = $target),
+  JsPostUpdateExpression(operand = $target),
+  JsPreUpdateExpression(operand = $target),
+  `delete $target`
+} as $write where {
+  $filename <: r".*/internal/planningui/static/.*",
+  $target <: or { r"^state\s*[.\[][\s\S]*", r"^pointer\s*[.\[][\s\S]*" },
+  register_diagnostic(
+    span=$write,
+    message="The store views are read-only; use setState or setPointer.",
+    severity="error"
+  )
+}

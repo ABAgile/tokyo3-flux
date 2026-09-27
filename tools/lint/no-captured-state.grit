@@ -1,0 +1,15 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// A store value captured once in useState goes stale; subscribe with useStore.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+or { `useState(() => $initial)`, `useState($initial)` } as $capture where {
+  $filename <: r".*/internal/planningui/static/.*",
+  $initial <: or { r"^state\s*[.\[][\s\S]*", r"^pointer\s*[.\[][\s\S]*" },
+  register_diagnostic(
+    span=$capture,
+    message="Subscribe with useStore instead of capturing store state once.",
+    severity="error"
+  )
+}

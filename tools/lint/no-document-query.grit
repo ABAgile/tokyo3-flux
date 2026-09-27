@@ -1,0 +1,15 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Document queries live only in the effect helpers in ui-hooks.js.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+or { `document.querySelector($selector)`, `document.querySelectorAll($selector)` } as $query where {
+    $filename <: r".*/internal/planningui/static/.*",
+    $filename <: not r".*/modules/ui-hooks\.js$",
+    register_diagnostic(
+      span=$query,
+      message="Use a ref, a focus key or component state instead of querying the document.",
+      severity="error"
+    )
+  }

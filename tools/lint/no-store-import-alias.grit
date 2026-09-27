@@ -1,0 +1,16 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// The store views are imported under their own names, for the same reason.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+`import { $imports } from $source` as $import where {
+    $filename <: r".*/internal/planningui/static/.*",
+    $source <: or { `'./state.js'`, `'./pointer-state.js'` },
+    $imports <: contains or { `state as $alias`, `pointer as $alias` },
+    register_diagnostic(
+      span=$import,
+      message="Import the store views under their own names.",
+      severity="error"
+    )
+  }

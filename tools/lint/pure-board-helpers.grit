@@ -1,0 +1,21 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Board helpers resolve data from the lookups they are given and never
+// import the store.
+// GritQL regexes must not use capture groups: a group binds a variable.
+
+`import $clause from $source` as $import where {
+  $filename <: r".*/internal/planningui/static/.*",
+  $filename <: or {
+    r".*/modules/items\.js$",
+    r".*/modules/people\.js$",
+    r".*/modules/lookups\.js$"
+  },
+  $source <: or { `'./state.js'`, `'./pointer-state.js'` },
+  register_diagnostic(
+    span=$import,
+    message="Board helpers take the data they read; they never import the store.",
+    severity="error"
+  )
+}
