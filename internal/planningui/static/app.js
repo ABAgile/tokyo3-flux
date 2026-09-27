@@ -1,7 +1,7 @@
 import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
 import { renderOptions } from './modules/layout.js';
-import { html, nodeOf, nothing, render as renderTemplate } from './modules/preact.js';
+import { html, nothing, render as renderTemplate } from './modules/preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
@@ -11,7 +11,7 @@ import { activeSprints, labelOptionColors } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
-import { planningHost, setContentBusy } from './modules/mount.js';
+import { setContentBusy } from './modules/mount.js';
 import {
   FILTER_NAMES,
   filterValues,
@@ -45,9 +45,8 @@ import {
   editItemModal,
 } from './modules/item-editor.js';
 import { closeDetail, selectItem, openItemDetail } from './modules/item-detail.js';
-import { renderProjectSummary, renderBoardContent, setupBoard } from './modules/view-board.js';
-import { renderCardListContent, loadArchive } from './modules/view-archive.js';
-import { renderListPresentationContent } from './modules/view-list.js';
+import { renderProjectSummary, setupBoard } from './modules/view-board.js';
+import { loadArchive } from './modules/view-archive.js';
 import {
   renderSprintSummary,
   resetSprintHistory,
@@ -58,8 +57,6 @@ import { loadHistory } from './modules/view-history.js';
 import { initShortcuts } from './modules/shortcuts.js';
 import {
   loadWorkspaces,
-  renderFirstRunChecklist,
-  showFirstRun,
   showWorkspaceCreate,
   showWorkspaceSelection,
   createWorkspace,
@@ -231,45 +228,12 @@ function render() {
   renderContent();
 }
 function renderContent() {
-  if (!state.board) return;
-  if (['projects', 'sprints', 'members', 'labels', 'history'].includes(state.view)) {
-    renderApp();
-    return;
-  }
-  const body = planningHost();
-  const items = filteredItems();
-  $('count').textContent =
-    state.view === 'archive'
-      ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${state.board.workspace.revision}`
-      : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
-  if (showFirstRun()) {
-    renderFirstRunChecklist(body);
-    renderApp();
-    return;
-  }
-  if (state.view === 'board' && state.presentation === 'list')
-    renderListPresentationContent(body, items);
-  else if (state.view === 'board') renderBoardContent(body, items);
-  else renderCardListContent(body, items);
-  body.querySelector(':scope > .archive-more')?.remove();
-  if (state.view === 'archive' && state.archiveMore) {
-    // The button is a sibling of the archive list's root in a static host.
-    const loadOlder = async () => {
-      try {
-        await loadArchive();
-        renderContent();
-      } catch (e) {
-        notice(e.message, true);
-      }
-    };
-    body.append(
-      nodeOf(html`<button
-        type="button"
-        class="archive-more"
-        disabled=${state.busy || state.loading}
-        onClick=${loadOlder}
-      >Load older archived work</button>`),
-    );
+  if (state.board && ['board', 'archive'].includes(state.view)) {
+    const items = filteredItems();
+    $('count').textContent =
+      state.view === 'archive'
+        ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${state.board.workspace.revision}`
+        : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
   }
   renderApp();
 }
@@ -339,6 +303,10 @@ async function navigateView(view) {
     return;
   state.view = view;
   state.bulkSelection.clear();
+  if (view !== 'board') {
+    renderProjectSummary();
+    renderSprintSummary([]);
+  }
   if (view === 'history') {
     try {
       await loadHistory(true);

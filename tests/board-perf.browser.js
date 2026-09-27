@@ -1,8 +1,8 @@
 // Board rendering probe. Execute with playwright-cli run-code (use --raw) against a
 // FRESH seeded disposable workspace; never use team data. It clones the seeded
 // items into a synthetic board of several sizes in the page only (nothing is
-// written to the server) and times the board render path:
-//   first    empty #planning-body, then renderContent (build from scratch)
+// written to the server) and times the App-owned board render path:
+//   first    new workspace identity, then renderContent (build from scratch)
 //   same     renderContent again with unchanged data (a refresh or poll)
 //   one      renderContent after one item's title changed (a typical write)
 // Each time includes the forced style and layout that follows, and "nodes"
@@ -24,9 +24,9 @@ async function run(page) {
     document.getElementById('scope').value = 'all';
     const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
     const measure = (prepare) => {
-      prepare?.();
       const observer = new MutationObserver(() => {});
       observer.observe(body, { childList: true, subtree: true });
+      prepare?.();
       const start = performance.now();
       hooks.renderContent();
       void body.offsetHeight;
@@ -57,12 +57,17 @@ async function run(page) {
           if (participant.item_id === base.id) participants.push({ ...participant, item_id: id });
         for (const link of links) if (link.items.includes(base.id)) link.items.push(id);
       }
-      state.board.items = items;
-      state.board.participants = participants;
-      state.board.links = links;
       const runs = { first: [], same: [], one: [] };
       for (let round = 0; round < 7; round++) {
-        const first = measure(() => body.replaceChildren());
+        const first = measure(() => {
+          state.board.workspace = {
+            ...state.board.workspace,
+            id: `performance-${size}-${round}`,
+          };
+          state.board.items = items;
+          state.board.participants = participants;
+          state.board.links = links;
+        });
         const same = measure();
         const one = measure(() => {
           const index = (round * 37) % items.length;

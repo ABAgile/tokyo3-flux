@@ -194,7 +194,19 @@ async function run(page) {
       host.querySelector('#title')?.textContent === 'Loading planning data',
       'app shell renders its initial title',
     );
-    setState({ board: { role: 'member', workspace: { revision: 1, id: 'test' } } });
+    setState({
+      board: {
+        role: 'member',
+        workspace: { revision: 1, id: 'test' },
+        projects: [],
+        sprints: [],
+        items: [],
+        columns: [],
+        labels: [],
+        members: [],
+        links: [],
+      },
+    });
     openEditor(
       'Dialog snapshot',
       () => html`<div><p id="dialog-field-root">Reactive dialog content</p>
@@ -234,8 +246,8 @@ async function run(page) {
       items: [],
       projects: [],
       members: [],
-      sprints: [],
-      columns: [],
+      sprints: [{ id: 'active', name: 'Active sprint', state: 'active' }],
+      columns: [{ id: 'todo', name: 'To do', category: 'todo', wip: 0 }],
       links: [],
     };
     setState({ board: pageBoard, workspaceGate: '', view: 'labels' });
@@ -247,6 +259,35 @@ async function run(page) {
         gateRoot.textContent.includes('No labels yet.'),
       'App renders page components directly inside its content mount',
     );
+    setState({ view: 'board', contentBusy: false });
+    await flush();
+    const planningBody = host.querySelector('#planning-body');
+    const boardRoot = planningBody.firstElementChild;
+    check(
+      boardRoot?.classList.contains('board') &&
+        boardRoot.dataset.contentView === 'board' &&
+        !!planningBody.querySelector('.column'),
+      'board content renders as an App-owned component',
+    );
+    setState({ view: 'projects' });
+    await flush();
+    check(
+      host.querySelector('#planning-frame')?.hidden &&
+        host.querySelector('#page-root')?.querySelector('[data-content-view="projects"]') &&
+        planningBody.firstElementChild === boardRoot,
+      'the inactive planning frame retains its content lifetime',
+    );
+    setState({ view: 'board', contentBusy: true });
+    await flush();
+    check(
+      !host.querySelector('#planning-frame')?.hidden &&
+        planningBody.getAttribute('aria-busy') === 'true' &&
+        !host.querySelector('#page-root')?.hasAttribute('aria-busy') &&
+        planningBody.firstElementChild === boardRoot,
+      'aria-busy follows the active content body without rebuilding it',
+    );
+    setState({ view: 'labels', contentBusy: false });
+    await flush();
     const dialogNode = host.querySelector('#editor');
     setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
     openEditor(

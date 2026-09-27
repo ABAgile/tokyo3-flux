@@ -2,13 +2,21 @@
 import { $ } from './dom.js';
 import { columnWIPLabel } from './format.js';
 import {
-  contentRoot,
   fieldTemplate,
   helpTextTemplate,
   emptyStateTemplate,
   metricListTemplate,
 } from './layout.js';
-import { attach, classNames, html, nothing, render, keyedList, replaceContent } from './preact.js';
+import {
+  attach,
+  classNames,
+  html,
+  nothing,
+  render,
+  keyedList,
+  useLayoutEffect,
+  useRef,
+} from './preact.js';
 import { state } from './state.js';
 import { writable, accessButtonTemplate } from './permissions.js';
 import {
@@ -147,7 +155,10 @@ function cardLinksTemplate(item, links) {
     </div>
   </div>`;
 }
-function cardAttachmentsTemplate(item, total) {
+function restoreAttachmentDisclosure(node, id, expanded) {
+  if (expanded.has(id)) node.open = true;
+}
+function cardAttachmentsTemplate(item, total, expanded) {
   const count = `${total} attachment${total === 1 ? '' : 's'}`;
   // The <details> open state belongs to the user; the template never binds it.
   // Expanding the summary is what pays for the metadata read.
@@ -155,7 +166,12 @@ function cardAttachmentsTemplate(item, total) {
     class="card-attachments"
     data-state-key=${`item:${item.id}:attachments`}
     aria-label=${count}
+    ref=${expanded ? attach(restoreAttachmentDisclosure, item.id, expanded) : undefined}
     onToggle=${(event) => {
+      if (expanded) {
+        if (event.currentTarget.open) expanded.add(item.id);
+        else expanded.delete(item.id);
+      }
       if (event.currentTarget.open) void ensureAttachments(findItem(item.id) || item);
     }}
   >
@@ -185,7 +201,7 @@ function cardAttachmentsTemplate(item, total) {
     </div>
   </details>`;
 }
-export function cardTemplate(item) {
+export function cardTemplate(item, expanded) {
   const overdue = !!itemDateStatus(item)?.overdue;
   const links = state.board.links.filter((l) => l.items.includes(item.id));
   const total = attachmentCount(item);
@@ -238,7 +254,7 @@ export function cardTemplate(item) {
         : nothing
     }
     ${links.length ? cardLinksTemplate(item, links) : nothing}
-    ${total ? cardAttachmentsTemplate(item, total) : nothing}
+    ${total ? cardAttachmentsTemplate(item, total, expanded) : nothing}
   </article>`;
 }
 function attachColumn(section, id) {
@@ -262,7 +278,7 @@ function attachColumn(section, id) {
     'x',
   );
 }
-function columnTemplate(col, items) {
+function columnTemplate(col, items, expanded) {
   const peers = items.filter((item) => item.column_id === col.id);
   const total = state.board.items.filter(
     (item) => !item.archived && item.column_id === col.id,
@@ -282,31 +298,33 @@ function columnTemplate(col, items) {
       <h3>${col.name}</h3>
       <small>${`${peers.length} shown · ${columnWIPLabel(col, total)}`}</small>
     </div>
-    ${keyedList(peers, (item) => item.id, cardTemplate)}
+    ${keyedList(
+      peers,
+      (item) => item.id,
+      (item) => cardTemplate(item, expanded),
+    )}
     ${peers.length ? nothing : emptyStateTemplate('No work here')}
   </section>`;
 }
-export function renderBoardContent(content, items) {
-  const current = content.firstElementChild;
-  const root =
-    current?.dataset.contentView === 'board' ? current : contentRoot('div', 'board', 'board');
-  // Preact keys are local to a parent. Cross-column moves remount a card;
-  // retain its user-owned attachment disclosure across that parent change.
-  const expanded = new Set(
-    [...root.querySelectorAll('.card-attachments[open]')].map((node) => node.dataset.stateKey),
-  );
-  render(
-    keyedList(
+export function BoardContent({ items }) {
+  const expanded = useRef(new Set());
+  const root = useRef(null);
+  useLayoutEffect(() => {
+    const open = new Set(
+      [...root.current.querySelectorAll('.card-attachments[open]')]
+        .map((node) => node.closest('[data-item]')?.dataset.item)
+        .filter(Boolean),
+    );
+    for (const id of expanded.current) if (!open.has(id)) expanded.current.delete(id);
+    for (const id of open) expanded.current.add(id);
+  });
+  return html`<div class="board" data-content-view="board" ref=${root}>
+    ${keyedList(
       state.board.columns,
       (column) => column.id,
-      (column) => columnTemplate(column, items),
-    ),
-    root,
-  );
-  for (const node of root.querySelectorAll('.card-attachments'))
-    if (expanded.has(node.dataset.stateKey)) node.open = true;
-  // A new root is filled while detached, so the page takes one insertion.
-  if (root !== current) replaceContent(content, root);
+      (column) => columnTemplate(column, items, expanded.current),
+    )}
+  </div>`;
 }
 function editColumn(column) {
   $('editor').close();

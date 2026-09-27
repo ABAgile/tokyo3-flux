@@ -1,17 +1,22 @@
 // Preact owns the application shell; named content hosts keep existing view
 // lifetimes stable while their controllers move into components.
-import { Fragment, html, nothing } from './preact.js';
-import { useStore } from './state.js';
+import { Fragment, html, nothing, useLayoutEffect, useRef, withKey } from './preact.js';
+import { state, useStore } from './state.js';
 import { workspaceLabel } from './format.js';
 import { StatusBars } from './notices.js';
 import { EditorDialog } from './dialog.js';
 import { emptyStateTemplate } from './layout.js';
+import { filteredItems } from './filters.js';
 import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
 import { ProjectsPage } from './view-projects.js';
 import { SprintsPage } from './view-sprints.js';
 import { MembersPage } from './view-members.js';
 import { LabelsPage } from './view-labels.js';
 import { HistoryPage } from './view-history.js';
+import { BoardContent } from './view-board.js';
+import { ListPresentation } from './view-list.js';
+import { CardListContent } from './view-archive.js';
+import { FirstRunPage, showFirstRun } from './view-gate.js';
 
 const VIEWS = [
   ['board', '▦', 'Kanban board'],
@@ -113,11 +118,53 @@ function PageContent({
   return Page ? html`<div class="page-stack" data-content-view=${view}><${Page} /></div>` : nothing;
 }
 
-// The App owns both content mounts; view components render directly into them.
+function PlanningContent({ board, view, presentation, busy, loading, integrationFormOpen }) {
+  if (showFirstRun())
+    return html`<${FirstRunPage}
+      board=${board}
+      disabled=${board.role === 'viewer' || busy || loading || integrationFormOpen}
+    />`;
+  const items = filteredItems();
+  if (view === 'board' && presentation === 'list')
+    return html`<${ListPresentation} items=${items} />`;
+  if (view === 'board') return html`<${BoardContent} items=${items} />`;
+  return html`<${CardListContent}
+    items=${items}
+    view=${view}
+    archiveMore=${state.archiveMore}
+    disabled=${busy || loading}
+  />`;
+}
+
+function PlanningBody({ active, board, view, presentation, busy, loading, integrationFormOpen }) {
+  const content = useRef(nothing);
+  if (active && board && ['board', 'archive'].includes(view))
+    content.current = html`${withKey(
+      board.workspace.id,
+      html`<${PlanningContent}
+        board=${board}
+        view=${view}
+        presentation=${presentation}
+        busy=${busy}
+        loading=${loading}
+        integrationFormOpen=${integrationFormOpen}
+      />`,
+    )}`;
+  return content.current;
+}
+
+// The App owns both content mounts; the planning body keeps its component
+// lifetime while hidden, just as the persistent frame did before migration.
 function PlanningArea({
   showPageRoot,
   pageContent,
   contentBusy,
+  board,
+  view,
+  presentation,
+  busy,
+  loading,
+  integrationFormOpen,
   onPresentation,
   onScopeChange,
   onFilterChange,
@@ -125,6 +172,28 @@ function PlanningArea({
   onSearchChange,
   onSearchKeyDown,
 }) {
+  const focusKey = useRef('');
+  const focusRoute = `${showPageRoot ? 'page' : view}:${view === 'board' ? presentation : ''}`;
+  const previousRoute = useRef(focusRoute);
+  if (previousRoute.current !== focusRoute) {
+    focusKey.current = '';
+    previousRoute.current = focusRoute;
+  }
+  useLayoutEffect(() => {
+    if (showPageRoot || !focusKey.current || document.activeElement !== document.body) return;
+    const target = document.querySelector(
+      `#planning-body [data-focus-key="${CSS.escape(focusKey.current)}"]`,
+    );
+    target?.focus({ preventScroll: true });
+  });
+  const recordFocus = (event) => {
+    const target = event.target.closest?.('[data-focus-key]');
+    focusKey.current = target?.dataset.focusKey || '';
+  };
+  const clearOutsideFocus = (event) => {
+    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
+      focusKey.current = '';
+  };
   return html`<${Fragment}>
       <section id="content" aria-label="Planning content">
         <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
@@ -149,7 +218,21 @@ function PlanningArea({
             </div>
             <div id="filter-chips" class="filter-chips" hidden role="group" aria-label="Active filters"></div>
           </div>
-          <div id="planning-body" aria-busy=${showPageRoot ? undefined : String(contentBusy)}></div>
+          <div
+            id="planning-body"
+            aria-busy=${showPageRoot ? undefined : String(contentBusy)}
+            onFocusCapture=${recordFocus}
+            onBlurCapture=${clearOutsideFocus}
+            onPointerDownCapture=${recordFocus}
+          ><${PlanningBody}
+            active=${!showPageRoot}
+            board=${board}
+            view=${view}
+            presentation=${presentation}
+            busy=${busy}
+            loading=${loading}
+            integrationFormOpen=${integrationFormOpen}
+          /></div>
         </div>
         <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>
           ${showPageRoot ? pageContent : nothing}
@@ -214,6 +297,7 @@ export function App({
     workspaces,
     root,
     view,
+    presentation,
     workspaceGate,
     busy,
     loading,
@@ -271,6 +355,12 @@ export function App({
           !board || ['projects', 'sprints', 'members', 'labels', 'history'].includes(view)
         }
         contentBusy=${shell.contentBusy}
+        board=${board}
+        view=${view}
+        presentation=${presentation}
+        busy=${busy}
+        loading=${loading}
+        integrationFormOpen=${integrationFormOpen}
         pageContent=${html`<${PageContent}
           board=${board}
           view=${view}

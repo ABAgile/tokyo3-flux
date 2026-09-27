@@ -3,10 +3,9 @@ import { $ } from './dom.js';
 import { html } from './preact.js';
 import { FirstRunChecklist } from './gate-components.js';
 import { api, requestKey } from './api.js';
-import { renderRoot, setStatusText } from './layout.js';
+import { setStatusText } from './layout.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
-import { writable } from './permissions.js';
 import { notice, clearError, clearPlanningChangeNotice } from './notices.js';
 import { renderControls } from './controls.js';
 import { setContentBusy } from './mount.js';
@@ -94,38 +93,33 @@ export async function refreshWorkspaceGate() {
 }
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
-export function renderFirstRunChecklist(body) {
+export function FirstRunPage({ board, disabled }) {
   const steps = [
     {
-      done: state.board.projects.length > 0,
+      done: board.projects.length > 0,
       title: 'Create a project',
       help: 'Projects classify work items; they are optional but make filtering and the project lens useful.',
       action: 'Open Projects',
       run: () => goToView('projects'),
     },
     {
-      done: state.board.sprints.length > 0,
+      done: board.sprints.length > 0,
       title: 'Create and start a sprint',
       help: 'Give the sprint a goal and a time box, then start it so the board can show active scope.',
       action: 'Open Sprints',
       run: () => goToView('sprints'),
     },
     {
-      done: state.board.items.length > 0,
+      done: board.items.length > 0,
       title: 'Add your first work item',
       help: 'Every card belongs to a board column; sprints and projects can be added at any time.',
       action: '＋ New item',
       run: () => $('new-item').click(),
     },
   ];
-  const setup = renderRoot(
-    body,
-    'panel first-run',
-    'first-run',
-    html`<${FirstRunChecklist} steps=${steps} disabled=${!writable() || state.integrationFormOpen} />`,
-    'section',
-  );
-  setup.setAttribute('aria-labelledby', 'first-run-heading');
+  return html`<section class="panel first-run" data-content-view="first-run" aria-labelledby="first-run-heading">
+    <${FirstRunChecklist} steps=${steps} disabled=${disabled} />
+  </section>`;
 }
 export function showFirstRun() {
   return (

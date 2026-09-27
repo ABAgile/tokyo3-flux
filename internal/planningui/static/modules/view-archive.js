@@ -1,26 +1,37 @@
 // The Archive view and its paging.
 import { $ } from './dom.js';
 import { api } from './api.js';
-import { contentRoot, emptyStateTemplate } from './layout.js';
-import { html, nothing, render, keyedList, replaceContent } from './preact.js';
+import { emptyStateTemplate } from './layout.js';
+import { Fragment, html, nothing, keyedList } from './preact.js';
 import { state } from './state.js';
+import { hooks } from './hooks.js';
+import { notice } from './notices.js';
 import { cardTemplate } from './view-board.js';
 
-export function renderCardListContent(content, items) {
-  const view = `list:${state.view}`;
-  const current = content.firstElementChild;
-  const root = current?.dataset.contentView === view ? current : contentRoot('div', 'list', view);
+async function loadOlderArchive() {
+  try {
+    await loadArchive();
+    hooks.renderContent();
+  } catch (error) {
+    notice(error.message, true);
+  }
+}
+export function CardListContent({ items, view, archiveMore, disabled }) {
   const empty =
-    state.view === 'board' && $('scope').value === 'backlog'
+    view === 'board' && $('scope').value === 'backlog'
       ? 'Backlog is clear. Create work without a sprint to plan what comes next.'
       : 'No matching work.';
-  render(
-    html`${keyedList(items, (item) => item.id, cardTemplate)}${
-      items.length ? nothing : emptyStateTemplate(empty)
-    }`,
-    root,
-  );
-  if (root !== current) replaceContent(content, root);
+  return html`<${Fragment}>
+    <div class="list" data-content-view=${`list:${view}`}>
+      ${keyedList(
+        items,
+        (item) => item.id,
+        (item) => cardTemplate(item),
+      )}
+      ${items.length ? nothing : emptyStateTemplate(empty)}
+    </div>
+    ${view === 'archive' && archiveMore ? html`<button type="button" class="archive-more" disabled=${disabled} onClick=${loadOlderArchive}>Load older archived work</button>` : nothing}
+  </${Fragment}>`;
 }
 const ARCHIVE_PAGE = 50;
 export function resetArchive() {

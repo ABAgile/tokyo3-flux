@@ -1,7 +1,15 @@
 // The List presentation of the board.
 import { columnWIPLabel } from './format.js';
-import { renderRoot, emptyStateTemplate } from './layout.js';
-import { attach, classNames, html, nothing, keyedList, syncDisabled } from './preact.js';
+import { emptyStateTemplate } from './layout.js';
+import {
+  attach,
+  classNames,
+  html,
+  nothing,
+  keyedList,
+  syncDisabled,
+  useLayoutEffect,
+} from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { projectBadgesTemplate, labelBadgeTemplate, blocked, findItem } from './items.js';
@@ -254,32 +262,31 @@ function listSectionTemplate(column, items) {
 function registerDetailPane(pane) {
   state.detailPane = pane;
 }
-export function renderListPresentationContent(content, items) {
+export function ListPresentation({ items }) {
   pruneBulkSelection(items);
-  renderRoot(
-    content,
-    'list-detail-layout',
-    'list:board',
-    html`<div class="planning-list" data-content-view="planning-list">
-        ${bulkBarTemplate(items)}
-        <div class="list-table-head">
-          ${LIST_HEADINGS.map((label) => html`<span class="list-table-heading">${label}</span>`)}
-        </div>
-        <div class="list-sections">
-          ${keyedList(
-            state.board.columns,
-            (column) => column.id,
-            (column) => listSectionTemplate(column, items),
-          )}
-        </div>
+  useLayoutEffect(() => {
+    syncListSelection();
+    updateDetailPaneVisibility();
+  });
+  return html`<div class="list-detail-layout" data-content-view="list:board">
+    <div class="planning-list" data-content-view="planning-list">
+      ${bulkBarTemplate(items)}
+      <div class="list-table-head">
+        ${LIST_HEADINGS.map((label) => html`<span class="list-table-heading">${label}</span>`)}
       </div>
-      <aside
-        class="item-detail-pane"
-        hidden
-        aria-label="Selected work item"
-        ref=${attach(registerDetailPane)}
-      ></aside>`,
-  );
-  syncListSelection();
-  updateDetailPaneVisibility();
+      <div class="list-sections">
+        ${keyedList(
+          state.board.columns,
+          (column) => column.id,
+          (column) => listSectionTemplate(column, items),
+        )}
+      </div>
+    </div>
+    <aside
+      class="item-detail-pane"
+      hidden
+      aria-label="Selected work item"
+      ref=${attach(registerDetailPane)}
+    ></aside>
+  </div>`;
 }

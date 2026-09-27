@@ -265,7 +265,10 @@ function sameSprintPage(left, right) {
 }
 export function SprintsPage() {
   useStore(selectSprintPage, sameSprintPage);
-  useLayoutEffect(() => placeFilters($('sprint-filter-slot')), []);
+  useLayoutEffect(() => {
+    placeFilters($('sprint-filter-slot'));
+    return () => placeFilters();
+  }, []);
   return html`${sprintVelocityTemplate()}
       <section class="sprint-planning">
         ${sectionHeadTemplate(
