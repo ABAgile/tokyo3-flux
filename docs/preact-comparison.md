@@ -62,8 +62,8 @@ These are synthetic board results, not a general browser benchmark or an end-to-
 Both library renderers inserted zero elements on unchanged refreshes and title-only updates.
 The original renderer inserted six elements on a title update.
 Cold-render ordering varies between runs; treat small differences as noise rather than a framework guarantee.
-The checked-in Preact/HTM runtime, including `Component`, context and `options`, is 15,306 bytes, approximately 6.4 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
-The board measurements above predate the hook-component migration and are a historical hybrid-renderer baseline.
+The checked-in Preact/HTM runtime, including `Component`, context, `options` and `useErrorBoundary`, is 15,495 bytes, approximately 6.5 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
+The three-renderer table above predates the hook-component migration and is a historical hybrid-renderer baseline; the tables below are current.
 
 After moving to a single store-driven update path with memoized cards (2026-09-27, same probe, one remote browser host), updates are measured as a board replacement in the store; unchanged entities keep their identity across refreshes:
 
@@ -74,6 +74,32 @@ After moving to a single store-driven update path with memoized cards (2026-09-2
 | 1000 | 112.4 | 1.0 | 1.2 |
 
 Initial renders insert the same element counts as before; compare runs on the same browser host only.
+
+### Interactions after the hook migration
+
+On 2026-09-28 the probe gained interaction cases, each driven through DOM events so any revision can run the same file:
+
+- `search`: one keystroke in the search field, before its debounce;
+- `dragover`: one drop-mark change while dragging a card across 40 others;
+- `hover`: one attachment tooltip shown or hidden on a card tile;
+- `attachments`: one card's attachment list arriving in the store.
+
+Interaction times include the event dispatch and the store notification it triggers, not only the render, because that fan-out is what they measure.
+Every sample is checked to have scheduled a render.
+Each cell is the median over three fresh runs of the per-run medians, in milliseconds, on one remote browser host; `e90ffa5` is the end of the migration and `cd87586` adds explicit board lookups, workspace cancellation, error boundaries and focus requests.
+
+| Revision | Cards | Initial render | Unchanged refresh | One title change | Search key | Drag-over | Tooltip | Attachment list |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `e90ffa5` | 100 | 11.2 | 0.3 | 0.4 | 0.1 | 0.1 | 0.1 | 0.3 |
+| `cd87586` | 100 | 11.1 | 0.3 | 0.3 | 0.1 | 0.1 | 0.1 | 0.3 |
+| `e90ffa5` | 500 | 53.3 | 0.7 | 0.7 | 0.1 | 0.1 | 0.1 | 0.7 |
+| `cd87586` | 500 | 52.4 | 0.7 | 0.7 | 0.1 | 0.1 | 0.1 | 0.7 |
+| `e90ffa5` | 1000 | 109.1 | 1.1 | 1.1 | 0.3 | 0.2 | 0.1 | 1.0 |
+| `cd87586` | 1000 | 95.5 | 1.0 | 1.1 | 0.2 | 0.2 | 0.2 | 1.1 |
+
+The lookups keep memoized cards skipping exactly as the hand-kept dependency list did: unchanged refreshes and title edits cost the same and insert no elements.
+The initial-render difference at 1000 cards is within the run-to-run spread.
+Every interaction stays at or below 0.3 ms at 1000 cards although each one notifies every store subscriber, so subscriber fan-out is not a bottleneck at this size.
 Normal application builds require no npm installation.
 
 ## Decision considerations
