@@ -78,7 +78,17 @@ async function run(page) {
   await page.locator('#presentation-list').click();
   await page.locator('.list-row-title').first().click();
   const pane = page.locator('.item-detail-pane');
-  await pane.getByLabel('Title', { exact: true }).fill('Renderer detail-save regression');
+  const detailTitle = pane.getByLabel('Title', { exact: true });
+  await detailTitle.fill('Draft survives a board update');
+  await page.evaluate(async () => {
+    const { state } = await import('/modules/state.js');
+    const { hooks } = await import('/modules/hooks.js');
+    state.board = { ...state.board };
+    hooks.render();
+  });
+  if ((await detailTitle.inputValue()) !== 'Draft survives a board update')
+    throw new Error('Board update reset the detail editor draft');
+  await detailTitle.fill('Renderer detail-save regression');
   await pane.getByRole('button', { name: 'Save changes', exact: true }).click();
   await page.waitForFunction(() =>
     document

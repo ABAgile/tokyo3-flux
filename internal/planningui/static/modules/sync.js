@@ -12,7 +12,11 @@ import {
 import { renderControls } from './controls.js';
 import { setContentBusy } from './mount.js';
 import { resetBurndown } from './view-burndown.js';
-import { linkIdentitySignature, patchRefreshControl, patchObservationUI } from './gitlab.js';
+import {
+  linkIdentitySignature,
+  observationsChanged,
+  repositionObservationTooltip,
+} from './gitlab.js';
 import { persistWorkspaceURL } from './url-state.js';
 import { resetArchive, loadArchive } from './view-archive.js';
 import { resetSprintHistory, loadSprintHistory } from './view-sprints.js';
@@ -298,10 +302,15 @@ export function startPolling() {
       }
       state.observationDigest = digest;
       state.observationReadAt = Date.now();
-      const uiState = captureUIState();
       const previousLinks = state.board.links;
-      state.board.links = next.links;
-      if (patchObservationUI(previousLinks, state.board.links)) restoreUIState(uiState);
+      if (observationsChanged(previousLinks, next.links)) {
+        const uiState = captureUIState();
+        state.board = { ...state.board, links: next.links };
+        requestAnimationFrame(() => {
+          restoreUIState(uiState);
+          repositionObservationTooltip();
+        });
+      }
     } catch {
       if (state.board === current && !state.busy && !state.integrationFormOpen && !$('editor').open)
         notice('Observation cache could not be reloaded. Use Refresh to retry.', true);
@@ -353,12 +362,4 @@ export function startPolling() {
       state.membershipPoll = false;
     }
   }, 30000);
-  // Local freshness/cooldowns require no additional network requests.
-  setInterval(() => {
-    if (!state.board) return;
-    document.querySelectorAll('[data-refresh-link]').forEach((node) => {
-      const link = state.board.links.find((l) => l.id === node.dataset.refreshLink);
-      patchRefreshControl(node, link);
-    });
-  }, 10000);
 }

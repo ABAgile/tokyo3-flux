@@ -1,8 +1,7 @@
 // Planning filters, work search and the filter chips.
-import { $ } from './dom.js';
 import { labelForeground } from './format.js';
-import { html } from './preact.js';
-import { state } from './state.js';
+import { html } from './vdom.js';
+import { setState, state } from './state.js';
 import { hooks } from './hooks.js';
 import {
   activeSprints,
@@ -154,18 +153,18 @@ function itemHaystack(item) {
 export function resetSearch() {
   if (state.searchDebounce) clearTimeout(state.searchDebounce);
   state.searchDebounce = undefined;
-  $('search').value = '';
-  state.searchQuery = '';
+  setState({ searchInput: '', searchQuery: '' });
 }
 export function flushSearch() {
   if (state.searchDebounce) clearTimeout(state.searchDebounce);
   state.searchDebounce = undefined;
-  const next = $('search').value.trim().toLowerCase();
+  const next = state.searchInput.trim().toLowerCase();
   if (next === state.searchQuery) return false;
   state.searchQuery = next;
   return true;
 }
-export function queueSearch() {
+export function queueSearch(event) {
+  state.searchInput = event.currentTarget.value;
   if (state.searchDebounce) clearTimeout(state.searchDebounce);
   state.searchDebounce = setTimeout(() => {
     state.searchDebounce = undefined;
@@ -196,14 +195,6 @@ export function filteredItems() {
     if (!matchesItemFilters(i)) return false;
     return !query || itemHaystack(i).includes(query);
   });
-}
-// The planning filter bar is one element that is relocated, not duplicated, so
-// its controls keep their state, handlers and identity across views.
-export function placeFilters(host = $('planning-filter-slot')) {
-  const bar = $('planning-filters'),
-    chips = $('filter-chips');
-  if (bar.parentElement !== host) host.append(bar);
-  if (chips.parentElement !== host || chips.previousElementSibling !== bar) host.append(chips);
 }
 export function planningFilterChipsTemplate(show, includeLabels) {
   const names = FILTER_NAMES.filter((name) => includeLabels || name !== 'label');

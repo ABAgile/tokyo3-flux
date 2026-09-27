@@ -1,18 +1,12 @@
 // Item comments: list, paging and composer.
 import { api, requestKey } from './api.js';
+import { syncDisabled } from './dom.js';
 import { initials } from './format.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import { panelHeadTemplate, helpTextTemplate } from './layout.js';
-import {
-  html,
-  nothing,
-  keyedList,
-  syncDisabled,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from './preact.js';
+import { html, keyedList } from './vdom.js';
+import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+
 import { state } from './state.js';
 import { canComment } from './permissions.js';
 import { renderControls } from './controls.js';
@@ -58,7 +52,7 @@ function commentTemplate(comment) {
     <div class="comment-content">
       <div class="comment-head">
         <strong title=${comment.author}>${info.name}</strong>
-        <time class="muted" datetime=${time.dateTime || nothing}>${time.label}</time>
+        <time class="muted" datetime=${time.dateTime || null}>${time.label}</time>
       </div>
       <div class="comment-body">${markdownTemplate(comment.body)}</div>
     </div>

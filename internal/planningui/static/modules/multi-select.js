@@ -1,16 +1,8 @@
 // Multi-select fields, the label color picker and help popovers.
 import { uid } from './dom.js';
 import { requestKey } from './api.js';
-import {
-  attach,
-  html,
-  nodeOf,
-  nothing,
-  keyedList,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from './preact.js';
+import { html, keyedList } from './vdom.js';
+import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
 
 const LABEL_PALETTE = Object.freeze([
   '#ff6b6b',
@@ -119,9 +111,6 @@ function HelpPopover({ text, name }) {
 }
 export function helpPopoverTemplate(text, name = 'Help') {
   return html`<${HelpPopover} text=${text} name=${name} />`;
-}
-export function helpPopover(text, name = 'Help') {
-  return nodeOf(helpPopoverTemplate(text, name));
 }
 function uniqueEntries(entries) {
   const seen = new Set();
@@ -304,14 +293,13 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
   const visible = local.entries.filter(
     ([, text]) => !needle || text.toLowerCase().includes(needle),
   );
-  const help = helpText ? helpPopoverTemplate(helpText, title) : nothing;
+  const help = helpText ? helpPopoverTemplate(helpText, title) : null;
   const closeOnEscape = (event) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
     close(true);
   };
-  const decorateChip = (chip, value, text) => decorate?.(chip, value, text);
   return html`<div class="multi-select-field" ref=${group}>
     <div class="multi-select-header" ref=${header}
       onClick=${(event) => {
@@ -319,7 +307,7 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
       }}
     >
       <span class="multi-select-heading"
-        ><span class="multi-select-label">${title}</span>${help}${settings.headingAction?.() ?? nothing}</span
+        ><span class="multi-select-label">${title}</span>${help}${settings.headingAction?.() ?? null}</span
       >
       <button
         type="button"
@@ -336,13 +324,15 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
     </div>
     <div class="multi-select" role="group" aria-label=${title} ref=${root}>
       <div class="multi-select-values">
-        ${chosen.length ? nothing : html`<span class="multi-select-empty">None selected</span>`}
+        ${chosen.length ? null : html`<span class="multi-select-empty">None selected</span>`}
         ${keyedList(
           chosen,
           ([value]) => value,
-          ([value, text]) => html`<span
-            class="multi-select-chip"
-            ref=${attach(decorateChip, value, text)}
+          ([value, text]) => {
+            const decoration = decorate?.(value, text);
+            return html`<span
+            class=${`multi-select-chip${decoration?.className ? ` ${decoration.className}` : ''}`}
+            style=${decoration?.style}
             ><span>${text}</span
             ><button
               type="button"
@@ -357,7 +347,8 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
                 changed(next, true);
               }}
             >×</button></span
-          >`,
+          >`;
+          },
         )}
       </div>
       <div
@@ -413,7 +404,7 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
         <p class="multi-select-empty" hidden=${visible.length > 0 || !!status}>No matches.</p>
       </div>
     </div>
-    ${settings.footer?.() ?? nothing}
+    ${settings.footer?.() ?? null}
   </div>`;
 }
 export function labelColorPickerTemplate(value) {

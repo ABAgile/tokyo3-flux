@@ -1,6 +1,8 @@
 // Member names, avatars and the participant stack.
 import { initials } from './format.js';
-import { classNames, html, nothing, useState } from './preact.js';
+import { classNames } from './dom.js';
+import { html } from './vdom.js';
+import { useState } from './vendor-preact.js';
 import { state } from './state.js';
 
 export function memberInfo(subject) {
@@ -35,13 +37,13 @@ export function memberListingInfo(member) {
 function AvatarImage({ url }) {
   const [failed, setFailed] = useState(false);
   return failed
-    ? nothing
+    ? null
     : html`<img src=${url} alt="" decoding="async" referrerpolicy="no-referrer" onError=${() => setFailed(true)} />`;
 }
 // Failure is component state, never removal of a Preact-owned DOM node.
 // A changed URL gets a fresh component and can retry independently.
 export function avatarImageTemplate(avatarURL) {
-  return avatarURL ? html`<${AvatarImage} key=${avatarURL} url=${avatarURL} />` : nothing;
+  return avatarURL ? html`<${AvatarImage} key=${avatarURL} url=${avatarURL} />` : null;
 }
 export function avatarTemplate(name, avatarURL) {
   return html`<span class="avatar" aria-hidden="true">
@@ -95,7 +97,7 @@ function participantAvatarTemplate(participant) {
   const classes = { avatar: true, 'participant-avatar': true, 'is-assignee': info.assignee };
   return html`<span
     class=${classNames(classes)}
-    data-participant-role=${info.assignee ? 'assignee' : nothing}
+    data-participant-role=${info.assignee ? 'assignee' : null}
     title=${description}
     role="img"
     aria-label=${description}
@@ -118,7 +120,7 @@ export function participantStackTemplate(item) {
     ${
       overflow > 0
         ? html`<span class="participant-more" title=${rest} role="img" aria-label=${`${overflow} more: ${rest}`}>${`+${overflow}`}</span>`
-        : nothing
+        : null
     }
   </div>`;
 }

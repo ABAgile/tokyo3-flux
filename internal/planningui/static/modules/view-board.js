@@ -7,7 +7,10 @@ import {
   emptyStateTemplate,
   metricListTemplate,
 } from './layout.js';
-import { attach, classNames, html, nothing, keyedList, useLayoutEffect, useRef } from './preact.js';
+import { attach, classNames } from './dom.js';
+import { html, keyedList } from './vdom.js';
+import { useLayoutEffect, useRef } from './vendor-preact.js';
+
 import { state } from './state.js';
 import { writable, accessButtonTemplate } from './permissions.js';
 import {
@@ -84,10 +87,10 @@ export function ProjectSummary({ board, view, projectID }) {
         <div class="project-sprint-coverage">
           <span class="project-sprint-coverage-label">Active sprint coverage</span>
           ${coverage}
-          ${unscheduled ? html`<span class="badge">${`Backlog · ${unscheduled}`}</span>` : nothing}
-          ${!active.length && !unscheduled ? html`<span class="muted">None</span>` : nothing}
+          ${unscheduled ? html`<span class="badge">${`Backlog · ${unscheduled}`}</span>` : null}
+          ${!active.length && !unscheduled ? html`<span class="muted">None</span>` : null}
         </div>`
-        : nothing
+        : null
     }
   </section>`;
 }
@@ -142,7 +145,7 @@ function cardLinksTemplate(item, links) {
           html`${
             link.kind === 'mr'
               ? cardObservationIconTemplate(link, `item:${item.id}:observation:${link.id}`)
-              : nothing
+              : null
           }${cardLinkTemplate(link, `item:${item.id}:link:${link.id}`)}`,
       )}
     </div>
@@ -218,7 +221,7 @@ export function cardTemplate(item, expanded) {
         data-focus-key=${`item:${item.id}:title`}
         onClick=${() => editItem(item)}
       >${item.title}</button>
-      ${overdue ? dueDateBadgeTemplate(item, ' card-title-due') : nothing}
+      ${overdue ? dueDateBadgeTemplate(item, ' card-title-due') : null}
     </div>
     <div class="card-meta">
       <div class="card-projects">${projectBadgesTemplate(item)}</div>
@@ -232,9 +235,9 @@ export function cardTemplate(item, expanded) {
     </div>
     <div class="tags" data-card-section="labels">
       ${item.labels.map(labelBadgeTemplate)}
-      ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : nothing}
-      ${overdue ? nothing : dueDateBadgeTemplate(item)}
-      ${item.archived ? html`<span class="badge">Archived</span>` : nothing}
+      ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : null}
+      ${overdue ? null : dueDateBadgeTemplate(item)}
+      ${item.archived ? html`<span class="badge">Archived</span>` : null}
     </div>
     ${
       item.archived
@@ -245,10 +248,10 @@ export function cardTemplate(item, expanded) {
               onClick=${() => quick({ kind: 'item.restore', target: item.id })}
             >Restore item</button>
           </div>`
-        : nothing
+        : null
     }
-    ${links.length ? cardLinksTemplate(item, links) : nothing}
-    ${total ? cardAttachmentsTemplate(item, total, expanded) : nothing}
+    ${links.length ? cardLinksTemplate(item, links) : null}
+    ${total ? cardAttachmentsTemplate(item, total, expanded) : null}
   </article>`;
 }
 function attachColumn(section, id) {
@@ -298,7 +301,7 @@ function columnTemplate(col, items, expanded) {
       (item) => item.id,
       (item) => cardTemplate(item, expanded),
     )}
-    ${peers.length ? nothing : emptyStateTemplate('No work here')}
+    ${peers.length ? null : emptyStateTemplate('No work here')}
   </section>`;
 }
 export function BoardContent({ items }) {
@@ -399,8 +402,8 @@ export function setupBoard() {
           <small class="muted">${`${c.category} · WIP ${c.wip || 'unlimited'}`}</small>
           <div class="actions">
             ${action('Edit', () => editColumn(c))}
-            ${index > 0 ? action('Move left', () => moveColumnLeft(c, index)) : nothing}
-            ${state.board.columns.length > 1 ? action('Remove…', () => removeColumn(c)) : nothing}
+            ${index > 0 ? action('Move left', () => moveColumnLeft(c, index)) : null}
+            ${state.board.columns.length > 1 ? action('Remove…', () => removeColumn(c)) : null}
           </div>
         </div>`,
       )}

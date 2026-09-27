@@ -1,5 +1,6 @@
 // Role checks and the write/admin buttons that honor them.
-import { html, nothing, syncDisabled } from './preact.js';
+import { syncDisabled } from './dom.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 
 // `access` marks write/admin controls. Refs apply current permissions during
@@ -17,8 +18,8 @@ export function actionIconTemplate(label, icon, fn, { className, access, disable
     data-action-label=${label}
     aria-label=${label}
     title=${label}
-    data-write=${access === 'write' ? 'true' : nothing}
-    data-admin-write=${access === 'admin' ? 'true' : nothing}
+    data-write=${access === 'write' ? 'true' : null}
+    data-admin-write=${access === 'admin' ? 'true' : null}
     ref=${syncDisabled(disabled ?? writeDisabled(access))}
     onClick=${fn}
   ></button>`;
@@ -40,10 +41,10 @@ export function accessButtonTemplate(
   const mark = tracked ? access : undefined;
   return html`<button
     type="button"
-    class=${className || nothing}
-    aria-label=${label || nothing}
-    data-write=${mark === 'write' ? 'true' : nothing}
-    data-admin-write=${mark === 'admin' ? 'true' : nothing}
+    class=${className || null}
+    aria-label=${label || null}
+    data-write=${mark === 'write' ? 'true' : null}
+    data-admin-write=${mark === 'admin' ? 'true' : null}
     ref=${syncDisabled(writeDisabled(access))}
     onClick=${fn}
   >${text}</button>`;

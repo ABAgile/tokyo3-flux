@@ -8,7 +8,7 @@ import {
   emptyStateTemplate,
   metricListTemplate,
 } from './layout.js';
-import { html, nothing } from './preact.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { setContentBusy } from './mount.js';
@@ -77,7 +77,7 @@ function burndownSVG(data) {
   const ideal =
     first >= 0
       ? html`<line class="burndown-ideal" x1=${x(first)} x2=${x(points.length - 1)} y1=${y(idealStart)} y2=${y(0)}></line>`
-      : nothing;
+      : null;
   const lines = (key, className) =>
     burndownSegments(points, key, x, y).map(
       (segment) => html`<polyline class=${className} points=${segment}></polyline>`,
@@ -85,11 +85,11 @@ function burndownSVG(data) {
   const dots = points.map((point, index) =>
     Number.isFinite(point.remaining)
       ? html`<circle class="burndown-point" cx=${x(index)} cy=${y(point.remaining)} r="3"><title>${`${burndownDateLabel(point.date)} · ${point.remaining} remaining · ${point.scope} in scope`}</title></circle>`
-      : nothing,
+      : null,
   );
   const dates = [...new Set([0, Math.floor((points.length - 1) / 2), points.length - 1])].map(
     (index) => {
-      if (index < 0 || !points[index]) return nothing;
+      if (index < 0 || !points[index]) return null;
       const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
       return html`<text class="burndown-axis-label" x=${x(index)} y=${height - 16} text-anchor=${anchor}>${burndownDateLabel(points[index].date)}</text>`;
     },

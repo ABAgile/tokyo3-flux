@@ -8,7 +8,8 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { html, nothing, keyedList } from './preact.js';
+import { html, keyedList } from './vdom.js';
+
 import { state, useStore } from './state.js';
 import { adminIconTemplate, adminWritable, accessButtonTemplate } from './permissions.js';
 import { memberListingInfo, avatarTemplate } from './people.js';
@@ -39,7 +40,7 @@ function memberIdentityTemplate(member) {
     <div class="member-identity-copy">
       <strong>${info.name}</strong>
       <div class="member-identity-meta">
-        ${username ? html`<small class="muted">${`@${username}`}</small>` : nothing}
+        ${username ? html`<small class="muted">${`@${username}`}</small>` : null}
         ${memberRoleChipTemplate(member.role)}
       </div>
     </div>
@@ -80,7 +81,7 @@ function removeMember(member) {
           ? helpTextTemplate(
               `This member is assigned to ${assigned} card${assigned === 1 ? '' : 's'}. Reassign those cards before removing the member.`,
             )
-          : nothing
+          : null
       }`,
     () => ({ kind: 'member.delete', target: member.subject }),
   );
@@ -162,7 +163,7 @@ function addMember() {
       ${fieldTemplate('role', 'Workspace role', 'member', 'text', MEMBER_ROLE_ENTRIES)}
       ${
         currentBoard.connector_instance
-          ? nothing
+          ? null
           : helpTextTemplate(
               'A GitLab read connector is not configured. Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN.',
             )

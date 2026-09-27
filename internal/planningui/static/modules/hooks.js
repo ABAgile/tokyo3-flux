@@ -8,7 +8,6 @@ export const hooks = {
   itemEditorDraft: undefined,
   openItemDetail: undefined,
   persistPlanningURL: undefined,
-  placeFilters: undefined,
   refresh: undefined,
   render: undefined,
   renderContent: undefined,

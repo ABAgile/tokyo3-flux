@@ -7,7 +7,7 @@ import {
   fieldTemplate,
   helpTextTemplate,
 } from './layout.js';
-import { html, nothing } from './preact.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { writable, accessButtonTemplate } from './permissions.js';
@@ -29,7 +29,7 @@ export async function showProposals(before = 0) {
         ${accessButtonTemplate('Import proposal or migration JSON', () => importProposal(), {
           tracked: false,
         })}
-        ${rows.length ? nothing : emptyStateTemplate('No proposals on this page.')}
+        ${rows.length ? null : emptyStateTemplate('No proposals on this page.')}
         ${rows.map(
           (row) => html`<article class="setup-row">
             <strong>${row.title}</strong>
@@ -44,12 +44,12 @@ export async function showProposals(before = 0) {
             ? html`<button type="button" onClick=${() => showProposals(rows.at(-1).sequence)}
                 >Older proposals</button
               >`
-            : nothing
+            : null
         }
         ${
           before
             ? html`<button type="button" onClick=${() => showProposals()}>Newest proposals</button>`
-            : nothing
+            : null
         }`,
       () => ({}),
       true,
@@ -105,8 +105,8 @@ async function reviewProposal(id) {
         <p>
           ${`Imported by ${v.imported_by} · ${v.state}${v.reviewed_by ? ` · Reviewed by ${v.reviewed_by}` : ''}`}
         </p>
-        ${v.review_reason ? html`<p class="proposal-text">${v.review_reason}</p>` : nothing}
-        ${preview.problem ? errorLineTemplate(preview.problem) : nothing}
+        ${v.review_reason ? html`<p class="proposal-text">${v.review_reason}</p>` : null}
+        ${preview.problem ? errorLineTemplate(preview.problem) : null}
         ${helpTextTemplate(
           `New imports: ${preview.created || 0} · Already imported, retained unchanged: ${Object.keys(preview.skipped || {}).length}`,
         )}
@@ -114,7 +114,7 @@ async function reviewProposal(id) {
           Object.keys(preview.workspace_changes || {}).length
             ? html`<h3>Workspace changes</h3>
                 <pre class="proposal-data">${JSON.stringify(preview.workspace_changes, null, 2)}</pre>`
-            : nothing
+            : null
         }
         ${(preview.changes || []).map(
           (change) => html`<section class="setup-row">
@@ -136,7 +136,7 @@ async function reviewProposal(id) {
               })}${accessButtonTemplate('Reject proposal', () => rejectProposal(v.id), {
                 tracked: false,
               })}`
-            : nothing
+            : null
         }
         ${
           canAccept
@@ -155,7 +155,7 @@ async function reviewProposal(id) {
                   controlFirst: true,
                 },
               )}`
-            : nothing
+            : null
         }`,
       (data) => {
         if (!data.get('consent')) throw new Error('Explicit approval is required.');

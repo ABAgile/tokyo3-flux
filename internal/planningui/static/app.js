@@ -1,6 +1,7 @@
 import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
-import { html, render as renderTemplate } from './modules/preact.js';
+import { html } from './modules/vdom.js';
+import { render as preactRender } from './modules/vendor-preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
@@ -17,7 +18,6 @@ import {
   knownFilterValue,
   flushSearch,
   queueSearch,
-  placeFilters,
   applyFilterChange,
 } from './modules/filters.js';
 import { resetBurndown } from './modules/view-burndown.js';
@@ -62,7 +62,6 @@ Object.assign(hooks, {
   itemEditorDraft,
   openItemDetail,
   persistPlanningURL,
-  placeFilters,
   refresh,
   render,
   renderContent,
@@ -82,7 +81,9 @@ async function runUndo() {
   await runSequence('Undo', commands);
 }
 function renderApp() {
-  renderTemplate(
+  const focused = document.body.contains(document.activeElement) ? document.activeElement : null;
+  const focusKey = focused?.dataset?.focusKey;
+  preactRender(
     html`<${App}
       refresh=${refresh}
       onUndo=${runUndo}
@@ -106,6 +107,14 @@ function renderApp() {
     />`,
     document.body,
   );
+  if (focused && document.activeElement === document.body) {
+    const target = focused.isConnected
+      ? focused
+      : focusKey
+        ? document.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)
+        : null;
+    target?.focus({ preventScroll: true });
+  }
 }
 const theme =
   localStorage.getItem('flux-plan-theme') ||
@@ -134,7 +143,6 @@ function render() {
   if (!state.board) {
     setContentBusy(state.workspaceGate === 'loading' || state.loading);
     clearPlanningChangeNotice();
-    placeFilters();
     renderApp();
     return;
   }
@@ -153,9 +161,6 @@ function render() {
       filterValues(name).filter((value) => knownFilterValue(name, value)),
     ),
   );
-  // Views that own a page layout host the filter bar themselves, below their
-  // heading; everywhere else it stays in its slot above the content.
-  if (state.view !== 'sprints') placeFilters();
   renderContent();
 }
 function renderContent() {
@@ -200,7 +205,6 @@ function changeScope(event) {
 // add-a-filter control while the chip row owns the active state.
 function changeFilter(name, event) {
   addFilterValue(name, event.target.value);
-  event.target.value = 'all';
   applyFilterChange(name);
 }
 function handleSearchChange() {

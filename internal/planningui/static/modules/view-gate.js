@@ -1,10 +1,9 @@
 // The workspace gate, workspace list and creation, and the first-run checklist.
 import { $ } from './dom.js';
-import { html } from './preact.js';
+import { html } from './vdom.js';
 import { FirstRunChecklist } from './gate-components.js';
 import { api, requestKey } from './api.js';
-import { setStatusText } from './layout.js';
-import { state } from './state.js';
+import { setState, state } from './state.js';
 import { hooks } from './hooks.js';
 import { notice, clearError, clearPlanningChangeNotice } from './notices.js';
 import { renderControls } from './controls.js';
@@ -138,8 +137,13 @@ export function showWorkspaceSelection() {
 }
 export function showWorkspaceCreate() {
   if (state.busy || state.loading || state.integrationFormOpen) return;
-  state.workspaceCreateKey = '';
-  state.workspaceCreateName = '';
+  setState({
+    workspaceCreateKey: '',
+    workspaceCreateName: '',
+    workspaceCreateDraft: '',
+    workspaceCreateStatus: '',
+    workspaceCreateStatusError: false,
+  });
   if (state.board) {
     enterWorkspaceGate('create', 'Create a workspace to add another planning space.');
     return;
@@ -147,29 +151,25 @@ export function showWorkspaceCreate() {
   state.workspaceGate = 'create';
   hooks.render();
 }
-export async function createWorkspace(event) {
-  event.preventDefault();
+export async function createWorkspace(value) {
   if (state.workspaceCreating || state.busy || state.loading) return;
-  const form = event.currentTarget;
-  const input = form.elements.name;
-  const status = form.querySelector('[data-workspace-create-status]');
-  const submit = form.querySelector('button[type="submit"]');
-  const name = String(input.value || '').trim();
-  const setStatus = (text, error = false) => setStatusText(status, text, error);
+  const name = String(value || '').trim();
   // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL and line breaks are rejected on purpose.
   if (!name || name.length > 120 || /[\u0000\r\n]/.test(name)) {
-    setStatus('Workspace name must be between 1 and 120 characters.', true);
-    input.focus();
+    setState({
+      workspaceCreateStatus: 'Workspace name must be between 1 and 120 characters.',
+      workspaceCreateStatusError: true,
+    });
     return;
   }
   if (state.workspaceCreateName !== name || !state.workspaceCreateKey) {
-    state.workspaceCreateName = name;
-    state.workspaceCreateKey = requestKey();
+    setState({ workspaceCreateName: name, workspaceCreateKey: requestKey() });
   }
-  state.workspaceCreating = true;
-  submit.disabled = true;
-  input.disabled = true;
-  setStatus('Creating workspace…');
+  setState({
+    workspaceCreating: true,
+    workspaceCreateStatus: 'Creating workspace…',
+    workspaceCreateStatusError: false,
+  });
   try {
     const created = await api('/api/v2/workspaces', {
       method: 'POST',
@@ -188,34 +188,28 @@ export async function createWorkspace(event) {
     state.pendingPlanningURLState = undefined;
     if (!(await chooseWorkspace(created.id)))
       throw new Error('Workspace created, but its board could not be opened. Refresh to retry.');
-    state.workspaceCreateKey = '';
-    state.workspaceCreateName = '';
+    setState({
+      workspaceCreateKey: '',
+      workspaceCreateName: '',
+      workspaceCreateDraft: '',
+      workspaceCreateStatus: '',
+      workspaceCreateStatusError: false,
+    });
   } catch (error) {
-    if (!document.querySelector('[data-workspace-create-status]')) {
-      state.workspaceGate = 'create';
-      state.root = undefined;
-      hooks.render();
-    }
-    const currentForm = document.querySelector('.workspace-create-form');
-    const currentStatus = currentForm?.querySelector('[data-workspace-create-status]');
-    const currentInput = currentForm?.elements.name;
-    if (currentInput && !currentInput.value) currentInput.value = state.workspaceCreateName || name;
-    if (currentStatus) setStatusText(currentStatus, error.message, true);
-    if (currentInput) currentInput.focus();
+    setState({
+      workspaceGate: 'create',
+      root: undefined,
+      workspaceCreateStatus: error.message,
+      workspaceCreateStatusError: true,
+    });
   } finally {
-    state.workspaceCreating = false;
-    const currentForm = document.querySelector('.workspace-create-form');
-    if (currentForm) {
-      currentForm.elements.name.disabled = false;
-      currentForm.querySelector('button[type="submit"]').disabled = false;
-    }
-    renderControls();
+    setState({ workspaceCreating: false });
   }
 }
 export async function chooseWorkspace(workspaceID = '') {
   if (state.busy || state.loading) return false;
   if (state.detailState && !closeDetail({ focus: false })) {
-    if (state.board?.workspace?.id) $('workspace').value = state.board.workspace.id;
+    hooks.render();
     return false;
   }
   const selectedID = workspaceID || $('workspace').value;

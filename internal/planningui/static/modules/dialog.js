@@ -1,23 +1,13 @@
 // The shared Preact editor dialog used by every create/edit flow.
 import { $ } from './dom.js';
-import { html, useMemo, unmountIsland, useLayoutEffect, useRef, useState } from './preact.js';
+import { html } from './vdom.js';
+import { useMemo, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 import { requestKey } from './api.js';
 import { state, setState } from './state.js';
 import { change } from './commands.js';
-import { hideAttachmentTooltip } from './item-attachments.js';
+import { AttachmentTooltip, hideAttachmentTooltip } from './item-attachments.js';
 import { hooks } from './hooks.js';
 
-function clearEditorTitleExtras() {
-  for (const id of ['editor-title-extra', 'editor-title-badge']) {
-    const host = $(id);
-    unmountIsland(host);
-    host.replaceChildren();
-  }
-}
-function disposeEditorContent() {
-  unmountIsland($('editor-title'));
-  clearEditorTitleExtras();
-}
 function closeAfterNativeEvent(config, dialog) {
   if (dialog.open || (state.editorDialog && state.editorDialog !== config)) return;
   restoreEditorFocus();
@@ -42,22 +32,10 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current;
-    const form = formRef.current;
-    if (!config || !dialog || !form) return;
+    if (!config || !dialog) return;
     pending.current = { serialized: undefined, key: undefined };
-    unmountIsland(form.querySelector('#editor-title'));
-    clearEditorTitleExtras();
-    form.querySelectorAll('[data-item-footer]').forEach((node) => {
-      node.remove();
-    });
-    form.classList.toggle(
-      'item-editor-form',
-      ['Work item', 'Create work item'].includes(config.title),
-    );
-    config.onOpen?.(form);
     setSaving(false);
     if (!dialog.open) dialog.showModal();
-    return () => disposeEditorContent();
   }, [config]);
 
   async function submit(event) {
@@ -107,6 +85,8 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
     if (!state.busy && event.target === dialogRef.current) closeEditor();
   }
   function closed() {
+    const target = state.attachmentTooltipTarget;
+    if (target?.closest('dialog') === dialogRef.current) hideAttachmentTooltip(target);
     closeAfterNativeEvent(config, dialogRef.current);
   }
 
@@ -118,25 +98,31 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
     onClick=${backdrop}
     onClose=${closed}
   >
-    <form id="editor-form" ref=${formRef} onSubmit=${submit}>
+    <form
+      id="editor-form"
+      class=${['Work item', 'Create work item'].includes(config?.title) ? 'item-editor-form' : null}
+      ref=${formRef}
+      onSubmit=${submit}
+    >
       <div class="dialog-head">
         <div id="editor-title-group">
           <h2 id="editor-title">${config?.title || 'Work item'}</h2>
-          <div id="editor-title-extra"></div>
+          <div id="editor-title-extra" key=${config?.formKey}>${config?.titleExtra}</div>
         </div>
-        <div id="editor-title-badge"></div>
+        <div id="editor-title-badge" key=${config?.formKey}>${config?.titleBadge}</div>
         <button type="button" id="dismiss" aria-label="Close editor" disabled=${disabled} onClick=${dismiss}>×</button>
       </div>
-      <div id="fields">${content}</div>
+      <div id="fields" key=${config?.formKey}>${content}</div>
       <p id="form-error" role="alert" hidden=${!errorText}>${errorText}</p>
       <div class="dialog-foot">
-        <span id="editor-footer-actions"></span>
+        <span id="editor-footer-actions">${config?.footerAction}</span>
         <button type="button" id="cancel" disabled=${disabled} onClick=${dismiss}>Cancel</button>
         <button type="submit" class="primary" id="save" hidden=${!config || config.hideSave || config.readOnly} disabled=${disabled}>
           ${saveText || config?.saveText || 'Save changes'}
         </button>
       </div>
     </form>
+    <${AttachmentTooltip} inDialog=${true} />
   </dialog>`;
 }
 
@@ -178,13 +164,16 @@ export function openEditor(
   state.editorReturn = afterClose;
   if (!$('editor').open) state.editorOpener = document.activeElement;
   const config = {
+    formKey: requestKey(),
     title,
     build,
     submit,
     readOnly,
     afterSave,
     onSubmit: options.onSubmit,
-    onOpen: options.onOpen,
+    titleExtra: options.titleExtra,
+    titleBadge: options.titleBadge,
+    footerAction: options.footerAction,
     hideSave: !!options.hideSave,
     saveText: options.saveText,
     revision: state.board.workspace.revision,

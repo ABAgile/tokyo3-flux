@@ -162,6 +162,20 @@ async function run(page) {
   );
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
   await page.getByRole('button', { name: 'Drag first updated', exact: true }).waitFor();
+  await page.waitForFunction(() => {
+    const refresh = document.querySelector('#refresh');
+    const editor = document.querySelector('#editor');
+    const form = editor?.querySelector('#editor-form');
+    return (
+      refresh &&
+      !refresh.disabled &&
+      editor &&
+      !editor.open &&
+      form &&
+      !form.classList.contains('item-editor-form') &&
+      !form.querySelector('#fields')?.childElementCount
+    );
+  });
   // Rename applies to existing assignments; archive then delete also updates archived work.
   await nav('Labels');
   await page

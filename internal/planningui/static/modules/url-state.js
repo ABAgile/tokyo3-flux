@@ -93,35 +93,19 @@ function cardShareURL(itemID) {
   url.searchParams.set('item', itemID);
   return url.href;
 }
-// The outcome is shown on the control itself as well as announced, so a pointer
-// user who never reads the status line still sees that the copy happened. The
-// cue is a state swap rather than an animation, so reduced motion needs nothing.
-const COPY_FEEDBACK_MS = 2000;
-function markCopyOutcome(control, ok) {
-  if (!control?.isConnected) return;
-  const label = control.dataset.copyLabel || control.textContent;
-  control.dataset.copyLabel = label;
-  control.textContent = ok ? '\u2713 Link copied' : '! Not copied';
-  control.classList.add(ok ? 'is-copied' : 'is-copy-failed');
-  setTimeout(() => {
-    if (!control.isConnected) return;
-    control.textContent = label;
-    control.classList.remove('is-copied', 'is-copy-failed');
-  }, COPY_FEEDBACK_MS);
-}
-export async function copyCardLink(item, control) {
+export async function copyCardLink(item) {
   const link = cardShareURL(item.id);
   try {
     if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
     await navigator.clipboard.writeText(link);
-    markCopyOutcome(control, true);
     notice(`Link to \u201c${item.title}\u201d copied to the clipboard.`);
+    return true;
   } catch {
-    markCopyOutcome(control, false);
     notice(
       `Card link could not be copied automatically. Copy it from the address bar or use ${link}`,
       true,
     );
+    return false;
   }
 }
 // A card link resolves against the board first and falls back to the single-card

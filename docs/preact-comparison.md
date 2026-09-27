@@ -8,21 +8,19 @@ The old DOM reconciler, card signatures and per-section patch routines are remov
 No Go, CSS, API, authentication or CSP behavior is intentionally changed.
 
 A body-level Preact `App` owns the sidebar, navigation, heading, status and undo bars, page frame and native dialog markup.
-The shared editor dialog renders from an opener configuration and keeps its form snapshot intact across unrelated store updates, including background refreshes.
-Page hosts and editor fields still retain controller-owned roots and lifetimes while those boundaries are incrementally migrated.
+The shared editor dialog renders from an opener configuration and keeps its uncontrolled form snapshot intact across unrelated store updates, including background refreshes.
 Shared planning state and revision-checked commands remain in plain ES modules.
-Rendering factories return VNodes; Preact owns each render host's children.
-The adapter in `modules/preact.js` provides keyed lists, explicit mount/unmount boundaries and logical focus recovery.
-It does not implement another diff algorithm or reinterpret lit syntax.
-HTM binds directly to Preact's `h`.
+Rendering factories return VNodes; Preact owns the body root and all dynamic UI subtrees.
+`app.js` calls Preact's `render` directly, while `modules/vdom.js` binds HTM to Preact's `h` and provides keyed-list helpers.
+No second reconciler or rendered-once island API remains.
 
 Stateful widgets are Preact function components that own interaction state with hooks and acquire outside listeners, subscriptions and observers in effects with cleanup.
 Converted widgets no longer need separate controller-owned roots; component identity, state and lifetime are visible to the renderer.
 Native form drafts remain uncontrolled unless the application owns their changing value, so unrelated renders do not reset user input.
 Session state and revision-checked command flows remain plain ES modules; they are shared domain behavior rather than renderer-specific component state.
 
-The remaining imperative boundaries are intentional during migration: legacy control synchronization, controller-owned page and editor-field roots, native form values, drag/drop, tooltip positioning, rendered-once workspace/integration forms and user-owned disclosure/focus state.
-Do not let a second renderer patch component-owned children.
+Remaining direct DOM work is limited to browser interactions such as native dialog open/close, file input resets, drag/drop feedback, geometry-based tooltip positioning, and focus/scroll/disclosure restoration; stable editor permission snapshots still use targeted control synchronization.
+These operations must not become a second renderer for component-owned children.
 A keyed card moving between columns changes its Preact parent and remounts; its logical focus and open attachment disclosure are explicitly restored.
 Within one parent, keyed nodes retain identity.
 

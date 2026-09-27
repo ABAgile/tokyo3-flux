@@ -13,32 +13,9 @@
 //           ├── .help                    guidance text (optional)
 //           └── body: .panel / .maintenance-list / .empty
 //
-// Every component is a Preact template (`*Template`); emptyState also has a node
-// form for the loading page, which is appended to a static host.
-import { el, uid } from './dom.js';
-import { html, nodeOf, nothing, render, replaceContent } from './preact.js';
-
-// #content holds exactly one page root. `data-content-view` names the
-// composition, so the next render updates the same root while the page kind is
-// unchanged.
-function contentRoot(tag, className, contentView) {
-  const root = el(tag, undefined, className);
-  if (contentView) root.dataset.contentView = contentView;
-  return root;
-}
-// Renders a view's template into its page root. The root persists while the
-// host shows the same view, so Preact updates it in place; a new root is filled
-// while detached and then replaces the host's content in one insertion.
-function renderRoot(host, className, contentView, template, tag = 'div') {
-  const current = host.firstElementChild;
-  const root =
-    current?.dataset.contentView === contentView
-      ? current
-      : contentRoot(tag, className, contentView);
-  render(template, root);
-  if (root !== current) replaceContent(host, root);
-  return root;
-}
+// Every component is a Preact template (`*Template`).
+import { uid } from './dom.js';
+import { html } from './vdom.js';
 // A bordered surface. Variants add their own padding and inner layout.
 function panelTemplate(className, content, tag = 'section') {
   const classes = className ? `panel ${className}` : 'panel';
@@ -55,7 +32,7 @@ function sectionHeadTemplate(title, ...actions) {
 // is either guidance text or a ready-made template or node.
 function panelHeadTemplate(title, { id, description, className } = {}) {
   const classes = className ? `section-head ${className}` : 'section-head';
-  const heading = html`<h3 id=${id || nothing}>${title}</h3>`;
+  const heading = html`<h3 id=${id || null}>${title}</h3>`;
   if (!description) return html`<div class=${classes}>${heading}</div>`;
   // Title and guidance travel together so actions stay on the opposite edge.
   const guidance = typeof description === 'string' ? helpTextTemplate(description) : description;
@@ -66,33 +43,15 @@ function helpTextTemplate(text, variant) {
   return html`<p class=${variant ? `help ${variant}` : 'help'}>${text}</p>`;
 }
 // Status lines are inline live regions: polite while they report progress,
-// assertive while they carry an error, hidden while they say nothing. Widgets
-// render them from their own state. setStatusText and setErrorText write the
-// status and error lines of rendered-once DOM (the detail form, the workspace
-// creation form, the integration form).
-// Error lines are one-line regions, empty and hidden until a write fails.
-// Errors never share a node with progress, so they are announced once and stay
-// until the next attempt clears them.
+// assertive while they carry an error, hidden while they say nothing. Components
+// render them from state. Error lines are one-line regions, empty and hidden
+// until a write fails, and are separate from progress so they are announced once.
 function errorLineTemplate(text = '', className = 'error') {
   return html`<p class=${className} role="alert" hidden=${!text}>${text}</p>`;
-}
-function setErrorText(line, text) {
-  line.textContent = text || '';
-  line.hidden = !text;
-}
-function setStatusText(line, text, error = false) {
-  const base = line.dataset.statusClass || 'help';
-  line.textContent = text || '';
-  line.className = error ? `${base} error` : base;
-  line.hidden = !text;
-  line.setAttribute('role', error ? 'alert' : 'status');
 }
 // Empty states are marked with data-empty.
 function emptyStateTemplate(text) {
   return html`<p class="empty" data-empty="true">${text}</p>`;
-}
-function emptyState(text) {
-  return nodeOf(emptyStateTemplate(text));
 }
 // The one metric row: large value over its caption, shared by the project lens,
 // sprint panels, the delivery trend and burn-down charts.
@@ -122,7 +81,7 @@ function filterControlID(title) {
 // Add-a-filter select: it adds one value and returns to its All entry.
 function filterSelectTemplate(title, entries, id, onChange) {
   return html`<label for=${id}
-    >${title}<select id=${id} aria-label=${title} onChange=${onChange}>
+    >${title}<select id=${id} data-focus-key=${`filter:${id}`} aria-label=${title} value="all" onChange=${onChange}>
       ${entries.map(([value, text]) => html`<option value=${value}>${text}</option>`)}
     </select></label
   >`;
@@ -161,6 +120,7 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
     max,
     step,
     autocomplete,
+    defaultChecked = false,
     onChange,
     onInput,
   } = options;
@@ -169,7 +129,7 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
   const control = entries
     ? html`<select
         name=${name}
-        id=${id || nothing}
+        id=${id || null}
         required=${required}
         disabled=${disabled}
         onChange=${onChange}
@@ -184,14 +144,14 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
     : type === 'textarea'
       ? html`<textarea
           name=${name}
-          id=${id || nothing}
+          id=${id || null}
           autocomplete=${autocomplete || 'off'}
           required=${required}
           readonly=${readOnly}
           disabled=${disabled}
-          aria-readonly=${readOnly ? 'true' : nothing}
-          maxlength=${maxLength ?? nothing}
-          placeholder=${placeholder ?? nothing}
+          aria-readonly=${readOnly ? 'true' : null}
+          maxlength=${maxLength ?? null}
+          placeholder=${placeholder ?? null}
           defaultValue=${text}
           onInput=${onInput}
           onChange=${onChange}
@@ -199,24 +159,25 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
       : html`<input
           name=${name}
           type=${type}
-          id=${id || nothing}
-          autocomplete=${choice ? nothing : autocomplete || 'off'}
+          id=${id || null}
+          autocomplete=${choice ? null : autocomplete || 'off'}
           required=${required}
           readonly=${readOnly}
           disabled=${disabled}
-          aria-readonly=${readOnly ? 'true' : nothing}
-          maxlength=${maxLength ?? nothing}
-          placeholder=${placeholder ?? nothing}
-          min=${min ?? nothing}
-          max=${max ?? nothing}
-          step=${step ?? nothing}
+          aria-readonly=${readOnly ? 'true' : null}
+          maxlength=${maxLength ?? null}
+          placeholder=${placeholder ?? null}
+          min=${min ?? null}
+          max=${max ?? null}
+          step=${step ?? null}
           defaultValue=${text}
+          defaultChecked=${type === 'checkbox' ? defaultChecked : null}
           onInput=${onInput}
           onChange=${onChange}
         />`;
   return controlFirst
-    ? html`<label class=${className || nothing}>${control}${title}</label>`
-    : html`<label class=${className || nothing}>${title}${control}</label>`;
+    ? html`<label class=${className || null}>${control}${title}</label>`
+    : html`<label class=${className || null}>${title}${control}</label>`;
 }
 function controlSlug(title) {
   return (
@@ -232,11 +193,9 @@ function filterChipRowTemplate(ariaLabel, chips) {
     ${chips}
   </div>`;
 }
-// Filter bars live in a slot so the shared planning bar can be relocated
-// between hosts rather than duplicated. A slot that receives the relocated bar
-// must have no bound children, so Preact never touches the moved node.
+// A page-level filter bar is rendered directly into its owning slot.
 function filterSlotTemplate(id, ...children) {
-  return html`<div class="filter-slot" id=${id || nothing}>${children.filter(Boolean)}</div>`;
+  return html`<div class="filter-slot" id=${id || null}>${children.filter(Boolean)}</div>`;
 }
 
 function maintenanceListTemplate(className, rows) {
@@ -250,23 +209,18 @@ function maintenanceRowTemplate({ tag = 'div', className = '', content = [], act
   const classes = `setup-row maintenance-row${className ? ` ${className}` : ''}`;
   const visible = actions.filter(Boolean);
   const body = html`<div class="maintenance-row-info">${content.filter(Boolean)}</div>
-    ${visible.length ? html`<div class="actions">${visible}</div>` : nothing}`;
+    ${visible.length ? html`<div class="actions">${visible}</div>` : null}`;
   return tag === 'article'
     ? html`<article class=${classes}>${body}</article>`
     : html`<div class=${classes}>${body}</div>`;
 }
 
 export {
-  contentRoot,
-  renderRoot,
   panelTemplate,
   sectionHeadTemplate,
   panelHeadTemplate,
   helpTextTemplate,
-  setStatusText,
   errorLineTemplate,
-  setErrorText,
-  emptyState,
   emptyStateTemplate,
   metricListTemplate,
   filterBarTemplate,

@@ -2,7 +2,8 @@
 import { api } from './api.js';
 import { workspaceHistoryLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import { html, nothing, keyedList } from './preact.js';
+import { html, keyedList } from './vdom.js';
+
 import { state, useStore } from './state.js';
 import { notice } from './notices.js';
 import { memberListingInfo } from './people.js';
@@ -39,8 +40,8 @@ function historyRowTemplate(event, label) {
   return html`<article class="history-row">
     <strong>${event.action.replaceAll('.', ' · ')}</strong>
     <p class="muted">${meta}</p>
-    ${event.target ? html`<small class="card-id">${`Target ${event.target}`}</small>` : nothing}
-    ${event.reason ? html`<p>${event.reason}</p>` : nothing}
+    ${event.target ? html`<small class="card-id">${`Target ${event.target}`}</small>` : null}
+    ${event.reason ? html`<p>${event.reason}</p>` : null}
   </article>`;
 }
 function selectHistoryPage(current) {
@@ -63,7 +64,7 @@ export function HistoryPage() {
   const { board, history, historyMore } = useStore(selectHistoryPage, sameHistoryPage);
   const label = workspaceHistoryLabel(board.workspace);
   return html`<p class="muted">${label}</p>
-    ${history.length ? nothing : emptyStateTemplate('No planning changes yet.')}
+    ${history.length ? null : emptyStateTemplate('No planning changes yet.')}
     ${
       history.length
         ? html`<div class="history-list">
@@ -73,11 +74,11 @@ export function HistoryPage() {
               (event) => historyRowTemplate(event, label),
             )}
           </div>`
-        : nothing
+        : null
     }
     ${
       historyMore
         ? html`<button type="button" onClick=${loadOlderHistory}>Load older changes</button>`
-        : nothing
+        : null
     }`;
 }

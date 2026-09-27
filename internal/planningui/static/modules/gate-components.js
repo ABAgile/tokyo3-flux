@@ -1,10 +1,28 @@
-// Presentation components: all domain state and actions arrive as props.
-import { html, useLayoutEffect, useRef } from './preact.js';
+// Presentation components receive domain actions as props; shared form state uses selectors.
+import { html } from './vdom.js';
+import { useLayoutEffect, useRef } from './vendor-preact.js';
+import { setState, useStore } from './state.js';
 
 export function WorkspaceSelection({ workspaces, choose, create }) {
+  const root = useRef();
+  const focusKey = useRef('');
+  useLayoutEffect(() => {
+    if (focusKey.current && document.activeElement === document.body)
+      root.current
+        ?.querySelector(`[data-workspace-choice="${CSS.escape(focusKey.current)}"]`)
+        ?.focus({ preventScroll: true });
+  });
+  const rememberFocus = (event) => {
+    focusKey.current =
+      event.target.closest('[data-workspace-choice]')?.dataset.workspaceChoice || '';
+  };
+  const clearOutsideFocus = (event) => {
+    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
+      focusKey.current = '';
+  };
   return html`
     <p class="help">Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.</p>
-    <div class="workspace-choice-list" role="list">
+    <div class="workspace-choice-list" role="list" ref=${root} onFocusCapture=${rememberFocus} onBlurCapture=${clearOutsideFocus}>
       ${workspaces.map(
         (workspace) => html`
         <button key=${workspace.id} type="button" class="workspace-choice"
@@ -22,22 +40,30 @@ export function WorkspaceSelection({ workspaces, choose, create }) {
 
 export function WorkspaceCreation({ name, hasWorkspaces, submit, back }) {
   const input = useRef();
+  const draft = useStore((current) => current.workspaceCreateDraft);
+  const busy = useStore((current) => current.workspaceCreating);
+  const status = useStore((current) => current.workspaceCreateStatus);
+  const error = useStore((current) => current.workspaceCreateStatusError);
   useLayoutEffect(() => input.current.focus(), []);
-  // Submission currently owns the input's value/disabled state and the status
-  // line's contents. Do not bind those properties until that controller moves
-  // into this component; this keeps one writer per property during migration.
+  useLayoutEffect(() => {
+    if (error) input.current?.focus();
+  }, [error, status]);
+  function onSubmit(event) {
+    event.preventDefault();
+    if (!busy) submit(input.current?.value || '');
+  }
   return html`
     <p class="help">${
       name
         ? `You are signed in as ${name}. Create a workspace to start planning; you will be its initial administrator.`
         : 'Create a workspace to start planning; your signed-in account will be its initial administrator.'
     }</p>
-    <form class="workspace-create-form" onSubmit=${submit}>
-      <label>Workspace name<input ref=${input} id="workspace-name" name="name" type="text" required maxLength="120" autocomplete="organization" placeholder="e.g. Team Alpha" /></label>
-      <p class="workspace-create-status" data-status-class="workspace-create-status" data-workspace-create-status="true" hidden role="status" aria-live="polite"></p>
+    <form class="workspace-create-form" onSubmit=${onSubmit}>
+      <label>Workspace name<input ref=${input} id="workspace-name" name="name" type="text" required maxLength="120" autocomplete="organization" placeholder="e.g. Team Alpha" value=${draft} disabled=${busy} onInput=${(event) => setState({ workspaceCreateDraft: event.currentTarget.value })} /></label>
+      <p class=${`workspace-create-status${error ? ' error' : ''}`} data-status-class="workspace-create-status" data-workspace-create-status="true" hidden=${!status} role=${error ? 'alert' : 'status'} aria-live=${error ? 'assertive' : 'polite'}>${status}</p>
       <div class="actions">
-        <button type="submit" class="primary">Create workspace</button>
-        ${hasWorkspaces && html`<button type="button" onClick=${back}>Back to workspace selection</button>`}
+        <button type="submit" class="primary" disabled=${busy}>Create workspace</button>
+        ${hasWorkspaces && html`<button type="button" disabled=${busy} onClick=${back}>Back to workspace selection</button>`}
       </div>
     </form>
   `;

@@ -1,5 +1,5 @@
 // Shared lifecycle helpers for component-owned requests and dismissal listeners.
-import { useEffect, useRef, useState } from './preact.js';
+import { useEffect, useRef, useState } from './vendor-preact.js';
 
 // `request` receives an AbortSignal. Every captured value that should restart
 // the request belongs in `dependencies`; previous data remains while reloading.

@@ -1,5 +1,5 @@
 // Small Preact-aware external store for shared application state.
-import { useLayoutEffect, useReducer, useRef } from './preact.js';
+import { useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
 
 export function createStore(initialState) {
   const listeners = new Set();

@@ -1,5 +1,5 @@
 // Sprint panels, the Sprints page, sprint history and sprint dialogs.
-import { $, uid } from './dom.js';
+import { uid } from './dom.js';
 import { api } from './api.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import {
@@ -11,21 +11,15 @@ import {
   metricListTemplate,
   maintenanceListTemplate,
 } from './layout.js';
-import {
-  classNames,
-  html,
-  withKey,
-  nothing,
-  keyedList,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from './preact.js';
+import { classNames } from './dom.js';
+import { html, keyedList, withKey } from './vdom.js';
+import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
+
 import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { done, blocked, scopeItems } from './items.js';
-import { placeFilters, sprintFilterItems, sprintMatchesFilters } from './filters.js';
+import { sprintFilterItems, sprintMatchesFilters } from './filters.js';
 import { burndownTemplate } from './view-burndown.js';
 import { quick } from './commands.js';
 import { openEditor, setEditorSaveText } from './dialog.js';
@@ -105,12 +99,12 @@ function sprintActionsTemplate(s, expanded) {
       title=${label}
       data-burndown-toggle=${s.id}
       aria-expanded=${String(expanded)}
-      aria-controls=${expanded ? `burndown-${s.id}` : nothing}
+      aria-controls=${expanded ? `burndown-${s.id}` : null}
       disabled=${state.busy || state.loading}
       onClick=${() => toggleBurndown(s)}
     ></button>
     ${actionIconTemplate('View scope', '◎', () => viewSprintScope(s))}
-    ${s.state !== 'closed' ? writeIconTemplate('Edit sprint', '✎', () => editSprint(s)) : nothing}
+    ${s.state !== 'closed' ? writeIconTemplate('Edit sprint', '✎', () => editSprint(s)) : null}
     ${
       s.state === 'planned'
         ? writeIconTemplate(
@@ -119,15 +113,15 @@ function sprintActionsTemplate(s, expanded) {
             () => quick({ kind: 'sprint.start', target: s.id }),
             'primary',
           )
-        : nothing
+        : null
     }
-    ${s.state === 'active' ? writeIconTemplate('Close sprint', '■', () => closeSprint(s)) : nothing}
+    ${s.state === 'active' ? writeIconTemplate('Close sprint', '■', () => closeSprint(s)) : null}
     ${
       s.state === 'closed'
         ? html`${writeIconTemplate('Re-open sprint', '↶', () =>
             quick({ kind: 'sprint.reopen', target: s.id }),
           )}${writeIconTemplate('Archive sprint', '▣', () => archiveSprint(s), 'quiet')}`
-        : nothing
+        : null
     }
   </div>`;
 }
@@ -150,7 +144,7 @@ function sprintPanelTemplate(s, items = scopeItems(s)) {
           ? html`<small class="muted"
               >Scope is preserved at closure. Archive this immutable sprint to keep it in paginated history; card details remain current.</small
             >`
-          : nothing
+          : null
       }
     </div>
     ${sprintActionsTemplate(s, expanded)}
@@ -159,7 +153,7 @@ function sprintPanelTemplate(s, items = scopeItems(s)) {
       [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'],
       [items.filter(blocked).length, 'Blocked'],
     ])}
-    ${expanded ? burndownTemplate(s) : nothing}
+    ${expanded ? burndownTemplate(s) : null}
   </article>`;
 }
 export function sprintResults(board, query) {
@@ -170,7 +164,7 @@ export function sprintResults(board, query) {
   return { filtered, matches };
 }
 function sprintRowsTemplate({ filtered, matches }) {
-  const search = $('search').value.trim();
+  const search = state.searchInput.trim();
   const query = state.searchQuery;
   if (!matches.length) {
     const message = !state.board.sprints.length
@@ -241,17 +235,16 @@ function sprintHistoryTemplate() {
             disabled=${state.busy || state.loading}
             onClick=${loadOlderSprintHistory}
           >Load older archived sprints</button>`
-        : nothing
+        : null
     }
   </section>`;
 }
 // Sprints uses the same page layout as Projects: a read-only summary section
-// first, then a titled section whose filter bar sits directly below its heading.
-// The filter slot has no bound children, because the shared planning filter
-// bar is moved into it (placeFilters).
+// first, then a titled section whose shared planning filters sit below its heading.
 const SPRINT_PAGE_KEYS = [
   'board',
   'searchQuery',
+  'searchInput',
   'busy',
   'loading',
   'sprintHistory',
@@ -264,12 +257,8 @@ function selectSprintPage(current) {
 function sameSprintPage(left, right) {
   return SPRINT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
 }
-export function SprintsPage({ results }) {
+export function SprintsPage({ results, filters }) {
   useStore(selectSprintPage, sameSprintPage);
-  useLayoutEffect(() => {
-    placeFilters($('sprint-filter-slot'));
-    return () => placeFilters();
-  }, []);
   return html`${sprintVelocityTemplate()}
       <section class="sprint-planning">
         ${sectionHeadTemplate(
@@ -279,7 +268,7 @@ export function SprintsPage({ results }) {
             tracked: false,
           }),
         )}
-        <div class="filter-slot" id="sprint-filter-slot"></div>
+        <div class="filter-slot" id="sprint-filter-slot">${filters}</div>
         <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate(results)}</div>
       </section>
       ${sprintHistoryTemplate()}`;
@@ -295,14 +284,14 @@ export function SprintSummary({ board, view, scope }) {
   const label = selected?.state === 'closed' ? `Closed sprint: ${selected.name}` : 'Active sprints';
   const content =
     view !== 'board' || !board
-      ? nothing
+      ? null
       : html`${keyedList(
           sprints,
           (sprint) => sprint.id,
           (sprint) => sprintPanelTemplate(sprint),
         )}${
           sprints.length
-            ? nothing
+            ? null
             : emptyStateTemplate(
                 'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.',
               )

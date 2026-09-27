@@ -1,7 +1,7 @@
 // Bulk selection and bulk actions in the List presentation.
 import { labelForeground } from './format.js';
 import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
-import { html, nothing } from './preact.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { accessButtonTemplate } from './permissions.js';
@@ -212,11 +212,11 @@ export function bulkBarTemplate(items) {
                   ? html`<button type="button" onClick=${selectAll}
                       >${`Select all ${ids.length} shown`}</button
                     >`
-                  : nothing
+                  : null
               }
               <button type="button" onClick=${clear}>Clear selection</button>
             </div>`
-        : nothing
+        : null
     }
   </div>`;
 }

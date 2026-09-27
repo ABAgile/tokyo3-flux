@@ -5,18 +5,12 @@ async function run(page) {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   const result = await page.evaluate(async () => {
-    const {
-      html,
-      renderIsland,
-      unmountIsland,
-      useLayoutEffect,
-      useRef,
-      useState,
-      useReducer,
-      mount,
-      nodeOf,
-      syncDisabled,
-    } = await import('/modules/preact.js');
+    const { html } = await import('/modules/vdom.js');
+    const { render, useLayoutEffect, useRef, useState, useReducer } = await import(
+      '/modules/vendor-preact.js'
+    );
+    const renderIsland = (host, template) => render(template, host);
+    const unmount = (host) => render(null, host);
     const { useRequest, useDismiss } = await import('/modules/ui-hooks.js');
     const { state, setState, useStore } = await import('/modules/state.js');
     const { StatusBars, notice, showPlanningChangeNotice, clearPlanningChangeNotice } =
@@ -67,11 +61,16 @@ async function run(page) {
     first.click();
     check(chosen === 'one', 'choice action uses workspace id');
     let submitted;
+    setState({
+      workspaceCreateDraft: '',
+      workspaceCreating: false,
+      workspaceCreateStatus: '',
+      workspaceCreateStatusError: false,
+    });
     renderIsland(
       host,
-      html`<${WorkspaceCreation} name="Tester" hasWorkspaces=${true} submit=${(event) => {
-        event.preventDefault();
-        submitted = new FormData(event.currentTarget).get('name');
+      html`<${WorkspaceCreation} name="Tester" hasWorkspaces=${true} submit=${(value) => {
+        submitted = value;
       }} back=${() => {}} />`,
     );
     const input = host.querySelector('input');
@@ -81,8 +80,10 @@ async function run(page) {
       'native field contract',
     );
     input.value = 'Local workspace';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
     host.querySelector('form').requestSubmit();
-    check(submitted === 'Local workspace', 'native submission retains field name');
+    check(submitted === 'Local workspace', 'native submission reads the Preact-owned field');
     let started = 0,
       stopped = 0;
     function Lifecycle() {
@@ -99,14 +100,12 @@ async function run(page) {
     host.firstElementChild.click();
     await flush();
     check(started === 1 && host.textContent === 'Count 1', 'hook state updates a component');
-    unmountIsland(host);
-    unmountIsland(host);
-    check(stopped === 1 && !host.children.length, 'unmount releases hooks exactly once');
-    const detached = nodeOf(html`<${Lifecycle} />`);
-    host.append(detached);
-    await flush();
-    unmountIsland(detached);
-    check(stopped === 2, 'rendered-once component releases its effects');
+    unmount(host);
+    unmount(host);
+    check(
+      stopped === 1 && !host.children.length,
+      'direct Preact unmount releases hooks exactly once',
+    );
     function ReducerCounter() {
       const [count, dispatch] = useReducer((value, action) => value + action, 0);
       return html`<button onClick=${() => dispatch(1)}>Reduced ${count}</button>`;
@@ -158,7 +157,7 @@ async function run(page) {
     setState({ board: { role: 'admin', labels, items: [] } });
     await flush();
     check(host.textContent.includes('0 cards'), 'Labels page updates when item usage changes');
-    unmountIsland(host);
+    unmount(host);
     setState({ board: previousLabelBoard });
 
     const previousMembersBoard = state.board;
@@ -182,7 +181,7 @@ async function run(page) {
         host.textContent.includes('Review workspace members'),
       'Members page reacts to role changes',
     );
-    unmountIsland(host);
+    unmount(host);
     setState({ board: previousMembersBoard, session: previousSession });
 
     const previousGate = state.workspaceGate;
@@ -330,6 +329,27 @@ async function run(page) {
     check(!host.querySelector('#editor')?.open, 'EditorDialog closes through the controller');
 
     setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
+    openEditor(
+      'First field snapshot',
+      () => html`<label>Snapshot<input name="snapshot" defaultValue="first" /></label>`,
+      () => ({ kind: 'probe' }),
+    );
+    await flush();
+    const oldFields = host.querySelector('#fields');
+    host.querySelector('[name="snapshot"]').value = 'draft';
+    openEditor(
+      'Second field snapshot',
+      () => html`<label>Snapshot<input name="snapshot" defaultValue="second" /></label>`,
+      () => ({ kind: 'probe' }),
+    );
+    await flush();
+    check(
+      host.querySelector('#fields') !== oldFields &&
+        host.querySelector('[name="snapshot"]')?.value === 'second',
+      'replacement editor config remounts uncontrolled field snapshots',
+    );
+    closeEditor();
+    await flush();
     let customSubmission;
     openFormDialog(
       'Custom form probe',
@@ -369,7 +389,7 @@ async function run(page) {
       'undo notice is a store-driven polite live region',
     );
     setState({ undoOffer: undefined, undoText: '' });
-    unmountIsland(host);
+    unmount(host);
     setState({ board: previousBoard, workspaceGate: previousGate, view: previousView });
 
     let refreshes = 0;
@@ -454,7 +474,7 @@ async function run(page) {
       requestSignals.length === 2 && requestSignals[0].aborted,
       'request key aborts stale work',
     );
-    unmountIsland(host);
+    unmount(host);
     check(requestSignals[1].aborted, 'request cleanup aborts work on unmount');
 
     let dismissed = 0;
@@ -480,23 +500,19 @@ async function run(page) {
     outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     await flush();
     check(dismissed === 1, 'useDismiss cleans up after closing');
-    unmountIsland(host);
+    unmount(host);
     renderIsland(host, html`<${DismissProbe} />`);
     await flush();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await flush();
     check(dismissed === 2 && !host.children.length, 'useDismiss handles Escape');
-    unmountIsland(host);
+    unmount(host);
     outside.remove();
 
-    const oldUpdate = mount(host, html`<p>Old form</p>`);
-    mount(host, html`<p>New form</p>`);
-    oldUpdate(html`<p>Stale response</p>`);
-    check(host.textContent === 'New form', 'stale mount updates cannot overwrite a newer form');
-    renderIsland(host, html`<button ref=${syncDisabled(false)}>Write</button>`);
-    host.firstElementChild.disabled = true;
-    renderIsland(host, html`<button ref=${syncDisabled(false)}>Write</button>`);
-    check(!host.firstElementChild.disabled, 'busy controls synchronize against real DOM state');
+    renderIsland(host, html`<button disabled=${true}>Write</button>`);
+    check(host.firstElementChild.disabled, 'Preact applies disabled state from props');
+    renderIsland(host, html`<button disabled=${false}>Write</button>`);
+    check(!host.firstElementChild.disabled, 'Preact updates disabled state from props');
     renderIsland(
       host,
       html`<div>${markdownTemplate('<script>alert(1)</script> [unsafe](javascript:alert) **safe**')}</div>`,

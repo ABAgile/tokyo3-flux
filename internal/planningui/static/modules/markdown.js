@@ -4,7 +4,8 @@
 // markdownURL.
 import { uid } from './dom.js';
 import { requestKey } from './api.js';
-import { html, nothing, useLayoutEffect, useMemo, useRef, useState } from './preact.js';
+import { html } from './vdom.js';
+import { useLayoutEffect, useMemo, useRef, useState } from './vendor-preact.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
@@ -338,7 +339,7 @@ const MARKDOWN_SHORTCUTS = {
 };
 function markdownPreview(source, emptyText) {
   return html`${markdownTemplate(source)}${
-    String(source || '').trim() ? nothing : html`<p class="help">${emptyText}</p>`
+    String(source || '').trim() ? null : html`<p class="help">${emptyText}</p>`
   }`;
 }
 // The Markdown editor keeps preview mode in component state while the native
@@ -465,7 +466,7 @@ function MarkdownEditor({
       placeholder="Write Markdown…"
       spellcheck="true"
       data-markdown-control="true"
-      data-comment-control=${settings.commentControl ? 'true' : nothing}
+      data-comment-control=${settings.commentControl ? 'true' : null}
       autocomplete="off"
       defaultValue=${value || ''}
       hidden=${previewing}
@@ -474,7 +475,7 @@ function MarkdownEditor({
       onKeydown=${shortcut}
     ></textarea>
     <div class="markdown-preview" hidden=${!previewing} tabindex="0">
-      ${previewSource === null ? nothing : markdownPreview(previewSource, 'Nothing to preview yet.')}
+      ${previewSource === null ? null : markdownPreview(previewSource, 'Nothing to preview yet.')}
     </div>
   </div></div>`;
 }

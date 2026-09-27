@@ -1,18 +1,23 @@
 // The GitLab integration form on the Projects page.
-import { errorLineTemplate, fieldTemplate, helpTextTemplate, setErrorText } from './layout.js';
-import { html, nothing } from './preact.js';
-import { state } from './state.js';
+import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
+import { html } from './vdom.js';
+import { setState, state } from './state.js';
 import { hooks } from './hooks.js';
 import { notice } from './notices.js';
-import { renderControls } from './controls.js';
 import { multiSelectTemplate } from './multi-select.js';
 import { integrationProjectEntries, loadGitLabProjects } from './gitlab-catalog.js';
 import { change } from './commands.js';
 
 export function editIntegration() {
   if (!state.board || state.busy || state.loading || state.integrationFormOpen) return;
-  state.integrationFormOpen = true;
-  state.integrationCatalog = [];
+  setState({
+    integrationFormOpen: true,
+    integrationDraft: state.board.integration.projects.map(String),
+    integrationConsent: false,
+    integrationSubmitting: false,
+    integrationFormError: '',
+    integrationCatalog: [],
+  });
   state.integrationCatalogLoaded = false;
   state.integrationCatalogError = '';
   state.integrationCatalogLoading = false;
@@ -61,19 +66,23 @@ export async function loadIntegrationCatalog() {
   }
 }
 function cancelIntegration() {
-  state.integrationFormOpen = false;
-  state.integrationCatalogError = '';
-  state.integrationCatalogLoading = false;
-  state.integrationCatalogRequest++;
+  setState({
+    integrationFormOpen: false,
+    integrationDraft: undefined,
+    integrationConsent: false,
+    integrationSubmitting: false,
+    integrationFormError: '',
+    integrationCatalogError: '',
+    integrationCatalogLoading: false,
+    integrationCatalogRequest: state.integrationCatalogRequest + 1,
+  });
   hooks.render();
 }
 async function submitIntegration(event, readOnly) {
   event.preventDefault();
   const form = event.currentTarget;
-  const save = form.querySelector('[type="submit"]');
-  const cancel = form.querySelector('[data-integration-cancel]');
-  const error = form.querySelector('[data-integration-error]');
-  if (readOnly || !save || state.busy || state.integrationCatalogLoading) return;
+  if (readOnly || state.busy || state.integrationCatalogLoading || state.integrationSubmitting)
+    return;
   const parts = new FormData(form).getAll('projects');
   try {
     if (parts.length > 100) throw new Error('Select at most 100 GitLab projects.');
@@ -81,27 +90,27 @@ async function submitIntegration(event, readOnly) {
       throw new Error('Choose only positive numeric GitLab projects.');
     if (new Set(parts).size !== parts.length)
       throw new Error('A GitLab project may only be selected once.');
-    state.integrationFormOpen = false;
-    save.disabled = true;
-    cancel.disabled = true;
+    setState({ integrationFormOpen: false, integrationSubmitting: true, integrationFormError: '' });
     await change({
       revision: state.board.workspace.revision,
       kind: 'integration.save',
       integration: { instance: state.board.connector_instance, projects: parts.map(Number) },
     });
-    state.integrationCatalogError = '';
-    state.integrationCatalogLoading = false;
-    state.integrationCatalogRequest++;
+    setState({
+      integrationCatalogError: '',
+      integrationCatalogLoading: false,
+      integrationCatalogRequest: state.integrationCatalogRequest + 1,
+      integrationDraft: undefined,
+      integrationConsent: false,
+    });
     hooks.render();
   } catch (submitError) {
-    state.integrationFormOpen = true;
-    setErrorText(
-      error,
-      `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
-    );
-    save.disabled = false;
-    cancel.disabled = false;
-    renderControls();
+    setState({
+      integrationFormOpen: true,
+      integrationFormError: `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
+    });
+  } finally {
+    setState({ integrationSubmitting: false });
   }
 }
 // The form is rendered when it opens or its catalog changes (the Projects page
@@ -111,8 +120,8 @@ export function integrationFormTemplate() {
   const currentBoard = state.board;
   const readOnly = currentBoard.role !== 'admin';
   const loading = state.integrationCatalogLoading;
-  const selected = currentBoard.integration.projects.map(String);
-  const disabled = readOnly || loading;
+  const selected = state.integrationDraft ?? currentBoard.integration.projects.map(String);
+  const disabled = readOnly || loading || state.integrationSubmitting;
   const catalogNote = state.integrationCatalogError
     ? html`${errorLineTemplate(
         `Could not load the GitLab project list. ${state.integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`,
@@ -121,7 +130,7 @@ export function integrationFormTemplate() {
         >`
     : currentBoard.connector_instance && !loading && !state.integrationCatalog.length
       ? helpTextTemplate('No GitLab projects are visible to the configured read connector.')
-      : nothing;
+      : null;
   return html`<form
     class="inline-maintenance-form"
     onSubmit=${(event) => submitIntegration(event, readOnly)}
@@ -137,9 +146,12 @@ export function integrationFormTemplate() {
       selected,
       undefined,
       'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.',
-      { disabled },
+      {
+        disabled,
+        onChange: (values) => setState({ integrationDraft: values }),
+      },
     )}
-    ${loading ? helpTextTemplate('Loading available GitLab projects…') : nothing}
+    ${loading ? helpTextTemplate('Loading available GitLab projects…') : null}
     ${catalogNote}
     ${helpTextTemplate(
       'Every workspace member, including viewers and authorized machine readers, can see engineering metadata from these projects. Revoking a project or changing the instance removes its links and cached observations; cards and audit remain. No selected projects disables the integration.',
@@ -150,22 +162,28 @@ export function integrationFormTemplate() {
       'yes',
       'checkbox',
       undefined,
-      { required: true, className: 'consent', disabled },
+      {
+        required: true,
+        className: 'consent',
+        disabled,
+        defaultChecked: state.integrationConsent,
+        onChange: (event) => setState({ integrationConsent: event.currentTarget.checked }),
+      },
     )}
     ${
       currentBoard.connector_instance
-        ? nothing
+        ? null
         : helpTextTemplate(
             'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.',
           )
     }
-    <p class="error" role="alert" hidden data-integration-error></p>
+    ${errorLineTemplate(state.integrationFormError)}
     <div class="dialog-foot inline-maintenance-actions">
-      <button type="button" data-integration-cancel onClick=${cancelIntegration}>Cancel</button>
+      <button type="button" data-integration-cancel disabled=${state.integrationSubmitting} onClick=${cancelIntegration}>Cancel</button>
       ${
         readOnly
-          ? nothing
-          : html`<button type="submit" class="primary" disabled=${loading}>Save changes</button>`
+          ? null
+          : html`<button type="submit" class="primary" disabled=${disabled}>Save changes</button>`
       }
     </div>
   </form>`;

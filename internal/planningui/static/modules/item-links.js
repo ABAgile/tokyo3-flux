@@ -1,13 +1,13 @@
 // Adding and reconciling GitLab links on a work item.
-import { $, uid } from './dom.js';
+import { $, syncDisabled, uid } from './dom.js';
 import { api } from './api.js';
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
-import { html, nothing, syncDisabled } from './preact.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { gitLabWritable } from './permissions.js';
 import { notice } from './notices.js';
-import { helpPopover, multiSelectTemplate } from './multi-select.js';
+import { helpPopoverTemplate, multiSelectTemplate } from './multi-select.js';
 import {
   loadGitLabProjects,
   approvedGitLabProjectEntries,
@@ -280,7 +280,7 @@ export async function addGitLabLink(item, context) {
         ? errorLineTemplate(
             `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
           )
-        : nothing
+        : null
     }
         ${multiSelectTemplate(
           'project',
@@ -349,7 +349,7 @@ export async function addGitLabLink(item, context) {
         ${
           !projects.length && !catalogError && !state.board.integration.projects.length
             ? helpTextTemplate('No approved GitLab projects are available for linking.')
-            : nothing
+            : null
         }`,
     (data) => {
       const rawProject = String(data.get('project') || '');
@@ -372,14 +372,10 @@ export async function addGitLabLink(item, context) {
     undefined,
     returnToCard,
     {
-      onOpen: () =>
-        $('editor-title-extra').append(
-          ' ',
-          helpPopover(
-            'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
-            'GitLab links',
-          ),
-        ),
+      titleExtra: html` ${helpPopoverTemplate(
+        'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
+        'GitLab links',
+      )}`,
     },
   );
 }

@@ -1,4 +1,4 @@
-// Permission updates for editor snapshots, whose uncontrolled fields keep a stable DOM lifetime.
+// Permission updates for the modal editor while its native fields keep a stable lifetime.
 import { $ } from './dom.js';
 import { state } from './state.js';
 import { writable, adminWritable, gitLabWritable, canComment } from './permissions.js';
@@ -21,5 +21,4 @@ function syncEditorControls(root) {
 
 export function renderControls() {
   syncEditorControls($('editor'));
-  syncEditorControls(state.detailState?.form);
 }

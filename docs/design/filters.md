@@ -4,7 +4,7 @@
   It is the only filter container; there is no separate toolbar component.
   Board and Archive host it in the planning frame's slot, above the board body and below the summaries.
   Pages that own a section layout — Projects and Sprints — host it inside their own section, immediately below the section heading it filters.
-  The planning filter bar is one element that is relocated between those hosts rather than duplicated, so its controls keep their state and identity across views.
+  The shared planning filter bar is rendered only in its active host, never duplicated; its state remains shared across views.
   Maintenance views without work filters hide it.
 - One shared board belongs to each workspace; projects classify items optionally, and a work item may belong to multiple projects.
   Project, assignee and label filters sit beside Scope in the planning filter bar (including unassigned and named assignees), never in the sidebar and never as a planning boundary.

@@ -15,7 +15,9 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { html, withKey, nothing, keyedList, useEffect, useMemo, useRef } from './preact.js';
+import { html, keyedList, withKey } from './vdom.js';
+import { useEffect, useMemo, useRef } from './vendor-preact.js';
+
 import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -91,11 +93,13 @@ function integrationProjectChipsTemplate(projectIDs) {
     })}
   </div>`;
 }
-function IntegrationEditor({ board, catalog, loading, error }) {
+// Rebuild the form only when catalog or submission status changes. Selected
+// projects and consent live in shared state so a failed save can reopen it intact.
+function IntegrationEditor({ board, catalog, loading, error, submitting, formError }) {
   const generation = useRef(0);
   return useMemo(
     () => withKey(++generation.current, integrationFormTemplate()),
-    [board, catalog, loading, error],
+    [board, catalog, loading, error, submitting, formError],
   );
 }
 function integrationTemplate(approvedIDs) {
@@ -105,7 +109,7 @@ function integrationTemplate(approvedIDs) {
   if (state.integrationFormOpen) {
     return panelTemplate(
       'maintenance-section',
-      html`${head()}<${IntegrationEditor} board=${state.board} catalog=${state.integrationCatalog} loading=${state.integrationCatalogLoading} error=${state.integrationCatalogError} />`,
+      html`${head()}<${IntegrationEditor} board=${state.board} catalog=${state.integrationCatalog} loading=${state.integrationCatalogLoading} error=${state.integrationCatalogError} submitting=${state.integrationSubmitting} formError=${state.integrationFormError} />`,
     );
   }
   const configured = state.board.connector_instance || 'Not configured';
@@ -115,18 +119,18 @@ function integrationTemplate(approvedIDs) {
     html`${head(accessButtonTemplate('Edit integration', editIntegration))}
     ${helpTextTemplate(`Operator-configured GitLab instance: ${configured}`)}
     ${helpTextTemplate(`${approved} approved GitLab project${approved === 1 ? '' : 's'}.`)}
-    ${approved ? integrationProjectChipsTemplate(approvedIDs) : nothing}
-    ${state.integrationCatalogLoading ? helpTextTemplate('Loading approved GitLab project names…') : nothing}
+    ${approved ? integrationProjectChipsTemplate(approvedIDs) : null}
+    ${state.integrationCatalogLoading ? helpTextTemplate('Loading approved GitLab project names…') : null}
     ${
       state.integrationCatalogError
         ? helpTextTemplate(
             `Project names are unavailable; approved IDs remain visible. ${state.integrationCatalogError}`,
           )
-        : nothing
+        : null
     }
     ${
       state.board.connector_instance
-        ? nothing
+        ? null
         : helpTextTemplate(
             'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.',
           )
@@ -178,7 +182,6 @@ function projectsTemplate() {
   const ids = state.projectFilterIDs;
   const addFilter = (name) => (event) => {
     addFilterValue(name, event.currentTarget.value, projectFilters);
-    event.currentTarget.value = 'all';
     rerenderProjects();
   };
   const controls = html`${filterSelectTemplate(
@@ -237,6 +240,8 @@ const PROJECT_PAGE_KEYS = [
   'integrationCatalogLoaded',
   'integrationCatalogError',
   'integrationCatalogLoading',
+  'integrationSubmitting',
+  'integrationFormError',
   'busy',
   'loading',
 ];

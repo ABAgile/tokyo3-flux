@@ -1280,6 +1280,12 @@ async function run(page) {
     'attachment hover description is missing',
   );
   check(
+    (await attachments
+      .getByRole('link', { name: 'plan.txt', exact: true })
+      .getAttribute('aria-describedby')) === 'attachment-tooltip',
+    'attachment tooltip association is not Preact-owned',
+  );
+  check(
     await attachmentTooltip.evaluate((tooltip) => {
       const box = tooltip.getBoundingClientRect();
       const attachment = tooltip.closest('dialog')?.querySelector('.attachment-tile-link');

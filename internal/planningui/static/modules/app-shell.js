@@ -1,11 +1,15 @@
 // Preact owns the application shell; named content hosts keep existing view
 // lifetimes stable while their controllers move into components.
-import { Fragment, html, nothing, useLayoutEffect, useRef, withKey } from './preact.js';
+import { Fragment } from './vendor-preact.js';
+import { html, withKey } from './vdom.js';
+import { useLayoutEffect, useRef } from './vendor-preact.js';
+
 import { state, useStore } from './state.js';
 import { workspaceLabel } from './format.js';
 import { memberName } from './people.js';
 import { StatusBars } from './notices.js';
 import { EditorDialog } from './dialog.js';
+import { AttachmentTooltip } from './item-attachments.js';
 import { emptyStateTemplate } from './layout.js';
 import { filteredItems, planningFilterChipsTemplate, singleFilterValue } from './filters.js';
 import { labelOptionColors } from './items.js';
@@ -101,6 +105,7 @@ function PageContent({
   onWorkspaceSubmit,
   onWorkspaceBack,
   sprintResults,
+  planningFilters,
 }) {
   if (!board) {
     if (workspaceGate === 'select')
@@ -121,9 +126,11 @@ function PageContent({
     history: HistoryPage,
   };
   const Page = pages[view];
-  if (!Page) return nothing;
+  if (!Page) return null;
   const content =
-    view === 'sprints' ? html`<${SprintsPage} results=${sprintResults} />` : html`<${Page} />`;
+    view === 'sprints'
+      ? html`<${SprintsPage} results=${sprintResults} filters=${planningFilters} />`
+      : html`<${Page} />`;
   return html`<div class="page-stack" data-content-view=${view}>${content}</div>`;
 }
 
@@ -154,7 +161,7 @@ function PlanningBody({
   integrationFormOpen,
   items,
 }) {
-  const content = useRef(nothing);
+  const content = useRef(null);
   if (active && board && ['board', 'archive'].includes(view))
     content.current = html`${withKey(
       board.workspace.id,
@@ -173,9 +180,61 @@ function PlanningBody({
 
 // The App owns both content mounts; the planning body keeps its component
 // lifetime while hidden, just as the persistent frame did before migration.
+function PlanningFilters({
+  board,
+  view,
+  presentation,
+  scope,
+  busy,
+  loading,
+  integrationFormOpen,
+  count,
+  onPresentation,
+  onScopeChange,
+  onFilterChange,
+  onSearchInput,
+  onSearchChange,
+  onSearchKeyDown,
+}) {
+  const searchInput = useStore((current) => current.searchInput);
+  const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
+  const showLabelFilter = !['sprints', 'history'].includes(view);
+  return html`<${Fragment}>
+    <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
+      <div class="actions">
+        <label id="scope-label" hidden=${view !== 'board'}>Scope<select id="scope" data-focus-key="filter:scope" value=${scope} onChange=${onScopeChange}>
+          <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
+          ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
+        </select></label>
+        <label>Project<select id="project" data-focus-key="filter:project" aria-label="Project" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('project', event)}>
+          <option value="all">All projects</option><option value="none">No project</option>
+          ${board?.projects?.map((project) => html`<option key=${project.id} value=${project.id}>${project.name}</option>`)}
+        </select></label>
+        <label>Assignee<select id="assignee" data-focus-key="filter:assignee" aria-label="Assignee" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('assignee', event)}>
+          <option value="all">All assignees</option><option value="none">Unassigned</option>
+          ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
+        </select></label>
+        <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" data-focus-key="filter:label" aria-label="Label" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('label', event)}>
+          <option value="all">All labels</option><option value="none">No labels</option>
+          ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
+        </select></label>
+        <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" data-focus-key="filter:search" type="search" autocomplete="off" value=${searchInput} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
+      </div>
+      <div class="filter-bar-end">
+        <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation" hidden=${!board || view !== 'board'}>
+          <button id="presentation-board" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'board')} onClick=${() => onPresentation('board')}>Board</button>
+          <button id="presentation-list" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'list')} onClick=${() => onPresentation('list')}>List</button>
+        </div>
+        <span id="count" class="filter-bar-count muted">${count}</span>
+      </div>
+    </div>
+    ${planningFilterChipsTemplate(showFilters, showLabelFilter)}
+  </${Fragment}>`;
+}
+
 function PlanningArea({
   showPageRoot,
-  pageContent,
+  renderPageContent,
   sprintResults,
   contentBusy,
   board,
@@ -192,8 +251,6 @@ function PlanningArea({
   onSearchChange,
   onSearchKeyDown,
 }) {
-  const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
-  const showLabelFilter = !['sprints', 'history'].includes(view);
   const items = board && ['board', 'archive'].includes(view) ? filteredItems() : [];
   const count = !board
     ? ''
@@ -204,6 +261,23 @@ function PlanningArea({
         : view === 'archive'
           ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
           : `${items.length} items · workspace revision ${board.workspace.revision}`;
+  const planningFilters = html`<${PlanningFilters}
+    board=${board}
+    view=${view}
+    presentation=${presentation}
+    scope=${scope}
+    busy=${busy}
+    loading=${loading}
+    integrationFormOpen=${integrationFormOpen}
+    count=${count}
+    onPresentation=${onPresentation}
+    onScopeChange=${onScopeChange}
+    onFilterChange=${onFilterChange}
+    onSearchInput=${onSearchInput}
+    onSearchChange=${onSearchChange}
+    onSearchKeyDown=${onSearchKeyDown}
+  />`;
+  const pageContent = renderPageContent(planningFilters);
   const focusKey = useRef('');
   const focusRoute = `${showPageRoot ? 'page' : view}:${view === 'board' ? presentation : ''}`;
   const previousRoute = useRef(focusRoute);
@@ -232,35 +306,7 @@ function PlanningArea({
           <${ProjectSummary} board=${board} view=${view} projectID=${singleFilterValue('project')} />
           <${SprintSummary} board=${board} view=${view} scope=${scope} />
           <div id="planning-filter-slot" class="filter-slot">
-            <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
-              <div class="actions">
-                <label id="scope-label" hidden=${view !== 'board'}>Scope<select id="scope" value=${scope} onChange=${onScopeChange}>
-                  <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
-                  ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
-                </select></label>
-                <label>Project<select id="project" aria-label="Project" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('project', event)}>
-                  <option value="all">All projects</option><option value="none">No project</option>
-                  ${board?.projects?.map((project) => html`<option key=${project.id} value=${project.id}>${project.name}</option>`)}
-                </select></label>
-                <label>Assignee<select id="assignee" aria-label="Assignee" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('assignee', event)}>
-                  <option value="all">All assignees</option><option value="none">Unassigned</option>
-                  ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
-                </select></label>
-                <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" aria-label="Label" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('label', event)}>
-                  <option value="all">All labels</option><option value="none">No labels</option>
-                  ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
-                </select></label>
-                <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" type="search" autocomplete="off" placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
-              </div>
-              <div class="filter-bar-end">
-                <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation" hidden=${!board || view !== 'board'}>
-                  <button id="presentation-board" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'board')} onClick=${() => onPresentation('board')}>Board</button>
-                  <button id="presentation-list" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'list')} onClick=${() => onPresentation('list')}>List</button>
-                </div>
-                <span id="count" class="filter-bar-count muted">${count}</span>
-              </div>
-            </div>
-            ${planningFilterChipsTemplate(showFilters, showLabelFilter)}
+            ${view === 'sprints' ? null : planningFilters}
           </div>
           <div
             id="planning-body"
@@ -280,7 +326,7 @@ function PlanningArea({
           /></div>
         </div>
         <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>
-          ${showPageRoot ? pageContent : nothing}
+          ${showPageRoot ? pageContent : null}
         </div>
       </section>
     </>`;
@@ -414,7 +460,7 @@ export function App({
         busy=${busy}
         loading=${loading}
         integrationFormOpen=${integrationFormOpen}
-        pageContent=${html`<${PageContent}
+        renderPageContent=${(planningFilters) => html`<${PageContent}
           board=${board}
           view=${view}
           workspaceGate=${workspaceGate}
@@ -425,6 +471,7 @@ export function App({
           onWorkspaceSubmit=${onWorkspaceSubmit}
           onWorkspaceBack=${onWorkspaceBack}
           sprintResults=${sprintResults}
+          planningFilters=${planningFilters}
         />`}
         onPresentation=${onPresentation}
         onScopeChange=${onScopeChange}
@@ -440,6 +487,7 @@ export function App({
       saveText=${shell.editorSaveText}
       errorText=${shell.editorError}
     />
+    <${AttachmentTooltip} />
     <${DialogHost} onShortcutClose=${onShortcutClose} />
   </>`;
 }

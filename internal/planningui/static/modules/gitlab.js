@@ -1,10 +1,10 @@
 // GitLab links and cached observations on cards, rows and the observations dialog.
-import { $, syncAttributes } from './dom.js';
+import { $ } from './dom.js';
 import { requestKey } from './api.js';
 import { helpTextTemplate, emptyStateTemplate } from './layout.js';
-import { hooks } from './hooks.js';
-import { html, nodeOf, nothing } from './preact.js';
-import { state } from './state.js';
+import { html } from './vdom.js';
+import { useEffect, useRef, useState } from './vendor-preact.js';
+import { state, useStore } from './state.js';
 import { writable } from './permissions.js';
 import { change } from './commands.js';
 import { openEditor, setEditorError } from './dialog.js';
@@ -57,9 +57,6 @@ export function cardLinkTemplate(link, focusKey) {
     rel="noopener noreferrer"
   >${linkLabel(link)}</a>`;
 }
-export function cardLinkView(link, focusKey) {
-  return nodeOf(cardLinkTemplate(link, focusKey));
-}
 function pipelineLinkURL(link, pipeline) {
   if (typeof pipeline?.url === 'string' && pipeline.url) return pipeline.url;
   const source = link.observation?.url;
@@ -80,7 +77,7 @@ function pipelineLinkURL(link, pipeline) {
 }
 function pipelineLinkTemplate(link) {
   const pipeline = link.observation?.pipeline;
-  if (!pipeline) return nothing;
+  if (!pipeline) return null;
   const url = pipelineLinkURL(link, pipeline);
   const title = link.kind === 'mr' ? 'Latest pipeline for this merge request' : 'GitLab pipeline';
   const text = `Pipeline #${pipeline.id}`;
@@ -143,7 +140,7 @@ function positionObservationTooltip(target) {
   target.style.setProperty('--observation-tooltip-left', `${Math.round(left)}px`);
   target.style.setProperty('--observation-tooltip-top', `${Math.round(top)}px`);
 }
-function repositionObservationTooltip() {
+export function repositionObservationTooltip() {
   const target = state.observationTooltipTarget;
   if (!target?.isConnected || (!target.matches(':hover') && document.activeElement !== target)) {
     state.observationTooltipTarget = undefined;
@@ -189,9 +186,6 @@ export function cardObservationIconTemplate(link, focusKey) {
     tabindex="0"
   >${icon.symbol}</span>`;
 }
-export function cardObservationIcon(link, focusKey) {
-  return nodeOf(cardObservationIconTemplate(link, focusKey));
-}
 export function linkIdentitySignature(link) {
   return JSON.stringify({
     id: link.id,
@@ -211,77 +205,13 @@ function observationSignature(link) {
     refresh_pending: !!link.refresh_pending,
   });
 }
-export function patchObservationIcon(node, link) {
-  const replacement = cardObservationIcon(link, node.dataset.focusKey);
-  if (node.tagName === replacement.tagName) {
-    syncAttributes(node, replacement);
-    if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent;
-    if (state.observationTooltipTarget === node) positionObservationTooltip(node);
-    return node;
-  }
-  node.replaceWith(replacement);
-  return replacement;
-}
-export function patchObservationLink(node, link) {
-  const replacement = cardLinkView(link, node.dataset.focusKey);
-  if (node.tagName === replacement.tagName) {
-    syncAttributes(node, replacement);
-    if (node.textContent !== replacement.textContent) node.textContent = replacement.textContent;
-    return node;
-  }
-  node.replaceWith(replacement);
-  return replacement;
-}
-function refreshLinkDisabled(link) {
-  return (
-    !writable() ||
-    !link ||
-    !state.board.connector_instance ||
-    state.board.connector_instance !== state.board.integration.instance ||
-    (!!link.next_refresh && Date.parse(link.next_refresh) > Date.now())
-  );
-}
-export function patchRefreshControl(node, link) {
-  node.disabled = refreshLinkDisabled(link);
-  const row = node.closest('.setup-row');
-  const next = row?.querySelector('[data-observation="next-refresh"]');
-  if (next) {
-    next.hidden = !link?.next_refresh || Date.parse(link.next_refresh) <= Date.now();
-    if (!next.hidden)
-      next.textContent = `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.`;
-  }
-}
-export function patchObservationUI(previousLinks, nextLinks) {
+export function observationsChanged(previousLinks, nextLinks) {
   const previous = new Map(previousLinks.map((link) => [link.id, link]));
-  const changed = nextLinks.filter(
+  return nextLinks.some(
     (link) =>
       previous.has(link.id) &&
       observationSignature(previous.get(link.id)) !== observationSignature(link),
   );
-  if (!changed.length) return false;
-  // Cards and list rows are Preact templates: re-render them rather than patching
-  // their nodes.
-  let cards = false;
-  const patch = (node, link, patcher) => {
-    if (node.dataset.linkId !== link.id) return;
-    if (node.closest('.card,.list-row')) cards = true;
-    else patcher(node, link);
-  };
-  changed.forEach((link) => {
-    for (const node of document.querySelectorAll('[data-observation="status-icon"]'))
-      patch(node, link, patchObservationIcon);
-    for (const node of document.querySelectorAll('[data-observation="link"]'))
-      patch(node, link, patchObservationLink);
-    document.querySelectorAll('[data-refresh-link]').forEach((node) => {
-      if (node.dataset.refreshLink === link.id) patchRefreshControl(node, link);
-    });
-  });
-  if (cards) {
-    hooks.renderContent();
-    if (state.observationTooltipTarget?.isConnected)
-      positionObservationTooltip(state.observationTooltipTarget);
-  }
-  return true;
 }
 function observationTiming(link) {
   const timestamp = (value) => {
@@ -319,30 +249,45 @@ async function refreshObservation(item, link, key) {
     );
   }
 }
-// The dialog is a snapshot rendered once per opening and never re-rendered,
-// so after creation its refresh controls and next-refresh lines belong to
-// patchRefreshControl, which the observation poll calls. Observation links
-// are rendered once too; Board/List instead re-render their current VNodes.
-function linkObservationTemplate(item, link, ready) {
+function LinkObservation({ item, link }) {
+  const board = useStore((current) => current.board);
+  const busy = useStore((current) => current.busy);
+  const loading = useStore((current) => current.loading);
+  const [now, setNow] = useState(Date.now());
+  const request = useRef();
+  if (!request.current) request.current = requestKey();
+  useEffect(() => {
+    if (!link.next_refresh) return;
+    const timer = setInterval(() => setNow(Date.now()), 10000);
+    return () => clearInterval(timer);
+  }, [link.next_refresh]);
+  const ready =
+    board?.connector_instance && board.connector_instance === board.integration.instance;
   const obs = link.observation;
-  const next = link.next_refresh && Date.parse(link.next_refresh) > Date.now();
-  const key = requestKey();
+  const next = link.next_refresh && Date.parse(link.next_refresh) > now;
+  const disabled =
+    !board ||
+    board.role === 'viewer' ||
+    busy ||
+    loading ||
+    !ready ||
+    (!!link.next_refresh && Date.parse(link.next_refresh) > now);
   return html`<article class="setup-row" data-link-id=${link.id}>
     <div class="card-links">${cardLinkTemplate(link)}${pipelineLinkTemplate(link)}</div>
-    ${obs?.title ? html`<p>${obs.title}</p>` : nothing}
+    ${obs?.title ? html`<p>${obs.title}</p>` : null}
     ${
       obs?.mr_state
         ? helpTextTemplate(
             `${obs.draft ? 'Draft · ' : ''}Review/mergeability: ${obs.review || 'unknown'} · Head SHA ${obs.head_sha || 'unknown'}`,
           )
-        : nothing
+        : null
     }
     ${
       obs?.pipeline
         ? helpTextTemplate(
             `${link.kind === 'mr' ? 'Latest MR pipeline status' : 'Pipeline status'}: ${obs.pipeline.state || 'unknown'} · SHA ${obs.pipeline.sha || 'unknown'} · Provider state ${obs.pipeline.provider_state || 'unknown'}`,
           )
-        : nothing
+        : null
     }
     ${helpTextTemplate(LINK_OUTCOMES[link.outcome] || 'Unknown outcome')}
     ${helpTextTemplate(observationTiming(link))}
@@ -351,14 +296,14 @@ function linkObservationTemplate(item, link, ready) {
         ? html`<p class="help" data-observation="next-refresh" hidden=${!next}
             >${next ? `Next refresh after ${new Date(link.next_refresh).toLocaleTimeString()}. The refresh control becomes available after that time.` : ''}</p
           >`
-        : nothing
+        : null
     }
     <div class="actions">
       <button
         type="button"
         data-refresh-link=${link.id}
-        disabled=${refreshLinkDisabled(link) || !ready}
-        onClick=${() => refreshObservation(item, link, key)}
+        disabled=${disabled}
+        onClick=${() => refreshObservation(item, link, request.current)}
       >Refresh observation</button>
     </div>
   </article>`;
@@ -378,13 +323,13 @@ export function showLinks(item) {
       )}
       ${
         links.length
-          ? nothing
+          ? null
           : emptyStateTemplate('Unlinked. Add an approved MR; never infer links from card titles.')
       }
-      ${links.map((link) => linkObservationTemplate(item, link, ready))}
+      ${links.map((link) => html`<${LinkObservation} item=${item} link=${link} />`)}
       ${
         ready
-          ? nothing
+          ? null
           : helpTextTemplate(
               'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
             )

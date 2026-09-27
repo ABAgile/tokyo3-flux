@@ -1,32 +1,18 @@
 // The work-item editor form, its modal and the archive dialog.
-import { $, uid } from './dom.js';
+import { $, syncDisabled, uid } from './dom.js';
 import { itemPayloadFromForm } from './item-command.js';
 import { labelForeground } from './format.js';
 import { markdownEditorTemplate } from './markdown.js';
 import { fieldTemplate, helpTextTemplate } from './layout.js';
-import {
-  html,
-  mount,
-  nodeOf,
-  nothing,
-  syncDisabled,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from './preact.js';
-import { state } from './state.js';
+import { html } from './vdom.js';
+import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { writable, gitLabWritable } from './permissions.js';
 import { itemProjectIDs, labelInfo, blocked } from './items.js';
 import { memberName } from './people.js';
-import { helpPopover, multiSelectTemplate } from './multi-select.js';
-import {
-  itemDateStatus,
-  dueDateBadge,
-  dueDateBadgeTemplate,
-  editorDueBadgeHost,
-  appendEditorDueBadge,
-} from './due-dates.js';
+import { helpPopoverTemplate, multiSelectTemplate } from './multi-select.js';
+import { EditorDueBadge, itemDateStatus, dueDateBadgeTemplate } from './due-dates.js';
 import { singleFilterValue } from './filters.js';
 import { UNDO_TTL, offerUndo, quick } from './commands.js';
 import { itemAttachmentsTemplate } from './item-attachments.js';
@@ -89,7 +75,7 @@ function DatesField({ item, draft, readOnly }) {
   }, [editing]);
   const [start, end, due] = DATE_FIELDS.map(([name]) => value(name));
   const part = (name, title, text) => html`<span class="date-range-part"
-    ><span>${text || '-'}</span>${editing && text ? clear(name, title) : nothing}</span
+    ><span>${text || '-'}</span>${editing && text ? clear(name, title) : null}</span
   >`;
   return html`<div class="multi-select-field date-field" ref=${group}>
     <div class="multi-select-header">
@@ -129,9 +115,9 @@ function DatesField({ item, draft, readOnly }) {
         ${
           due
             ? html`<span class="multi-select-chip date-due-chip" role="group" aria-label=${`Due date ${due}`}
-                ><span>${`Due · ${due}`}</span>${editing ? clear('due_date', 'Due date') : nothing}</span
+                ><span>${`Due · ${due}`}</span>${editing ? clear('due_date', 'Due date') : null}</span
               >`
-            : nothing
+            : null
         }
       </div>
       <div class="date-field-inputs" id=${inputsID} hidden=${!editing}>
@@ -149,30 +135,26 @@ function DatesField({ item, draft, readOnly }) {
 function datesFieldTemplate(item, draft, readOnly) {
   return html`<${DatesField} item=${item} draft=${draft} readOnly=${readOnly} />`;
 }
+function ItemTitleField({ item, draft, readOnly, dueBadgeID }) {
+  const now = useStore((current) => current.dueDateNow);
+  return html`<label
+    ><span class="item-title-label">Title</span><input
+      name="title"
+      type="text"
+      autocomplete="off"
+      required
+      maxlength="240"
+      aria-label="Title"
+      aria-describedby=${dueBadgeID && itemDateStatus(item, now)?.overdue ? dueBadgeID : undefined}
+      disabled=${readOnly}
+      defaultValue=${draft?.title ?? item.title}
+  /></label>`;
+}
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled
 // as cached provider observations, never as authoritative planning state.
-export function refreshEditorDueBadge(form, item) {
-  const host = editorDueBadgeHost(form);
-  if (!host) return;
-  const input = form.querySelector('[name="title"]'),
-    previous = host.querySelector('.badge-due[data-due-date-badge]');
-  if (input?.getAttribute('aria-describedby') === previous?.id)
-    input.removeAttribute('aria-describedby');
-  previous?.remove();
-  showEditorOverdueBadge(form, item);
-}
-// The overdue badge sits in the centered editor-title-badge host and names
-// itself in the title input's aria-describedby.
-function showEditorOverdueBadge(form, item) {
-  if (!itemDateStatus(item)?.overdue) return;
-  const badge = dueDateBadge(item);
-  if (!badge) return;
-  badge.id = uid('item-title-overdue');
-  form.querySelector('[name="title"]')?.setAttribute('aria-describedby', badge.id);
-  appendEditorDueBadge(form, badge);
-}
-function itemStatusTemplate(item) {
+function ItemStatus({ item }) {
+  const now = useStore((current) => current.dueDateNow);
   const column = state.board.columns.find((value) => value.id === item.column_id);
   const category =
     { todo: 'To do', doing: 'In progress', done: 'Done' }[column?.category] || 'Uncategorised';
@@ -188,7 +170,7 @@ function itemStatusTemplate(item) {
         scope.sprint_id,
     );
   const links = state.board.links.filter((link) => link.items.includes(item.id));
-  const due = itemDateStatus(item);
+  const due = itemDateStatus(item, now);
   // The summary is the whole status in one line; everything that would push the
   // editor down — sprint history and cached provider observations — waits behind
   // the disclosure, whose open state belongs to the user.
@@ -220,8 +202,8 @@ function itemStatusTemplate(item) {
               : 'Live: on the board and not archived. Completion is the column category, and sprint scope is the sprint badge.'
           }
         >${item.archived ? 'Archived' : 'Live'}</span>
-        ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : nothing}
-        ${due && !due.overdue ? dueDateBadgeTemplate(item) : nothing}
+        ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : null}
+        ${due && !due.overdue ? dueDateBadgeTemplate(item) : null}
         <span class="badge"
           >${
             openSprints.length
@@ -234,7 +216,7 @@ function itemStatusTemplate(item) {
             ? html`<span class="badge"
                 >${`${links.length} GitLab link${links.length === 1 ? '' : 's'}`}</span
               >`
-            : nothing
+            : null
         }
       </div>
       <span class="item-status-toggle" aria-hidden="true"></span>
@@ -259,7 +241,7 @@ function itemStatusTemplate(item) {
                   </div>`,
                 )}
               </div>`
-          : nothing
+          : null
       }
     </div>
   </details>`;
@@ -274,7 +256,7 @@ async function restoreSharedItem(item, context) {
   else hooks.closeDetail({ force: true, focus: false });
   await openSharedItem(item.id);
 }
-function itemEditorTemplate(item, draft, readOnly, context) {
+export function itemEditorTemplate(item, draft, readOnly, context, dueBadgeID) {
   const selfSubject = state.board.members.find(
     (member) => member.subject === state.session?.subject,
   )?.subject;
@@ -297,11 +279,12 @@ function itemEditorTemplate(item, draft, readOnly, context) {
     );
   const itemLinks = item.id ? state.board.links.filter((link) => link.items.includes(item.id)) : [];
   const paste = item.id && !readOnly ? gitLabPaste(item, readOnly, context) : undefined;
-  const labelChip = (chip, value) => {
+  const labelChip = (value) => {
     const label = labelInfo(value);
-    chip.style.backgroundColor = label.color;
-    chip.style.color = labelForeground(label.color);
-    chip.classList.add('label-badge');
+    return {
+      className: 'label-badge',
+      style: { backgroundColor: label.color, color: labelForeground(label.color) },
+    };
   };
   const linkActions = !readOnly
     ? html`<div class="actions">
@@ -322,21 +305,11 @@ function itemEditorTemplate(item, draft, readOnly, context) {
             }}
           >View observations</button>
         </div>`
-      : nothing;
-  return html`${item.id ? itemStatusTemplate(item) : nothing}
+      : null;
+  return html`${item.id ? html`<${ItemStatus} item=${item} />` : null}
     <div class="item-editor-layout">
       <div class="item-editor-primary">
-        <label
-          ><span class="item-title-label">Title</span><input
-            name="title"
-            type="text"
-            autocomplete="off"
-            required
-            maxlength="240"
-            aria-label="Title"
-            disabled=${readOnly}
-            defaultValue=${draft?.title ?? item.title}
-        /></label>
+        <${ItemTitleField} item=${item} draft=${draft} readOnly=${readOnly} dueBadgeID=${dueBadgeID} />
         ${markdownEditorTemplate(
           'description',
           'Description',
@@ -345,8 +318,8 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           readOnly,
           true,
         )}
-        ${item.id ? itemAttachmentsTemplate(item, readOnly) : nothing}
-        ${item.id ? itemCommentsTemplate(item) : nothing}
+        ${item.id ? itemAttachmentsTemplate(item, readOnly) : null}
+        ${item.id ? itemCommentsTemplate(item) : null}
       </div>
       <div class="item-editor-controls">
         ${multiSelectTemplate(
@@ -401,7 +374,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
         ${
           closed.length
             ? helpTextTemplate(`Closed sprint history (read-only): ${closed.join(', ')}`)
-            : nothing
+            : null
         }
         ${multiSelectTemplate(
           'dependencies',
@@ -427,7 +400,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
                   disabled: readOnly,
                 },
               )}${linkActions}`
-            : nothing
+            : null
         }
         <hr class="item-editor-divider" />
         ${fieldTemplate(
@@ -441,66 +414,61 @@ function itemEditorTemplate(item, draft, readOnly, context) {
       </div>
     </div>`;
 }
-// The card title gets a details popover and a "Copy link" action. Both sit in
-// the editor-title-extra host, separate from the Preact-owned title text; the
-// copy action's text belongs to markCopyOutcome.
-function decorateItemTitle(titleHost, item) {
-  const share = nodeOf(html`<button
+function CopyCardLinkButton({ item }) {
+  const [outcome, setOutcome] = useState('');
+  const timer = useRef();
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+      clearTimeout(timer.current);
+    },
+    [],
+  );
+  async function copy() {
+    clearTimeout(timer.current);
+    const copied = await copyCardLink(item);
+    if (!mounted.current) return;
+    setOutcome(copied ? 'copied' : 'failed');
+    timer.current = setTimeout(() => {
+      if (mounted.current) setOutcome('');
+    }, 2000);
+  }
+  const suffix =
+    outcome === 'copied' ? ' is-copied' : outcome === 'failed' ? ' is-copy-failed' : '';
+  const label =
+    outcome === 'copied' ? '✓ Link copied' : outcome === 'failed' ? '! Not copied' : 'Copy link';
+  return html`<button
     type="button"
-    class="card-link-copy"
-    aria-label=${`Copy a link to \u201c${item.title}\u201d`}
+    class=${`card-link-copy${suffix}`}
+    aria-label=${`Copy a link to “${item.title}”`}
     title="Copy a shareable link to this card"
-    onClick=${(event) => void copyCardLink(item, event.currentTarget)}
-  >Copy link</button>`);
-  titleHost.append(
-    ' ',
-    helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'),
-    ' ',
-    share,
-  );
+    onClick=${copy}
+  >${label}</button>`;
 }
-// Archive and restore sit in the footer, before Cancel; they carry
-// data-item-footer so the next editor removes them.
-function addItemFooterAction(item, readOnly, context) {
-  const archive = item.id && !item.archived && !readOnly;
-  const restore = item.id && item.archived && state.board.role !== 'viewer';
-  if (!archive && !restore) return;
-  const action = nodeOf(
-    archive
-      ? html`<button
-          type="button"
-          class="danger archive-footer"
-          data-item-footer="true"
-          data-write="true"
-          disabled=${!writable() || state.integrationFormOpen}
-          onClick=${() => archiveItem(item, context)}
-        >Archive item</button>`
-      : html`<button
-          type="button"
-          data-item-footer="true"
-          data-write="true"
-          disabled=${!writable() || state.integrationFormOpen}
-          onClick=${() => void restoreSharedItem(item, context)}
-        >Restore item</button>`,
-  );
-  const footer =
-    context.footer ||
-    context.form.querySelector('#editor-footer-actions') ||
-    context.form.querySelector('.dialog-foot');
-  const cancel = footer?.querySelector('#cancel,.detail-cancel');
-  if (footer) footer.insertBefore(action, cancel || footer.lastElementChild);
+export function itemEditorTitleExtrasTemplate(item, revision = item.revision) {
+  return html` ${helpPopoverTemplate(`Card ID: ${item.id}\nRevision: ${revision}`, 'Work item details')} <${CopyCardLinkButton} item=${item} />`;
 }
-function prepareItemEditorForm(item, readOnly, context) {
-  if (context?.form) showEditorOverdueBadge(context.form, item);
-  addItemFooterAction(item, readOnly, context);
-}
-// Renders the detail-pane editor into its stable fields host and returns an
-// update function for post-save revisions. Modal fields render in EditorDialog.
-export function buildItemEditor(fields, item, draft, readOnly, context, titleHost) {
-  if (item.id && titleHost) decorateItemTitle(titleHost, item);
-  const update = mount(fields, itemEditorTemplate(item, draft, readOnly, context));
-  prepareItemEditorForm(item, readOnly, context);
-  return (latest) => update(itemEditorTemplate(latest, undefined, readOnly, context));
+// Archive and restore sit before Cancel in either editor surface.
+export function itemEditorFooterActionsTemplate(item, readOnly, context) {
+  if (item.id && !item.archived && !readOnly)
+    return html`<button
+      type="button"
+      class="danger archive-footer"
+      data-item-footer="true"
+      data-write="true"
+      disabled=${!writable() || state.integrationFormOpen}
+      onClick=${() => archiveItem(item, context)}
+    >Archive item</button>`;
+  if (item.id && item.archived && state.board.role !== 'viewer')
+    return html`<button
+      type="button"
+      data-item-footer="true"
+      data-write="true"
+      disabled=${!writable() || state.integrationFormOpen}
+      onClick=${() => void restoreSharedItem(item, context)}
+    >Restore item</button>`;
+  return null;
 }
 export function reopenItemEditor(item, draft, mode, origin) {
   if (mode === 'detail') hooks.openItemDetail(item, draft, origin);
@@ -527,11 +495,12 @@ export function editItemModal(item, draft) {
     dependencies: [],
   };
   const context = { mode: 'modal', form: $('editor-form') };
+  const dueBadgeID = uid('item-title-overdue');
   state.editorItemID = existing ? item.id : '';
   if (existing) setSharedItem(item.id);
   openEditor(
     existing ? 'Work item' : 'Create work item',
-    () => itemEditorTemplate(item, draft, readOnly, context),
+    () => itemEditorTemplate(item, draft, readOnly, context, dueBadgeID),
     (data) => {
       if (existing) desiredLinkIDs = data.getAll('link_ids');
       return {
@@ -544,11 +513,9 @@ export function editItemModal(item, draft) {
     existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined,
     undefined,
     {
-      onOpen: (form) => {
-        context.form = form;
-        if (item.id) decorateItemTitle($('editor-title-extra'), item);
-        prepareItemEditorForm(item, readOnly, context);
-      },
+      titleExtra: item.id ? itemEditorTitleExtrasTemplate(item) : null,
+      titleBadge: html`<${EditorDueBadge} item=${item} id=${dueBadgeID} />`,
+      footerAction: itemEditorFooterActionsTemplate(item, readOnly, context),
     },
   );
 }

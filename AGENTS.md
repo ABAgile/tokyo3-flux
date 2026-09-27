@@ -8,14 +8,14 @@ Stateful UI widgets and shell chrome are Preact function components.
 
 ## Rendering with Preact
 
-- Import the runtime only through `modules/preact.js`; use HTM templates, not JSX or raw HTML injection.
+- Import Preact runtime APIs directly from `modules/vendor-preact.js`; `modules/vdom.js` binds HTM's `html` tag to Preact's `h` and provides keyed-list helpers.
+  Use HTM templates, not JSX or raw HTML injection.
 - `tools/vendor/package-lock.json` pins the runtime and bundler; `make vendor-web` rebuilds the checked-in bundle.
   Never edit the generated bundle by hand; preserve the licenses in `tools/vendor/`.
 - Components receive data and actions as props; domain/session state and revision-checked commands remain in the existing controllers.
   Template factories are pure VNode builders; never put a DOM node inside an HTM expression.
-- Each render root owns its host's children exclusively; the handwritten reconciler has been removed.
-  Use `replaceContent(host, ...)` when replacing a static host's content and `unmountIsland(host)` before removing a render root.
-  `mount(host, template)` starts a fresh form lifetime and returns an update function that ignores stale updates after replacement.
+- Preact owns the body App root and every dynamic page, widget and dialog subtree; call Preact's `render` directly only for the body root and isolated tests.
+  Do not build parallel roots or mutate rendered children to update UI.
 - Stateful widgets are function components.
   Keep local interaction state in Preact hooks, pass domain data and actions as props, and use stable domain keys when an identity change needs a fresh lifetime.
   Shared UI reads use a selector and state changes use `setState`; keep each selector focused on the values the component renders.
@@ -50,20 +50,20 @@ Stateful UI widgets and shell chrome are Preact function components.
   useDismiss(ref, open, onClose);
   ```
 
-- `attach(setup, ...args)` is only for one-time, element-local wiring such as board/list drag handlers or chip decoration; handlers must read current data by stable ID at event time.
+- `attach(setup, ...args)` is only for one-time, element-local browser wiring such as board/list drag handlers; handlers must read current data by stable ID at event time.
   Use component effects for external resources, never `attach`.
 - Native text fields are uncontrolled (`defaultValue`) unless their value is owned by reactive state, such as project search.
   Keep user edits intact across unrelated renders.
-  `syncDisabled` synchronizes controls also written by `renderControls`; one writer per attribute remains the goal.
+  Stable editor snapshots retain targeted permission synchronization through `syncDisabled` and `renderControls`; do not add a second writer for other rendered attributes.
 - Use Preact style objects for dynamic colors and CSS variables; Preact applies these through CSSOM, which preserves the existing CSP.
   Never pass a style string or use `dangerouslySetInnerHTML`.
-- `nodeOf` is restricted to rendered-once shell nodes/form skeletons; dispose it before removing its host.
-  Board/List updates always render VNodes, including observation icons.
+- Board/List and refreshed GitLab observation updates always render VNodes, including observation icons and status rows.
+  Native dialog state, focus/scroll restoration, drag/drop, file inputs and geometry-based tooltip positioning are browser interactions, not alternate renderers.
   Keys preserve identity within a parent; cross-column card moves also restore logical focus and open attachment disclosures.
 - Use stable domain keys for lists, and hook effects with cleanup for lifecycle work.
   Do not add module-level listeners or timers.
-- Rendered-once workspace and integration forms keep their submission controller's ownership of input values, busy flags and status lines.
-  Do not add competing reactive bindings without migrating that controller too.
+- Workspace creation input, busy state and status are Preact-owned.
+  Integration selections, consent, busy state and error status are Preact/store-owned; catalog loading and revision-checked submission stay in their controllers.
 - No CSS, API or CSP changes are part of the migration; never introduce inline styles, scripts or `eval`.
 - `tests/preact-fixture.mjs` serves an API-free fixture for `tests/preact.browser.js`; it requires no database and must bind only to a private test interface.
 
@@ -87,12 +87,12 @@ Feature modules export functions and constants; any document listeners or timers
 
 | Layer | Modules |
 |---|---|
-| Base | `vendor-preact`, `preact`, `store`, `ui-hooks`, `gate-components`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
+| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `gate-components`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command` |
 | State | `state` (every reassigned shell variable, as `state.<name>`), `hooks` |
 | Services | `permissions`, `notices`, `items`, `controls`, `people`, `multi-select`, `due-dates`, `gitlab-catalog`, `mount`, `filters`, `view-burndown`, `commands`, `item-attachments`, `dialog`, `drag`, `gitlab`, `item-comments`, `url-state` |
 | Item | `item-links`, `item-editor`, `item-detail` |
 | Views | `view-board`, `view-archive`, `bulk`, `view-list`, `view-velocity`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `shortcuts`, `view-gate`, `sync` |
-| Shell | `app-shell`: body-level `App`, page frame and native dialog markup; `app.js`: imports, hooks, `render`/`renderPageRoot`/`renderContent`, controller wiring and startup |
+| Shell | `app-shell`: body-level `App`, page frame and native dialog markup; `app.js`: imports, hooks, direct Preact root render, controller wiring and startup |
 
 ## CSS file map
 

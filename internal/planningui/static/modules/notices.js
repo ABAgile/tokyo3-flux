@@ -1,5 +1,6 @@
 // Status line, error bar and the planning-change notice.
-import { Fragment, html } from './preact.js';
+import { Fragment } from './vendor-preact.js';
+import { html } from './vdom.js';
 import { state, setState, useStore } from './state.js';
 
 function sameStatus(left, right) {

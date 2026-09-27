@@ -1,6 +1,6 @@
 // The delivery-trend (velocity) panel on the Sprints page.
 import { panelHeadTemplate, emptyStateTemplate, metricListTemplate } from './layout.js';
-import { html } from './preact.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 import { done } from './items.js';
 import { sprintFilterItems, sprintMatchesFilters } from './filters.js';

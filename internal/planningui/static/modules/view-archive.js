@@ -1,7 +1,9 @@
 // The Archive view and its paging.
 import { api } from './api.js';
 import { emptyStateTemplate } from './layout.js';
-import { Fragment, html, nothing, keyedList } from './preact.js';
+import { Fragment } from './vendor-preact.js';
+import { html, keyedList } from './vdom.js';
+
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { notice } from './notices.js';
@@ -27,9 +29,9 @@ export function CardListContent({ items, view, archiveMore, disabled }) {
         (item) => item.id,
         (item) => cardTemplate(item),
       )}
-      ${items.length ? nothing : emptyStateTemplate(empty)}
+      ${items.length ? null : emptyStateTemplate(empty)}
     </div>
-    ${view === 'archive' && archiveMore ? html`<button type="button" class="archive-more" disabled=${disabled} onClick=${loadOlderArchive}>Load older archived work</button>` : nothing}
+    ${view === 'archive' && archiveMore ? html`<button type="button" class="archive-more" disabled=${disabled} onClick=${loadOlderArchive}>Load older archived work</button>` : null}
   </${Fragment}>`;
 }
 const ARCHIVE_PAGE = 50;

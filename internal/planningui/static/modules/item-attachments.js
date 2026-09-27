@@ -1,19 +1,12 @@
 // Card attachments: loading, uploads, drops, tiles and the tooltip.
-import { el } from './dom.js';
+import { syncDisabled } from './dom.js';
 import { api, apiUpload, requestKey } from './api.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import {
-  html,
-  nothing,
-  keyedList,
-  syncDisabled,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from './preact.js';
-import { state } from './state.js';
+import { html, keyedList } from './vdom.js';
+import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+
+import { setState, state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
 import { notice } from './notices.js';
@@ -209,21 +202,27 @@ export function itemFileDropZone(node, item) {
 export function attachmentPaperclipTemplate() {
   return html`<span class="attachment-paperclip" aria-hidden="true">📎</span>`;
 }
-// `extraClass` adds a placement class, for example on a card's attachment list.
-export function attachmentTileLinkTemplate(
-  item,
-  attachment,
-  base = state.root,
-  metadata = attachmentSize(attachment.size),
-  extraClass = '',
-) {
+function AttachmentTileLink({ item, attachment, base, metadata, extraClass }) {
+  const link = useRef();
+  const described = useStore(
+    (current) =>
+      !!current.attachmentTooltipTarget && current.attachmentTooltipTarget === link.current,
+  );
+  useEffect(
+    () => () => {
+      if (state.attachmentTooltipTarget === link.current) hideAttachmentTooltip(link.current);
+    },
+    [],
+  );
   return html`<a
     class="attachment-link attachment-tile-link${extraClass}"
     href=${attachmentHref(item, attachment, base)}
     aria-label=${attachment.name}
+    aria-describedby=${described ? 'attachment-tooltip' : null}
     download=""
     data-attachment-tooltip=${attachmentTypeDescription(attachment)}
     data-attachment-id=${String(attachment.id)}
+    ref=${link}
   >
     <span class="attachment-file-mark" aria-hidden="true">${attachmentKind(attachment)}</span>
     <span class="attachment-tile-copy">
@@ -232,16 +231,21 @@ export function attachmentTileLinkTemplate(
     </span>
   </a>`;
 }
-function attachmentTooltipHost() {
-  return document.querySelector('dialog[open]') || document.body;
-}
-function ensureAttachmentTooltip() {
-  if (state.attachmentTooltip) return state.attachmentTooltip;
-  state.attachmentTooltip = el('span', undefined, 'attachment-tooltip');
-  state.attachmentTooltip.id = 'attachment-tooltip';
-  state.attachmentTooltip.setAttribute('role', 'tooltip');
-  state.attachmentTooltip.hidden = true;
-  return state.attachmentTooltip;
+// `extraClass` adds a placement class, for example on a card's attachment list.
+export function attachmentTileLinkTemplate(
+  item,
+  attachment,
+  base = state.root,
+  metadata = attachmentSize(attachment.size),
+  extraClass = '',
+) {
+  return html`<${AttachmentTileLink}
+    item=${item}
+    attachment=${attachment}
+    base=${base}
+    metadata=${metadata}
+    extraClass=${extraClass}
+  />`;
 }
 function attachmentLinkTarget(target) {
   return target instanceof Element ? target.closest('.attachment-tile-link') : undefined;
@@ -254,10 +258,11 @@ function attachmentTooltipAnchor(target, source) {
 }
 export function hideAttachmentTooltip(target) {
   if (target && target !== state.attachmentTooltipTarget) return;
-  if (state.attachmentTooltipTarget?.getAttribute('aria-describedby') === 'attachment-tooltip')
-    state.attachmentTooltipTarget.removeAttribute('aria-describedby');
-  state.attachmentTooltipTarget = undefined;
-  if (state.attachmentTooltip) state.attachmentTooltip.hidden = true;
+  setState({
+    attachmentTooltipTarget: undefined,
+    attachmentTooltipSource: undefined,
+    attachmentTooltipText: '',
+  });
 }
 function showAttachmentTooltip(target, source) {
   if (!target?.dataset.attachmentTooltip) {
@@ -266,33 +271,64 @@ function showAttachmentTooltip(target, source) {
   }
   if (state.attachmentTooltipTarget && state.attachmentTooltipTarget !== target)
     hideAttachmentTooltip();
-  const tooltip = ensureAttachmentTooltip();
-  const host = attachmentTooltipHost();
-  if (tooltip.parentElement !== host) host.append(tooltip);
-  state.attachmentTooltipTarget = target;
-  tooltip.textContent = target.dataset.attachmentTooltip;
-  target.setAttribute('aria-describedby', tooltip.id);
-  tooltip.hidden = false;
-  const rootStyle = getComputedStyle(document.documentElement);
-  const gap = Number.parseFloat(rootStyle.getPropertyValue('--s1')) || 4;
-  const edge = Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16;
-  const targetBox = target.getBoundingClientRect();
-  const anchor = attachmentTooltipAnchor(target, source).getBoundingClientRect();
-  const size = tooltip.getBoundingClientRect();
-  const maxLeft = Math.max(edge, innerWidth - size.width - edge);
-  const left = Math.min(Math.max(edge, anchor.left), maxLeft);
-  const top = Math.min(
-    Math.max(edge, targetBox.bottom + gap),
-    Math.max(edge, innerHeight - size.height - edge),
-  );
-  tooltip.style.left = `${Math.round(left)}px`;
-  tooltip.style.top = `${Math.round(top)}px`;
+  setState({
+    attachmentTooltipTarget: target,
+    attachmentTooltipSource: source,
+    attachmentTooltipText: target.dataset.attachmentTooltip,
+  });
 }
 function repositionAttachmentTooltip() {
-  const dialog = state.attachmentTooltipTarget?.closest('dialog');
-  if (state.attachmentTooltipTarget?.isConnected && (!dialog || dialog.open))
-    showAttachmentTooltip(state.attachmentTooltipTarget);
-  else hideAttachmentTooltip();
+  const target = state.attachmentTooltipTarget;
+  const dialog = target?.closest('dialog');
+  if (!target?.isConnected || (dialog && !dialog.open) || !target.dataset.attachmentTooltip) {
+    hideAttachmentTooltip();
+    return;
+  }
+  setState({
+    attachmentTooltipText: target.dataset.attachmentTooltip,
+    attachmentTooltipGeometry: state.attachmentTooltipGeometry + 1,
+  });
+}
+export function AttachmentTooltip({ inDialog = false }) {
+  const target = useStore((current) => current.attachmentTooltipTarget);
+  const source = useStore((current) => current.attachmentTooltipSource);
+  const text = useStore((current) => current.attachmentTooltipText);
+  useStore((current) => current.attachmentTooltipGeometry);
+  const tooltip = useRef();
+  const [position, setPosition] = useState({ left: 0, top: 0 });
+  const targetInDialog = target?.closest('dialog')?.id === 'editor';
+  useLayoutEffect(() => {
+    if (!target || !tooltip.current || targetInDialog !== inDialog) return;
+    if (!target.isConnected) {
+      hideAttachmentTooltip(target);
+      return;
+    }
+    const rootStyle = getComputedStyle(document.documentElement);
+    const gap = Number.parseFloat(rootStyle.getPropertyValue('--s1')) || 4;
+    const edge = Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16;
+    const targetBox = target.getBoundingClientRect();
+    const anchor = attachmentTooltipAnchor(target, source).getBoundingClientRect();
+    const size = tooltip.current.getBoundingClientRect();
+    const maxLeft = Math.max(edge, innerWidth - size.width - edge);
+    const left = Math.round(Math.min(Math.max(edge, anchor.left), maxLeft));
+    const top = Math.round(
+      Math.min(
+        Math.max(edge, targetBox.bottom + gap),
+        Math.max(edge, innerHeight - size.height - edge),
+      ),
+    );
+    setPosition((current) =>
+      current.left === left && current.top === top ? current : { left, top },
+    );
+  });
+  if (!target || targetInDialog !== inDialog) return null;
+  return html`<span
+    id="attachment-tooltip"
+    class="attachment-tooltip"
+    role="tooltip"
+    ref=${tooltip}
+    style=${{ left: `${position.left}px`, top: `${position.top}px` }}
+  >${text}</span>`;
 }
 function attachmentTileTemplate(item, attachment, base, metadata, onRemove) {
   return html`<div class="attachment-tile" data-attachment-id=${String(attachment.id)}>
@@ -316,7 +352,7 @@ function attachmentTileTemplate(item, attachment, base, metadata, onRemove) {
               >Remove attachment</button>
             </div>
           </details>`
-        : nothing
+        : null
     }
   </div>`;
 }
@@ -553,7 +589,7 @@ function ItemAttachments({ item, readOnly }) {
     <progress
       class="attachment-progress"
       max="1"
-      value=${local.progress ?? nothing}
+      value=${local.progress ?? null}
       hidden=${!local.progressShown}
       aria-label="Upload progress"
     ></progress>
@@ -581,7 +617,7 @@ function ItemAttachments({ item, readOnly }) {
         <h3>Attachments</h3>
         <span class="attachment-count" aria-hidden="true">${String(attachmentCount(item))}</span>
       </div>
-      ${readOnly ? nothing : uploadTemplate()}
+      ${readOnly ? null : uploadTemplate()}
     </div>
     <p
       class=${local.error ? 'help error' : 'help'}

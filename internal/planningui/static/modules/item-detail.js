@@ -1,16 +1,22 @@
 // The List detail pane for the selected work item.
-import { html, nodeOf, replaceContent, unmountIsland } from './preact.js';
-import { helpPopover } from './multi-select.js';
+import { html } from './vdom.js';
+import { useLayoutEffect, useMemo, useRef, useState } from './vendor-preact.js';
 import { requestKey } from './api.js';
 import { itemPayloadFromForm } from './item-command.js';
-import { setErrorText } from './layout.js';
-import { state } from './state.js';
+import { state, setState, useStore } from './state.js';
+import { uid } from './dom.js';
+import { hooks } from './hooks.js';
 import { notice } from './notices.js';
-import { renderControls } from './controls.js';
-import { receiptRevision, change } from './commands.js';
+import { change } from './commands.js';
 import { setSharedItem } from './url-state.js';
 import { reconcileItemLinks } from './item-links.js';
-import { itemEditorDraft, refreshEditorDueBadge, buildItemEditor } from './item-editor.js';
+import {
+  itemEditorDraft,
+  itemEditorTemplate,
+  itemEditorTitleExtrasTemplate,
+  itemEditorFooterActionsTemplate,
+} from './item-editor.js';
+import { EditorDueBadge } from './due-dates.js';
 
 function detailDraftIsDirty(state) {
   if (!state?.form?.isConnected) return false;
@@ -36,16 +42,13 @@ function detailDiscardAllowed() {
 export function closeDetail({ force = false, focus = true } = {}) {
   if (state.busy) return false;
   if (!state.detailState) {
-    state.selectedItemID = '';
-    state.detailPane?.removeAttribute('data-item');
+    setState({ selectedItemID: '', detailError: '' });
     return true;
   }
   if (!force && !detailDiscardAllowed()) return false;
   const detail = state.detailState;
-  state.detailState = undefined;
-  state.selectedItemID = '';
+  setState({ detailState: undefined, selectedItemID: '', detailError: '' });
   setSharedItem('');
-  if (detail.pane) replaceContent(detail.pane);
   if (focus) {
     const target = detail.origin?.isConnected
       ? detail.origin
@@ -70,92 +73,72 @@ export function selectItem(itemID, origin) {
   openItemDetail(item, undefined, origin);
   return true;
 }
-function updateDetailHeader(item) {
-  if (!state.detailState?.form || !item) return;
-  state.detailState.item = item;
-  const title = state.detailState.form.querySelector('.item-detail-title');
-  const text = [...(title?.childNodes || [])].find((node) => node.nodeType === Node.TEXT_NODE);
-  if (text) text.nodeValue = item.title;
-  // The popover is a widget with fixed text, so a new revision gets a new one.
-  const previous = title?.querySelector('.help-popover');
-  previous?.replaceWith(
-    helpPopover(`Card ID: ${item.id}\nRevision: ${item.revision}`, 'Work item details'),
+function selectDetailBusy(current) {
+  return current.busy;
+}
+function selectDetailError(current) {
+  return current.detailError;
+}
+// The form tree is a stable Preact snapshot for each form lifetime. Reuse the
+// editor VNodes across unrelated shell updates so uncontrolled drafts and local
+// field widgets keep their state.
+export function ItemDetailPane({ detail }) {
+  const formRef = useRef();
+  const pending = useRef({ serialized: '', key: '' });
+  const busy = useStore(selectDetailBusy);
+  const error = useStore(selectDetailError);
+  const [dueBadgeID] = useState(() => uid('item-title-overdue'));
+  const context = useMemo(
+    () => ({
+      mode: 'detail',
+      get form() {
+        return formRef.current;
+      },
+      get origin() {
+        return state.detailState?.origin;
+      },
+    }),
+    [detail?.formKey],
   );
-  // nodeOf roots can remove their own host during disposal. Replace the node
-  // first, while it still has a parent, then release its controller.
-  unmountIsland(previous);
-}
-// The form skeleton is rendered once per opened item and is then plain DOM:
-// the title text, the head's due badge, the footer's item actions and the
-// error line are written directly. The fields inside are a Preact template
-// (buildItemEditor).
-function detailFormTemplate(item, readOnly) {
-  return html`<form class="item-detail-form">
-    <div class="item-detail-head">
-      <h2 class="item-detail-title">${item.title}</h2>
-      <div class="item-detail-head-actions">
-        <button
-          type="button"
-          class="item-detail-close"
-          aria-label="Close item details"
-          onClick=${() => closeDetail()}
-        >×</button>
-      </div>
-    </div>
-    <div class="item-detail-fields"></div>
-    <p class="item-detail-error" role="alert" hidden></p>
-    <div class="item-detail-footer">
-      <button type="button" class="detail-cancel" onClick=${() => closeDetail()}>Cancel</button>
-      <button type="submit" class="primary" data-write="true" hidden=${readOnly}>Save changes</button>
-    </div>
-  </form>`;
-}
-export function openItemDetail(item, draft, origin) {
-  if (!state.detailPane) return;
-  const readOnly = state.board.role === 'viewer' || item.archived;
-  const form = nodeOf(detailFormTemplate(item, readOnly));
-  const title = form.querySelector('.item-detail-title');
-  const close = form.querySelector('.item-detail-close');
-  const fields = form.querySelector('.item-detail-fields');
-  const error = form.querySelector('.item-detail-error');
-  const footer = form.querySelector('.item-detail-footer');
-  const cancel = footer.querySelector('.detail-cancel');
-  const save = footer.querySelector('[type="submit"]');
-  replaceContent(state.detailPane, form);
-  const context = { mode: 'detail', form, footer, origin };
-  const refreshEditor = buildItemEditor(fields, item, draft, readOnly, context, title);
-  let revision = state.board.workspace.revision;
-  let pending, key;
-  state.detailState = {
-    itemID: item.id,
-    item,
-    itemRevision: item.revision,
-    form,
-    pane: state.detailPane,
-    origin,
-    dirty: false,
-    focusOnOpen: true,
-    initialDraft: null,
-  };
-  const detail = state.detailState;
-  setSharedItem(item.id);
+  const item = detail?.item;
+  const readOnly = !item || !state.board || state.board.role === 'viewer' || item.archived;
+  const editor = useMemo(
+    () =>
+      item && state.board
+        ? itemEditorTemplate(item, detail.draft, readOnly, context, dueBadgeID)
+        : null,
+    [detail?.formKey, item, detail?.itemRevision, detail?.draft, readOnly, context, dueBadgeID],
+  );
+  const titleExtras = useMemo(
+    () => (item?.id ? itemEditorTitleExtrasTemplate(item, detail.itemRevision) : null),
+    [detail?.formKey, item, detail?.itemRevision],
+  );
+  const footerAction = useMemo(
+    () => (item ? itemEditorFooterActionsTemplate(item, readOnly, context) : null),
+    [detail?.formKey, item, readOnly, context, state.board],
+  );
+  useLayoutEffect(() => {
+    const form = formRef.current;
+    if (!detail || !form || state.detailState !== detail) return;
+    detail.form = form;
+    detail.initialDraft = itemEditorDraft(form);
+    if (detail.focusOnOpen) {
+      detail.focusOnOpen = false;
+      form.querySelector('[name="title"]')?.focus({ preventScroll: true });
+    }
+  }, [detail?.formKey]);
+  if (!detail || !item || !state.board) return null;
   const updateDirty = () => {
     if (state.detailState === detail) detail.dirty = detailDraftIsDirty(detail);
   };
-  form.addEventListener('input', updateDirty);
-  form.addEventListener('change', updateDirty);
-  detail.initialDraft = itemEditorDraft(form);
-  form.addEventListener('submit', async (event) => {
+  async function onSubmit(event) {
     event.preventDefault();
-    if (readOnly || state.busy || state.detailState !== detail) return;
-    setErrorText(error, '');
-    save.disabled = true;
-    cancel.disabled = true;
-    close.disabled = true;
-    revision = state.board.workspace.revision;
+    const form = formRef.current;
+    if (readOnly || state.busy || state.detailState !== detail || !form) return;
+    setState({ detailError: '' });
+    const revision = state.board.workspace.revision;
     const data = new FormData(form);
-    const desired = data.getAll('link_ids');
-    detail.desiredLinkIDs = desired;
+    detail.desiredLinkIDs = data.getAll('link_ids');
     const command = {
       revision,
       kind: 'item.update',
@@ -163,17 +146,15 @@ export function openItemDetail(item, draft, origin) {
       item: { ...itemPayloadFromForm(data, detail.item), revision: detail.itemRevision },
     };
     const serialized = JSON.stringify(command);
-    if (pending !== serialized) {
-      key = requestKey();
-      pending = serialized;
+    if (pending.current.serialized !== serialized) {
+      pending.current = { serialized, key: requestKey() };
     }
     try {
-      const result = await change(command, key);
+      const result = await change(command, pending.current.key);
       if (!result.refreshed)
         throw new Error(
           'Changes were saved, but the board could not be refreshed. Refresh before continuing.',
         );
-      revision = receiptRevision(result.receipt, revision + 1);
       await reconcileItemLinks(item.id, detail.desiredLinkIDs || []);
       if (state.detailState !== detail || !state.board) return;
       const latest = state.board.items.find((value) => value.id === item.id);
@@ -183,28 +164,67 @@ export function openItemDetail(item, draft, origin) {
       }
       detail.item = latest;
       detail.itemRevision = latest.revision;
-      revision = state.board.workspace.revision;
+      detail.draft = undefined;
       detail.initialDraft = itemEditorDraft(form);
       detail.dirty = false;
-      updateDetailHeader(latest);
-      refreshEditor(latest);
-      refreshEditorDueBadge(form, latest);
+      setState({ detailError: '' });
+      hooks.render();
       notice('Changes saved.');
-    } catch (err) {
+    } catch (submitError) {
       if (state.detailState === detail) {
         detail.dirty = true;
-        setErrorText(
-          error,
-          `${err.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
-        );
-      }
-    } finally {
-      if (state.detailState === detail && form.isConnected) {
-        save.disabled = false;
-        cancel.disabled = false;
-        close.disabled = false;
-        renderControls();
+        setState({
+          detailError: `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
+        });
       }
     }
+  }
+  return html`<form
+    class="item-detail-form"
+    ref=${formRef}
+    onInput=${updateDirty}
+    onChange=${updateDirty}
+    onSubmit=${onSubmit}
+  >
+    <div class="item-detail-head">
+      <h2 class="item-detail-title">${item.title}${titleExtras}</h2>
+      <${EditorDueBadge} item=${item} id=${dueBadgeID} />
+      <div class="item-detail-head-actions">
+        <button
+          type="button"
+          class="item-detail-close"
+          aria-label="Close item details"
+          disabled=${busy}
+          onClick=${() => closeDetail()}
+        >×</button>
+      </div>
+    </div>
+    <div class="item-detail-fields">${editor}</div>
+    <p class="item-detail-error" role="alert" hidden=${!error}>${error}</p>
+    <div class="item-detail-footer">
+      ${footerAction}
+      <button type="button" class="detail-cancel" disabled=${busy} onClick=${() => closeDetail()}>Cancel</button>
+      ${!readOnly ? html`<button type="submit" class="primary" data-write="true" disabled=${busy}>Save changes</button>` : null}
+    </div>
+  </form>`;
+}
+export function openItemDetail(item, draft, origin) {
+  if (!state.detailPane || !state.board) return;
+  setState({
+    selectedItemID: item.id,
+    detailError: '',
+    detailState: {
+      itemID: item.id,
+      formKey: requestKey(),
+      item,
+      itemRevision: item.revision,
+      draft,
+      pane: state.detailPane,
+      origin,
+      dirty: false,
+      focusOnOpen: true,
+      initialDraft: null,
+    },
   });
+  setSharedItem(item.id);
 }

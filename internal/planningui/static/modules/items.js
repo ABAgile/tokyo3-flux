@@ -1,6 +1,6 @@
 // Read-only helpers over the board model: projects, labels, sprints, blockers.
 import { labelForeground } from './format.js';
-import { html } from './preact.js';
+import { html } from './vdom.js';
 import { state } from './state.js';
 
 export function activeSprints() {

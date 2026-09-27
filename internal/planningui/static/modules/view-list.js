@@ -1,7 +1,9 @@
 // The List presentation of the board.
 import { columnWIPLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import { attach, classNames, html, nothing, keyedList, useLayoutEffect } from './preact.js';
+import { attach, classNames } from './dom.js';
+import { html, keyedList } from './vdom.js';
+
 import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { projectBadgesTemplate, labelBadgeTemplate, blocked, findItem } from './items.js';
@@ -16,11 +18,11 @@ import {
 import { attachDrag, dropZone } from './drag.js';
 import { writable } from './permissions.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
-import { selectItem } from './item-detail.js';
+import { ItemDetailPane, selectItem } from './item-detail.js';
 import { pruneBulkSelection, bulkBarTemplate } from './bulk.js';
 
-// Rows and detail-pane visibility are store-backed; item-detail retains
-// controller ownership of the uncontrolled form snapshot inside the pane.
+// Rows and the complete detail form are rendered from shared state. The keyed
+// detail component keeps one uncontrolled form lifetime per opened item.
 const LIST_HEADINGS = ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'];
 function listCellTemplate(label, className, content) {
   return html`<div class=${`list-cell ${className}`} data-label=${label}>
@@ -81,7 +83,7 @@ function titleCellTemplate(item, overdue, bulkSelected) {
                 onClick=${(event) => event.stopPropagation()}
                 onChange=${(event) => toggleBulk(event, item)}
               />`
-            : nothing
+            : null
         }
         <button
           type="button"
@@ -90,7 +92,7 @@ function titleCellTemplate(item, overdue, bulkSelected) {
           onClick=${(event) => selectItem(item.id, event.currentTarget.closest('.list-row'))}
         >${item.title}</button>
       </div>
-      ${overdue ? dueDateBadgeTemplate(item, ' list-title-due') : nothing}
+      ${overdue ? dueDateBadgeTemplate(item, ' list-title-due') : null}
     </div>`,
   );
 }
@@ -115,7 +117,7 @@ function linksTemplate(item, links) {
         >${
           link.kind === 'mr'
             ? cardObservationIconTemplate(link, `item:${item.id}:list-observation:${link.id}`)
-            : nothing
+            : null
         }${cardLinkTemplate(link, `item:${item.id}:list-link:${link.id}`)}</span
       >`,
     )}
@@ -124,24 +126,24 @@ function linksTemplate(item, links) {
 function statusCellTemplate(item, due) {
   const overdue = !!due?.overdue;
   const badges = [
-    blocked(item) ? html`<span class="badge warning">Blocked</span>` : nothing,
-    due && !overdue ? dueDateBadgeTemplate(item) : nothing,
-    item.archived ? html`<span class="badge">Archived</span>` : nothing,
+    blocked(item) ? html`<span class="badge warning">Blocked</span>` : null,
+    due && !overdue ? dueDateBadgeTemplate(item) : null,
+    item.archived ? html`<span class="badge">Archived</span>` : null,
   ];
   const hasBadges = blocked(item) || (due && !overdue) || item.archived;
   const links = state.board.links.filter((link) => link.items.includes(item.id));
   const total = attachmentCount(item);
   const content = [
     // The badge row stays for an overdue item, whose due badge sits by the title.
-    hasBadges || overdue ? html`<div class="list-row-status-badges">${badges}</div>` : nothing,
-    links.length ? linksTemplate(item, links) : nothing,
+    hasBadges || overdue ? html`<div class="list-row-status-badges">${badges}</div>` : null,
+    links.length ? linksTemplate(item, links) : null,
     total
       ? html`<span
           class="list-row-indicator list-row-attachments"
           aria-label=${`${total} attachment${total === 1 ? '' : 's'}`}
           >${attachmentPaperclipTemplate()}<span>${String(total)}</span></span
         >`
-      : nothing,
+      : null,
   ];
   const empty = !(hasBadges || overdue || links.length || total);
   return listCellTemplate(
@@ -256,7 +258,7 @@ function listSectionTemplate(column, items) {
     </summary>
     <div class="list-section-body">
       ${keyedList(peers, (item) => item.id, listRowTemplate)}
-      ${peers.length ? nothing : emptyStateTemplate('No work here')}
+      ${peers.length ? null : emptyStateTemplate('No work here')}
     </div>
   </details>`;
 }
@@ -276,15 +278,8 @@ export function ListPresentation({ items }) {
   const detailOpen = !!(
     state.detailState &&
     state.detailState.pane === state.detailPane &&
-    state.selectedItemID &&
-    state.detailState.form?.isConnected
+    state.selectedItemID
   );
-  useLayoutEffect(() => {
-    const detail = state.detailState;
-    if (!detail?.focusOnOpen) return;
-    detail.focusOnOpen = false;
-    detail.form.querySelector('[name="title"]')?.focus({ preventScroll: true });
-  });
   return html`<div class=${classNames({ 'list-detail-layout': true, 'has-detail': detailOpen })} data-content-view="list:board">
     <div class="planning-list" data-content-view="planning-list">
       ${bulkBarTemplate(items)}
@@ -304,6 +299,9 @@ export function ListPresentation({ items }) {
       hidden=${!detailOpen}
       aria-label="Selected work item"
       ref=${attach(registerDetailPane)}
-    ></aside>
+    ><${ItemDetailPane}
+      key=${detailOpen ? state.detailState.formKey : 'closed'}
+      detail=${detailOpen ? state.detailState : undefined}
+    /></aside>
   </div>`;
 }

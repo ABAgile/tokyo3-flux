@@ -8,7 +8,8 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { html, keyedList } from './preact.js';
+import { html, keyedList } from './vdom.js';
+
 import { state, useStore } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
