@@ -2,9 +2,8 @@
 import { html, nothing, syncDisabled } from './preact.js';
 import { state } from './state.js';
 
-// `access` marks a control renderControls keeps in step with permissions:
-// 'write' ([data-write]), 'admin' ([data-admin-write]) or none. Such controls
-// synchronize `disabled` through a ref, because renderControls writes it too.
+// `access` marks write/admin controls. Refs apply current permissions during
+// component renders; renderControls also syncs stable editor snapshots.
 function writeDisabled(access) {
   if (access === 'write') return !writable() || state.integrationFormOpen;
   if (access === 'admin') return !adminWritable() || state.integrationFormOpen;

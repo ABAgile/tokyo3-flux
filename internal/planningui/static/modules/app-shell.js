@@ -52,6 +52,7 @@ function selectShell(state) {
     view: state.view,
     presentation: state.presentation,
     scope: state.scope,
+    theme: state.theme,
     workspaceGate: state.workspaceGate,
     busy: state.busy,
     loading: state.loading,
@@ -231,24 +232,24 @@ function PlanningArea({
                   <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
                   ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
                 </select></label>
-                <label>Project<select id="project" aria-label="Project" value="all" onChange=${(event) => onFilterChange('project', event)}>
+                <label>Project<select id="project" aria-label="Project" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('project', event)}>
                   <option value="all">All projects</option><option value="none">No project</option>
                   ${board?.projects?.map((project) => html`<option key=${project.id} value=${project.id}>${project.name}</option>`)}
                 </select></label>
-                <label>Assignee<select id="assignee" aria-label="Assignee" value="all" onChange=${(event) => onFilterChange('assignee', event)}>
+                <label>Assignee<select id="assignee" aria-label="Assignee" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('assignee', event)}>
                   <option value="all">All assignees</option><option value="none">Unassigned</option>
                   ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
                 </select></label>
-                <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" aria-label="Label" value="all" onChange=${(event) => onFilterChange('label', event)}>
+                <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" aria-label="Label" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('label', event)}>
                   <option value="all">All labels</option><option value="none">No labels</option>
                   ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
                 </select></label>
                 <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" type="search" autocomplete="off" placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
               </div>
               <div class="filter-bar-end">
-                <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation">
-                  <button id="presentation-board" type="button" aria-pressed="true" onClick=${() => onPresentation('board')}>Board</button>
-                  <button id="presentation-list" type="button" aria-pressed="false" onClick=${() => onPresentation('list')}>List</button>
+                <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation" hidden=${!board || view !== 'board'}>
+                  <button id="presentation-board" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'board')} onClick=${() => onPresentation('board')}>Board</button>
+                  <button id="presentation-list" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'list')} onClick=${() => onPresentation('list')}>List</button>
                 </div>
                 <span id="count" class="filter-bar-count muted">${count}</span>
               </div>
@@ -337,6 +338,7 @@ export function App({
     view,
     presentation,
     scope,
+    theme,
     workspaceGate,
     busy,
     loading,
@@ -349,6 +351,7 @@ export function App({
     )?.id ||
     '';
   const disabled = busy || loading || integrationFormOpen;
+  const canWrite = !!board && board.role !== 'viewer' && !disabled;
   return html`<${Fragment}>
     <a class="skip" href="#main">Skip to planning</a>
     <aside class="sidebar">
@@ -370,7 +373,7 @@ export function App({
       </nav>
       <div class="sidebar-foot">
         <div class="sidebar-session">
-          <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title="Switch theme" onClick=${onThemeToggle}><span aria-hidden="true">☾</span></button>
+          <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title=${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick=${onThemeToggle}><span aria-hidden="true">${theme === 'dark' ? '☀' : '☾'}</span></button>
           <div class="sidebar-account"><span id="identity">${session?.name || session?.subject || 'Loading session…'}</span><a href="/auth/logout">Sign out</a></div>
         </div>
       </div>
@@ -380,8 +383,8 @@ export function App({
         <div><h1 id="title">${shellTitle(shell)}</h1><p id="subtitle" class="muted">${shellSubtitle(shell)}</p></div>
         <div class="actions heading-actions" hidden=${!board}>
           <button id="proposals" onClick=${onProposals}>Proposals</button>
-          <button id="columns" data-write onClick=${onSetupBoard}>Board setup</button>
-          <button id="new-item" class="primary" data-write onClick=${onNewItem}>＋ New item</button>
+          <button id="columns" data-write disabled=${!canWrite} onClick=${onSetupBoard}>Board setup</button>
+          <button id="new-item" class="primary" data-write disabled=${!canWrite} onClick=${onNewItem}>＋ New item</button>
         </div>
       </div>
       <div id="status-bars"><${StatusBars} refresh=${refresh} /></div>

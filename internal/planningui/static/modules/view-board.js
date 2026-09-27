@@ -211,6 +211,7 @@ export function cardTemplate(item, expanded) {
     data-item=${item.id}
     data-focus-key=${`item:${item.id}:card`}
     data-drag-type="card"
+    draggable=${writable() && !item.archived}
     tabindex="0"
     aria-label=${`Open work item ${item.title}; draggable`}
     ref=${attach(attachCard, item.id)}
@@ -292,6 +293,7 @@ function columnTemplate(col, items, expanded) {
     <div
       class="column-head"
       data-drag-type="list"
+      draggable=${writable()}
       aria-label=${`Drag list ${col.name}`}
       ref=${attach(attachDrag, 'list', col.id)}
     >

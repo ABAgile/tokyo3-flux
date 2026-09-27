@@ -10,9 +10,8 @@ function clearDropMarks() {
     .querySelectorAll('.drop-before,.drop-after,.drop-end')
     .forEach((e) => e.classList.remove('drop-before', 'drop-after', 'drop-end'));
 }
-// Drag listeners for a card, row, column head or list section. The template
-// renders data-drag-type and the label; `draggable` is set here and afterwards
-// maintained by renderControls.
+// Drag listeners for a card, row, column head or list section. Templates
+// render `draggable`; this ref only installs the gesture listeners.
 export function attachDrag(node, type, id) {
   node.draggable = writable() && !(type === 'card' && findItem(id)?.archived);
   node.addEventListener('dragstart', (e) => {

@@ -1,15 +1,7 @@
 // The List presentation of the board.
 import { columnWIPLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import {
-  attach,
-  classNames,
-  html,
-  nothing,
-  keyedList,
-  syncDisabled,
-  useLayoutEffect,
-} from './preact.js';
+import { attach, classNames, html, nothing, keyedList, useLayoutEffect } from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import { projectBadgesTemplate, labelBadgeTemplate, blocked, findItem } from './items.js';
@@ -22,6 +14,7 @@ import {
   attachmentPaperclipTemplate,
 } from './item-attachments.js';
 import { attachDrag, dropZone } from './drag.js';
+import { writable } from './permissions.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
 import { syncListSelection, updateDetailPaneVisibility, selectItem } from './item-detail.js';
 import { pruneBulkSelection, bulkBarTemplate } from './bulk.js';
@@ -83,7 +76,7 @@ function titleCellTemplate(item, overdue, bulkSelected) {
                 type="checkbox"
                 class="list-row-select"
                 checked=${bulkSelected}
-                ref=${syncDisabled(busy)}
+                disabled=${busy}
                 data-focus-key=${`item:${item.id}:bulk-select`}
                 aria-label=${`Select ${item.title} for bulk actions`}
                 onClick=${(event) => event.stopPropagation()}
@@ -172,6 +165,7 @@ function listRowTemplate(item) {
     tabindex="0"
     aria-label=${`Open work item ${item.title}; draggable`}
     data-drag-type="card"
+    draggable=${writable() && !item.archived}
     ref=${attach(attachRow, item.id)}
     onClick=${(event) => selectFromRow(event, item)}
     onKeydown=${(event) => selectFromKey(event, item)}
@@ -245,6 +239,7 @@ function listSectionTemplate(column, items) {
     <summary
       class="list-section-head"
       data-drag-type="list"
+      draggable=${writable()}
       aria-label=${`Drag list ${column.name}`}
       ref=${attach(attachDrag, 'list', column.id)}
     >

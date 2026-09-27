@@ -112,23 +112,18 @@ function renderApp() {
     document.body,
   );
 }
-renderApp();
 const theme =
   localStorage.getItem('flux-plan-theme') ||
   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = theme;
-function updateThemeControl() {
-  const dark = document.documentElement.dataset.theme === 'dark';
-  $('theme').firstElementChild.textContent = dark ? '☀' : '☾';
-  $('theme').title = dark ? 'Switch to light theme' : 'Switch to dark theme';
-}
+state.theme = theme;
+renderApp();
 function toggleTheme() {
-  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  const next = state.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   localStorage.setItem('flux-plan-theme', next);
-  updateThemeControl();
+  state.theme = next;
 }
-updateThemeControl();
 window.addEventListener('popstate', () => {
   void applyHistoryNavigation();
 });

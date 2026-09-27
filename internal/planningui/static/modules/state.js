@@ -16,6 +16,7 @@ const initialState = {
   view: 'board',
   presentation: 'board',
   scope: 'active',
+  theme: 'light',
   busy: false,
   loading: false,
   planningChangeNotice: false,

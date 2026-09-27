@@ -194,6 +194,16 @@ async function run(page) {
       host.querySelector('#title')?.textContent === 'Loading planning data',
       'app shell renders its initial title',
     );
+    const previousTheme = state.theme;
+    setState({ theme: 'dark' });
+    await flush();
+    check(
+      host.querySelector('#theme')?.textContent === '☀' &&
+        host.querySelector('#theme')?.title === 'Switch to light theme',
+      'theme control is rendered from store state',
+    );
+    setState({ theme: previousTheme });
+    await flush();
     setState({
       board: {
         role: 'member',
