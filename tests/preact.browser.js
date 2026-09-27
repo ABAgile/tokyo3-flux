@@ -241,14 +241,14 @@ async function run(page) {
       rejected = true;
     }
     check(rejected && state.probeCount === 1, 'the state view is read-only; writes use setState');
-    const selection = new Set(['one']);
+    const selection = ['one'];
     setState({ bulkSelection: selection });
-    setState((current) => ({ bulkSelection: new Set([...current.bulkSelection, 'two']) }));
+    setState((current) => ({ bulkSelection: [...current.bulkSelection, 'two'] }));
     check(
-      selection.size === 1 && state.bulkSelection.size === 2,
-      'set-valued state is replaced, never mutated',
+      selection.length === 1 && state.bulkSelection.length === 2,
+      'list-valued state is replaced, never mutated',
     );
-    setState({ bulkSelection: new Set() });
+    setState({ bulkSelection: [] });
     unmount(host);
 
     const previousLabelBoard = state.board;

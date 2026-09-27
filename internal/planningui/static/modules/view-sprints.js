@@ -116,15 +116,13 @@ function SprintActions({ sprint: s, expanded }) {
     }
   </div>`;
 }
-function selectBurndownExpanded(current) {
-  return current.burndownExpanded;
-}
+
 function selectItemLookup(current) {
   return itemLookup(current.board, current.archiveItems);
 }
 // A changed goal gets a fresh goal widget; otherwise it keeps its measurement.
 function SprintPanel({ sprint: s, items }) {
-  const expanded = useStore(selectBurndownExpanded).has(s.id);
+  const expanded = useStore((current) => current.burndownExpanded.includes(s.id));
   const lookups = useStore(selectLookups);
   const byID = useStore(selectItemLookup);
   return html`<article class="panel sprint-panel" data-sprint-id=${s.id}>

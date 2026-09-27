@@ -27,7 +27,8 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   }
   ```
 
-- Replace values, never mutate them: arrays, maps, sets and board entities get new objects.
+- Replace values, never mutate them: arrays and board entities get new objects.
+  Store values are plain data — lists of ids are arrays, not `Set`s — so they compare, print and serialize like the rest of the state; build a `Set` locally with `useMemo` where lookups need one.
   The store holds data only — no DOM nodes, functions or timers; those live in component refs or module variables.
 
   ```js

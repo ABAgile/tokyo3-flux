@@ -69,7 +69,8 @@ const initialState = {
   sprintHistoryOffset: 0,
   sprintHistoryMore: false,
   sprintHistoryError: '',
-  bulkSelection: new Set(),
+  // Selected item ids, in selection order.
+  bulkSelection: [],
   undoOffer: undefined,
   undoText: '',
   integrationFormOpen: false,
@@ -77,7 +78,8 @@ const initialState = {
   integrationConsent: false,
   integrationSubmitting: false,
   integrationFormError: '',
-  burndownExpanded: new Set(),
+  // Sprint ids whose burn-down chart is shown.
+  burndownExpanded: [],
   // Burn-down requests in flight; the active content body is busy while any load.
   burndownPending: 0,
   searchQuery: '',

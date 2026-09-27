@@ -216,7 +216,7 @@ export async function navigate(view) {
     return;
   setState({
     view,
-    bulkSelection: new Set(),
+    bulkSelection: [],
     ...(view === 'sprints' ? EMPTY_SPRINT_HISTORY : {}),
   });
   if (!['history', 'archive', 'sprints'].includes(view)) return;
@@ -235,7 +235,7 @@ export function setPresentation(next) {
   if (!['board', 'list'].includes(next) || next === state.presentation || interactionBlocked())
     return;
   if (state.detail && !closeDetail({ focus: false })) return;
-  setState({ presentation: next, bulkSelection: new Set() });
+  setState({ presentation: next, bulkSelection: [] });
 }
 /** @param {string} scope */
 export function setScope(scope) {
@@ -258,15 +258,15 @@ export function openProject(project) {
 export function viewSprintScope(sprint) {
   setState({ view: 'board', scope: sprint.id });
 }
+// Store lists of ids are arrays: plain data that compares, prints and
+// serializes like the rest of the state.
 /**
- * @param {Set<string>} set
+ * @param {readonly string[]} list
  * @param {string} id
+ * @returns {string[]}
  */
-export function toggled(set, id) {
-  const next = new Set(set);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  return next;
+export function toggled(list, id) {
+  return list.includes(id) ? list.filter((value) => value !== id) : [...list, id];
 }
 /** @param {string} sprintID */
 export function toggleBurndown(sprintID) {
@@ -278,16 +278,16 @@ export function toggleBurndown(sprintID) {
  */
 export function setBulkSelected(itemID, selected) {
   setState((current) => {
-    if (current.bulkSelection.has(itemID) === selected) return undefined;
+    if (current.bulkSelection.includes(itemID) === selected) return undefined;
     return { bulkSelection: toggled(current.bulkSelection, itemID) };
   });
 }
 /** @param {string[]} ids */
 export function selectAllBulk(ids) {
-  setState((current) => ({ bulkSelection: new Set([...current.bulkSelection, ...ids]) }));
+  setState((current) => ({ bulkSelection: [...new Set([...current.bulkSelection, ...ids])] }));
 }
 export function clearBulk() {
-  setState({ bulkSelection: new Set() });
+  setState({ bulkSelection: [] });
 }
 
 // ── Undo ────────────────────────────────────────────────────────────────────
@@ -335,10 +335,10 @@ export async function chooseWorkspace(workspaceID) {
     integrationConsent: false,
     integrationSubmitting: false,
     integrationFormError: '',
-    bulkSelection: new Set(),
+    bulkSelection: [],
     board: undefined,
     workspaceGate: 'loading',
-    burndownExpanded: new Set(),
+    burndownExpanded: [],
     ...EMPTY_SPRINT_HISTORY,
     projectSearch: '',
     projectFilters: EMPTY_PROJECT_FILTERS,

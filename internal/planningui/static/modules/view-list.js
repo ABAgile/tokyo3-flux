@@ -3,7 +3,7 @@ import { columnWIPLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
 import { classNames } from './dom.js';
 import { html, memo } from './vdom.js';
-import { useEffect, useRef } from './vendor-preact.js';
+import { useEffect, useMemo, useRef } from './vendor-preact.js';
 
 import { setState, state, useStore } from './state.js';
 import { projectBadgesTemplate, labelBadgeTemplate } from './items.js';
@@ -208,7 +208,7 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
 const ListRow = memo(ListRowView);
 // A section's open state belongs to the user: `open` is a static attribute, so
 // Preact sets it once and never again.
-function ListSection({ column, peers, total, context, blockedIDs, selectedID, bulkSelection }) {
+function ListSection({ column, peers, total, context, blockedIDs, selectedID, bulkIDs }) {
   const drop = useDropZone(`column:${column.id}`, columnDropZones(column.id));
   const drag = useDraggable('list', column.id, () => context.canWrite);
   const { draggable, ...dragEvents } = drag.props;
@@ -239,7 +239,7 @@ function ListSection({ column, peers, total, context, blockedIDs, selectedID, bu
           context=${context}
           isBlocked=${blockedIDs.has(item.id)}
           selected=${item.id === selectedID}
-          bulkSelected=${bulkSelection.has(item.id)}
+          bulkSelected=${bulkIDs.has(item.id)}
         />`,
       )}
       ${peers.length ? null : emptyStateTemplate('No work here')}
@@ -270,6 +270,7 @@ export function ListPresentation({ items }) {
   const selectedID = useStore(selectSelectedItem);
   const detail = useStore(selectDetail);
   const bulkSelection = useStore(selectBulkSelection);
+  const bulkIDs = useMemo(() => new Set(bulkSelection), [bulkSelection]);
   const context = useRowContext();
   const blockedIDs = useBlockedIDs(items);
   const root = useRef(null);
@@ -297,7 +298,7 @@ export function ListPresentation({ items }) {
             context=${context}
             blockedIDs=${blockedIDs}
             selectedID=${selectedID}
-            bulkSelection=${bulkSelection}
+            bulkIDs=${bulkIDs}
           />`,
         )}
       </div>

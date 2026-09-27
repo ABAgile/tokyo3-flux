@@ -79,7 +79,7 @@ export function enterWorkspaceGate(mode, message) {
     selectedItemID: '',
     detailError: '',
     editorDialog: current.busy ? current.editorDialog : undefined,
-    bulkSelection: new Set(),
+    bulkSelection: [],
     board: undefined,
     root: undefined,
     boardETag: '',

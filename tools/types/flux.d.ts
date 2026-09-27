@@ -370,7 +370,7 @@ declare namespace Flux {
     sprintHistoryOffset: number;
     sprintHistoryMore: boolean;
     sprintHistoryError: string;
-    bulkSelection: Set<string>;
+    bulkSelection: string[];
     undoOffer: Command[] | undefined;
     undoText: string;
     integrationFormOpen: boolean;
@@ -378,7 +378,7 @@ declare namespace Flux {
     integrationConsent: boolean;
     integrationSubmitting: boolean;
     integrationFormError: string;
-    burndownExpanded: Set<string>;
+    burndownExpanded: string[];
     burndownPending: number;
     searchQuery: string;
     searchInput: string;

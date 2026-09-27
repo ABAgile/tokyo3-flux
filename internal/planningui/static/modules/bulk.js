@@ -14,7 +14,7 @@ import { FormDialog } from './dialog.js';
 import { clearBulk, selectAllBulk } from './actions.js';
 
 function bulkTargets() {
-  return [...state.bulkSelection]
+  return state.bulkSelection
     .map((id) => findItem(id, state))
     .filter((item) => item && !item.archived);
 }
@@ -33,7 +33,7 @@ async function runBulk(label, plan, undoFor) {
   }
   const commands = targets.map(plan).filter(Boolean);
   const undo = undoFor?.(targets);
-  setState({ bulkSelection: new Set() });
+  setState({ bulkSelection: [] });
   const ok = await runSequence(label, commands);
   if (ok && commands.length && undo)
     offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
@@ -193,12 +193,12 @@ function bulkSelectableIDs(items) {
 // The selection keeps only shown, selectable cards.
 export function prunedBulkSelection(selection, items) {
   const selectable = new Set(bulkSelectableIDs(items));
-  const next = new Set([...selection].filter((id) => selectable.has(id)));
-  return next.size === selection.size ? selection : next;
+  const next = selection.filter((id) => selectable.has(id));
+  return next.length === selection.length ? selection : next;
 }
 export function BulkBar({ items, selection, role }) {
   const ids = bulkSelectableIDs(items);
-  const show = selection.size > 0 && role !== 'viewer';
+  const show = selection.length > 0 && role !== 'viewer';
   const action = (text, fn, className) =>
     accessButtonTemplate(text, fn, { className, tracked: false });
   const selectAll = () => selectAllBulk(ids);
@@ -213,13 +213,13 @@ export function BulkBar({ items, selection, role }) {
     ${
       show
         ? html`<span class="bulk-count"
-              >${`${selection.size} of ${ids.length} shown selected`}</span
+              >${`${selection.length} of ${ids.length} shown selected`}</span
             >
             <div class="actions bulk-actions">
               ${action('Assign…', bulkAssign)}${action('Add to sprint…', bulkSprint)}
               ${action('Add label…', bulkLabel)}${action('Archive…', bulkArchive, 'danger')}
               ${
-                selection.size < ids.length
+                selection.length < ids.length
                   ? html`<button type="button" onClick=${selectAll}
                       >${`Select all ${ids.length} shown`}</button
                     >`

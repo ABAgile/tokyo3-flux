@@ -221,11 +221,11 @@ test('planningPatchFromURL opens a single project as a List lens over all work',
 // ── Selection toggling ──────────────────────────────────────────────────────
 
 test('toggled returns a new selection with the id flipped', () => {
-  const selection = new Set(['a']);
+  const selection = ['a'];
   const added = toggled(selection, 'b');
-  assert.deepEqual([...added], ['a', 'b']);
-  assert.deepEqual([...toggled(added, 'a')], ['b']);
-  assert.deepEqual([...selection], ['a'], 'the previous selection is not mutated');
+  assert.deepEqual(added, ['a', 'b']);
+  assert.deepEqual(toggled(added, 'a'), ['b']);
+  assert.deepEqual(selection, ['a'], 'the previous selection is not mutated');
 });
 
 // ── Board lookups ───────────────────────────────────────────────────────────
