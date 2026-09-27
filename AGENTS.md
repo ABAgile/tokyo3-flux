@@ -62,6 +62,15 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   html`${peers.map((item) => html`<${Card} key=${item.id} item=${item} context=${context} />`)}`;
   ```
 
+- Render helpers take the data they read; they never read the store.
+  Name, label, project, sprint, column and participant resolution takes the board lookups from `selectLookups` (`modules/lookups.js`), which keep their identity until an indexed list changes.
+  Cards and List rows receive them in the row context, so a memoized row re-renders exactly when something it can show changes.
+
+  ```js
+  const lookups = useStore(selectLookups);
+  html`${item.labels.map((name) => labelBadgeTemplate(lookups, name))}`;
+  ```
+
 - Native form drafts stay uncontrolled (`defaultValue`) unless the UI owns the changing value; widgets report committed changes with `useCommittedChange`.
 - Document and window listeners, timers, observers and focus lookups live in `modules/ui-hooks.js` effects (`useEventListener`, `useDismiss`, `useFocusRestore`, `focusByKey`); every resource needs cleanup.
   Drag and drop are `useDraggable`/`useDropZone` props; tooltips are `useAttachmentTooltip`/`useObservationTooltip` props.
@@ -92,7 +101,7 @@ No module imports `app.js`; `app.js` sets the saved theme, renders `App` once an
 |---|---|
 | Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
 | State | `state`: the store with every shared UI value, as data |
-| Services | `permissions`, `notices`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
+| Services | `permissions`, `notices`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
 | Actions | `actions`: navigation, presentation, detail, editor, workspace and startup actions; `dialog`: `Modal`, `FormDialog`, `CommandDialog` and the dialog host; `drag` |
 | Item | `gitlab`, `item-links`, `item-editor`, `item-detail` |
 | Views | `planning-filters`, `view-board`, `view-archive`, `bulk`, `view-list`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `view-gate`, `shortcuts` |

@@ -115,7 +115,7 @@ export function setDetailDirty(formKey, dirty) {
 function editItemModal(item, draft) {
   const existing = !!item;
   const readOnly = state.board.role === 'viewer' || !!item?.archived;
-  const project = singleFilterValue('project');
+  const project = singleFilterValue('project', state.filters);
   const projectIDs = ['all', 'none'].includes(project) ? [] : [project];
   const snapshot = item || {
     title: '',

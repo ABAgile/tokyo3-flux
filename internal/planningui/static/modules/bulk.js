@@ -2,18 +2,21 @@
 import { labelForeground } from './format.js';
 import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { setState, state } from './state.js';
+import { setState, state, useStore } from './state.js';
 import { accessButtonTemplate } from './permissions.js';
 import { notice, UNDO_TTL, offerUndo } from './notices.js';
 import { findItem } from './items.js';
 import { memberName } from './people.js';
+import { selectLookups } from './lookups.js';
 import { runSequence } from './commands.js';
 import { closeEditor, openDialog } from './dialog-state.js';
 import { FormDialog } from './dialog.js';
 import { clearBulk, selectAllBulk } from './actions.js';
 
 function bulkTargets() {
-  return [...state.bulkSelection].map(findItem).filter((item) => item && !item.archived);
+  return [...state.bulkSelection]
+    .map((id) => findItem(id, state))
+    .filter((item) => item && !item.archived);
 }
 function bulkItemUpdate(item, patch) {
   return {
@@ -54,6 +57,7 @@ function count(n) {
   return `${n} selected work item${n === 1 ? '' : 's'}`;
 }
 export function BulkAssignDialog({ selected, members }) {
+  const lookups = useStore(selectLookups);
   return html`<${BulkDialog}
     title="Assign selected work"
     saveText="Assign items"
@@ -67,7 +71,7 @@ export function BulkAssignDialog({ selected, members }) {
     ${helpTextTemplate(`Set one assignee on ${count(selected)}. Existing assignees are replaced.`)}
     ${fieldTemplate('assignee', 'Assignee', '', 'text', [
       ['', 'Unassigned'],
-      ...members.map((member) => [member.subject, memberName(member.subject)]),
+      ...members.map((member) => [member.subject, memberName(lookups, member.subject)]),
     ])}
   </${BulkDialog}>`;
 }

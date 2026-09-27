@@ -77,7 +77,7 @@ function titleCellTemplate(item, overdue, bulkSelected, context) {
           onClick=${() => selectItem(item.id, rowFocusKey(item))}
         >${item.title}</button>
       </div>
-      ${overdue ? dueDateBadgeTemplate(item, context.now, ' list-title-due') : null}
+      ${overdue ? dueDateBadgeTemplate(context.lookups, item, context.now, ' list-title-due') : null}
     </div>`,
   );
 }
@@ -106,11 +106,11 @@ function linksTemplate(item, links) {
     )}
   </div>`;
 }
-function statusCellTemplate(item, due, isBlocked, links, total, now) {
+function statusCellTemplate(lookups, item, due, isBlocked, links, total, now) {
   const overdue = !!due?.overdue;
   const badges = [
     isBlocked ? html`<span class="badge warning">Blocked</span>` : null,
-    due && !overdue ? dueDateBadgeTemplate(item, now) : null,
+    due && !overdue ? dueDateBadgeTemplate(lookups, item, now) : null,
     item.archived ? html`<span class="badge">Archived</span>` : null,
   ];
   const hasBadges = isBlocked || (due && !overdue) || item.archived;
@@ -135,12 +135,12 @@ function statusCellTemplate(item, due, isBlocked, links, total, now) {
 }
 const NO_LINKS = Object.freeze([]);
 function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
-  const { now, canWrite, sprintName } = context;
+  const { lookups, now, canWrite, sprintName } = context;
   const list = useAttachmentList(item.id);
   const drag = useDraggable('card', item.id, () => canWrite && !item.archived);
   const drop = useDropZone(`card:${item.id}`, cardDropZones(item.id));
   const files = useItemFileDrop(item.id);
-  const due = itemDateStatus(item, now);
+  const due = itemDateStatus(lookups, item, now);
   const overdue = !!due?.overdue;
   const links = context.linksByItem.get(item.id) || NO_LINKS;
   const total = attachmentCount(item, list);
@@ -172,20 +172,20 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
     ${listCellTemplate(
       'Project',
       'list-cell-project',
-      html`<span class="list-row-project">${projectBadgesTemplate(item)}</span>`,
+      html`<span class="list-row-project">${projectBadgesTemplate(lookups, item)}</span>`,
     )}
     ${listCellTemplate(
       'People',
       'list-cell-people',
       html`<div class="list-row-people">
-        ${participantStackTemplate(item)}
-        <span class="list-row-assignee-name">${memberName(item.assignee)}</span>
+        ${participantStackTemplate(lookups, item)}
+        <span class="list-row-assignee-name">${memberName(lookups, item.assignee)}</span>
       </div>`,
     )}
     ${listCellTemplate(
       'Labels',
       'list-cell-labels',
-      item.labels.length ? item.labels.map(labelBadgeTemplate) : emptyCell,
+      item.labels.length ? item.labels.map((name) => labelBadgeTemplate(lookups, name)) : emptyCell,
     )}
     ${listCellTemplate(
       'Sprints',
@@ -196,7 +196,7 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
           )
         : emptyCell,
     )}
-    ${statusCellTemplate(item, due, isBlocked, links, total, now)}
+    ${statusCellTemplate(lookups, item, due, isBlocked, links, total, now)}
   </article>`;
 }
 const ListRow = memo(ListRowView);

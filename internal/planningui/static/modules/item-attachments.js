@@ -9,6 +9,7 @@ import { setState, state, useStore } from './state.js';
 import { usePermissions, writable } from './permissions.js';
 import { notice } from './notices.js';
 import { memberName } from './people.js';
+import { selectLookups } from './lookups.js';
 import { useDismiss, useMutation } from './ui-hooks.js';
 import { useAttachmentTooltip } from './tooltip.js';
 
@@ -311,6 +312,7 @@ function ItemAttachments({ item, readOnly }) {
   const writes = useMutation();
   const list = useAttachmentList(item.id);
   const generation = useStore(selectBoardGeneration);
+  const lookups = useStore(selectLookups);
   const { writeDisabled } = usePermissions();
   const fileInput = useRef(null);
   const addButton = useRef(null);
@@ -433,7 +435,7 @@ function ItemAttachments({ item, readOnly }) {
           item=${item}
           attachment=${attachment}
           base=${currentRoot}
-          metadata=${`${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`}
+          metadata=${`${attachmentSize(attachment.size)} · ${memberName(lookups, attachment.uploader)}`}
         />
         ${
           readOnly

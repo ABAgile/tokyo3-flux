@@ -34,8 +34,8 @@ function memberRoleChipTemplate(role) {
     aria-label=${`Role: ${memberRoleLabel(role)}`}
   >${memberRoleLabel(role)}</span>`;
 }
-function memberIdentityTemplate(member) {
-  const info = memberListingInfo(member);
+function memberIdentityTemplate(member, session) {
+  const info = memberListingInfo(member, session);
   const username = String(member.username || '').trim();
   return html`<div class="member-identity">
     ${avatarTemplate(info.name, info.avatarURL)}
@@ -72,14 +72,18 @@ export function MemberDialog({ member }) {
 function editMember(member) {
   if (adminWritable()) openDialog('member.edit', { member });
 }
+function selectSession(current) {
+  return current.session;
+}
 export function RemoveMemberDialog({ member, assigned }) {
+  const session = useStore(selectSession);
   return html`<${CommandDialog}
     title="Remove workspace member"
     saveText="Remove member"
     command=${() => ({ kind: 'member.delete', target: member.subject })}
   >
-    ${memberIdentityTemplate(member)}
-    <p>${`Remove ${memberListingInfo(member).name} from this workspace? Workspace history is retained.`}</p>
+    ${memberIdentityTemplate(member, session)}
+    <p>${`Remove ${memberListingInfo(member, session).name} from this workspace? Workspace history is retained.`}</p>
     ${
       assigned
         ? helpTextTemplate(
@@ -219,12 +223,12 @@ function sameMembersPage(left, right) {
   );
 }
 export function MembersPage() {
-  const { members, role } = useStore(selectMembersPage, sameMembersPage);
+  const { members, role, session } = useStore(selectMembersPage, sameMembersPage);
   const admin = role === 'admin';
   const rows = members.map((member) =>
     maintenanceRowTemplate({
       key: member.subject,
-      content: [memberIdentityTemplate(member)],
+      content: [memberIdentityTemplate(member, session)],
       actions: admin
         ? [
             adminIconTemplate('Edit member', '✎', () => editMember(member)),

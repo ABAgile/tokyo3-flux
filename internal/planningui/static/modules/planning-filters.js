@@ -5,6 +5,7 @@ import { Fragment, useEffect, useReducer } from './vendor-preact.js';
 import { setState, state, useStore } from './state.js';
 import { memberName } from './people.js';
 import { labelOptionColors } from './items.js';
+import { selectLookups } from './lookups.js';
 import {
   PlanningFilterChips,
   SEARCH_DEBOUNCE_MS,
@@ -24,7 +25,7 @@ function planningCount(current) {
   const { board, view } = current;
   if (!board) return '';
   if (view === 'sprints') {
-    const count = sprintResults(board, current.searchQuery).matches.length;
+    const count = sprintResults(board, current.searchQuery, current.filters).matches.length;
     return `${count} ${count === 1 ? 'sprint' : 'sprints'}`;
   }
   if (!['board', 'archive'].includes(view)) return '';
@@ -36,6 +37,7 @@ function planningCount(current) {
 function selectPlanningFilters(current) {
   return {
     board: current.board,
+    lookups: selectLookups(current),
     view: current.view,
     presentation: current.presentation,
     scope: current.scope,
@@ -52,7 +54,7 @@ function selectPlanningFilters(current) {
 export function PlanningFilters() {
   const bar = useStore(selectPlanningFilters, shallowEqual);
   const [, rerender] = useReducer((value) => value + 1, 0);
-  const { board, view, presentation, scope, busy, blocked } = bar;
+  const { board, lookups, view, presentation, scope, busy, blocked } = bar;
   const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
   const showLabelFilter = !['sprints', 'history'].includes(view);
   const addFilter = (name) => (event) => {
@@ -77,11 +79,11 @@ export function PlanningFilters() {
         </select></label>
         <label>Assignee<select id="assignee" data-focus-key="filter:assignee" aria-label="Assignee" value="all" disabled=${!board || busy} onChange=${addFilter('assignee')}>
           <option value="all">All assignees</option><option value="none">Unassigned</option>
-          ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
+          ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(lookups, member.subject)}</option>`)}
         </select></label>
         <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" data-focus-key="filter:label" aria-label="Label" value="all" disabled=${!board || busy} onChange=${addFilter('label')}>
           <option value="all">All labels</option><option value="none">No labels</option>
-          ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
+          ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(lookups, label.name)}>${label.name}</option>`)}
         </select></label>
         <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" ref=${searchInputRef} data-focus-key="filter:search" type="search" autocomplete="off" value=${bar.searchInput} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${(event) => setSearchInput(event.currentTarget.value)} onChange=${flushSearch} onKeydown=${searchKeyDown} /></label>
       </div>

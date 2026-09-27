@@ -1,7 +1,6 @@
 // The delivery-trend (velocity) panel on the Sprints page.
 import { panelHeadTemplate, emptyStateTemplate, metricListTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { state } from './state.js';
 import { done } from './items.js';
 import { sprintFilterItems, sprintMatchesFilters } from './filters.js';
 
@@ -9,12 +8,13 @@ import { sprintFilterItems, sprintMatchesFilters } from './filters.js';
 // state of those cards. It is a live read of native planning records, not a
 // recorded historical metric, so it is labeled as such.
 const VELOCITY_SPRINTS = 8;
-function velocitySeries() {
-  return state.board.sprints
-    .filter((sprint) => sprint.state === 'closed' && sprintMatchesFilters(sprint))
+function velocitySeries(board, lookups, filters) {
+  return board.sprints
+    .filter((sprint) => sprint.state === 'closed' && sprintMatchesFilters(board, sprint, filters))
     .map((sprint) => {
-      const items = sprintFilterItems(sprint);
-      return { sprint, committed: items.length, completed: items.filter(done).length };
+      const items = sprintFilterItems(board, sprint, filters);
+      const completed = items.filter((item) => done(lookups, item)).length;
+      return { sprint, committed: items.length, completed };
     })
     .slice(-VELOCITY_SPRINTS);
 }
@@ -80,9 +80,9 @@ function velocityTable(series) {
     </div>
   </details>`;
 }
-function velocityBody(series) {
+function velocityBody(board, series) {
   if (!series.length) {
-    const narrowed = state.board.sprints.some((sprint) => sprint.state === 'closed');
+    const narrowed = board.sprints.some((sprint) => sprint.state === 'closed');
     return emptyStateTemplate(
       narrowed
         ? 'No closed sprint holds work matching the current filters.'
@@ -114,12 +114,12 @@ function velocityBody(series) {
     </figure>
     ${velocityTable(series)}`;
 }
-export function sprintVelocityTemplate() {
+export function sprintVelocityTemplate(board, lookups, filters) {
   return html`<section class="panel velocity-panel" aria-labelledby="velocity-heading">
     ${panelHeadTemplate('Delivery trend', {
       id: 'velocity-heading',
       description: `Committed and completed work for the last ${VELOCITY_SPRINTS} closed sprints. Completion reflects each card's current column, not its state at closure.`,
     })}
-    ${velocityBody(velocitySeries())}
+    ${velocityBody(board, velocitySeries(board, lookups, filters))}
   </section>`;
 }

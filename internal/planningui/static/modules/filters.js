@@ -2,15 +2,9 @@
 import { labelForeground } from './format.js';
 import { html } from './vdom.js';
 import { setState, state, useStore } from './state.js';
-import {
-  activeSprints,
-  projectName,
-  itemProjectIDs,
-  labelInfo,
-  done,
-  scopeItems,
-} from './items.js';
+import { projectName, itemProjectIDs, labelInfo, done, scopeItems } from './items.js';
 import { memberName } from './people.js';
+import { selectLookups } from './lookups.js';
 
 // The Projects bar uses the same multi-value filter rules as the planning bar.
 export const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
@@ -63,7 +57,7 @@ export function knownFilters(filters, board) {
 }
 // A single concrete selection still drives the project lens and the server-side
 // burn-down filter, which accept one value. Wider selections fall back to all.
-export function singleFilterValue(name, filters = state.filters) {
+export function singleFilterValue(name, filters) {
   const values = filters[name];
   return values.length === 1 && values[0] !== 'none'
     ? values[0]
@@ -71,22 +65,29 @@ export function singleFilterValue(name, filters = state.filters) {
       ? 'none'
       : 'all';
 }
-function filterOptionText(name, value) {
+function filterOptionText(lookups, name, value) {
   if (value === 'none')
     return { project: 'No project', assignee: 'Unassigned', label: 'No labels' }[name];
-  if (name === 'project') return projectName(value);
-  if (name === 'assignee') return memberName(value);
+  if (name === 'project') return projectName(lookups, value);
+  if (name === 'assignee') return memberName(lookups, value);
   return value;
 }
 // Chips are the removable, authoritative view of any filter group. `onChange`
-// receives the next group.
-export function FilterChips({ group, names, onChange, disabled, clearLabel = 'Clear filters' }) {
+// receives the next group; `lookups` resolves the chip names.
+export function FilterChips({
+  group,
+  names,
+  lookups,
+  onChange,
+  disabled,
+  clearLabel = 'Clear filters',
+}) {
   const chips = [];
   names.forEach((name) => {
     group[name].forEach((value) => {
-      const text = filterOptionText(name, value);
+      const text = filterOptionText(lookups, name, value);
       const title = { project: 'Project', assignee: 'Assignee', label: 'Label' }[name];
-      const color = name === 'label' && value !== 'none' ? labelInfo(value).color : '';
+      const color = name === 'label' && value !== 'none' ? labelInfo(lookups, value).color : '';
       const colors = color ? { 'background-color': color, color: labelForeground(color) } : {};
       chips.push(html`<span key=${`${name}:${value}`} class=${`filter-chip filter-chip-${name}`} style=${colors}>
         <span class="filter-chip-text">${`${title}: ${text}`}</span>
@@ -110,13 +111,13 @@ export function FilterChips({ group, names, onChange, disabled, clearLabel = 'Cl
     >${clearLabel}</button>`);
   return chips;
 }
-function filterSummaryText(name, filters) {
+function filterSummaryText(lookups, name, filters) {
   const values = filters[name];
   if (!values.length)
     return { project: 'All projects', assignee: 'All assignees', label: 'All labels' }[name];
-  return values.map((value) => filterOptionText(name, value)).join(', ');
+  return values.map((value) => filterOptionText(lookups, name, value)).join(', ');
 }
-export function knownFilterValue(name, value, board = state.board) {
+export function knownFilterValue(name, value, board) {
   if (value === 'none') return true;
   if (name === 'project') return board.projects.some((project) => project.id === value);
   if (name === 'assignee') return board.members.some((member) => member.subject === value);
@@ -125,12 +126,13 @@ export function knownFilterValue(name, value, board = state.board) {
 // Searchable text is derived once per item revision. `boardGeneration` is
 // bumped whenever the board is replaced, so renamed projects or members
 // invalidate the memo without tracking each name individually.
-function itemHaystack(item, generation) {
+function itemHaystack(lookups, item, generation) {
   const cached = searchIndex.get(item);
   if (cached && cached.generation === generation && cached.revision === item.revision)
     return cached.text;
+  const projects = itemProjectIDs(item).map((id) => projectName(lookups, id));
   const text =
-    `${item.title} ${item.description} ${item.labels.join(' ')} ${item.assignee} ${memberName(item.assignee)} ${itemProjectIDs(item).map(projectName).join(' ')}`.toLowerCase();
+    `${item.title} ${item.description} ${item.labels.join(' ')} ${item.assignee} ${memberName(lookups, item.assignee)} ${projects.join(' ')}`.toLowerCase();
   searchIndex.set(item, { generation, revision: item.revision, text });
   return text;
 }
@@ -157,21 +159,24 @@ function matchesItemFilters(item, filters) {
 // Work shown by a planning view (`board` or `archive`), derived from the store.
 function computeFilteredItems(current, view) {
   const { board, searchQuery: query, scope, filters, boardGeneration } = current;
-  const sprint = board.sprints.find((s) => s.id === scope);
-  const active = view === 'archive' ? [] : activeSprints();
+  const lookups = selectLookups(current);
+  const sprint = lookups.sprintsById.get(scope);
+  const active = view === 'archive' ? [] : lookups.activeSprints;
   const scoped =
-    sprint && view !== 'archive' ? new Set(scopeItems(sprint).map((value) => value.id)) : null;
+    sprint && view !== 'archive'
+      ? new Set(scopeItems(board, sprint).map((value) => value.id))
+      : null;
   return (view === 'archive' ? current.archiveItems : board.items).filter((i) => {
     if (view === 'archive') {
       if (!i.archived) return false;
     } else if (i.archived && sprint?.state !== 'closed') return false;
     if (view !== 'archive') {
       if (scope === 'active' && !active.some((s) => i.sprint_ids.includes(s.id))) return false;
-      if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false;
+      if (scope === 'backlog' && (i.sprint_ids.length || done(lookups, i))) return false;
       if (scoped && !scoped.has(i.id)) return false;
     }
     if (!matchesItemFilters(i, filters)) return false;
-    return !query || itemHaystack(i, boardGeneration).includes(query);
+    return !query || itemHaystack(lookups, i, boardGeneration).includes(query);
   });
 }
 const filteredCache = { board: undefined, archive: undefined };
@@ -197,12 +202,14 @@ export function filteredItems() {
   return selectFilteredItems(state);
 }
 export function PlanningFilterChips({ show, includeLabels, disabled }) {
-  const filters = useFiltersState();
+  const filters = useStore(selectFilters);
+  const lookups = useStore(selectLookups);
   const names = FILTER_NAMES.filter((name) => includeLabels || name !== 'label');
   const chips = show
     ? FilterChips({
         group: filters,
         names,
+        lookups,
         disabled,
         onChange: (next) => setState({ filters: next }),
       })
@@ -214,22 +221,14 @@ export function PlanningFilterChips({ show, includeLabels, disabled }) {
 function selectFilters(current) {
   return current.filters;
 }
-function selectBoard(current) {
-  return current.board;
-}
-// Chip text resolves names against the board, so chips follow it too.
-function useFiltersState() {
-  useStore(selectBoard);
-  return useStore(selectFilters);
-}
-export function selectedFilterText(name, filters = state.filters) {
+export function selectedFilterText(lookups, name, filters) {
   const values = filters[name];
   return values.length > 1
-    ? `${filterSummaryText(name, filters)} (chart shows all)`
-    : filterSummaryText(name, filters);
+    ? `${filterSummaryText(lookups, name, filters)} (chart shows all)`
+    : filterSummaryText(lookups, name, filters);
 }
-export function sprintFilterItems(sprint, filters = state.filters) {
-  return scopeItems(sprint).filter(
+export function sprintFilterItems(board, sprint, filters) {
+  return scopeItems(board, sprint).filter(
     (item) =>
       matchesFilter(filters.project, itemProjectIDs(item)) &&
       matchesFilter(filters.assignee, item.assignee ? [item.assignee] : []),
@@ -239,14 +238,16 @@ export function sprintFilterItems(sprint, filters = state.filters) {
 // their metrics count: a sprint is shown when its scope still holds work that
 // matches every active filter. Sprints are never filtered out while no work
 // filter is active, so an empty sprint stays visible and plannable.
-export function sprintMatchesFilters(sprint, filters = state.filters) {
+export function sprintMatchesFilters(board, sprint, filters) {
   if (!filters.project.length && !filters.assignee.length) return true;
-  return sprintFilterItems(sprint, filters).length > 0;
+  return sprintFilterItems(board, sprint, filters).length > 0;
 }
 // The sprints the Sprints page lists: those matching the work filters, then
 // the search query against name and goal.
-export function sprintResults(board, query, filters = state.filters) {
-  const filtered = (board?.sprints || []).filter((sprint) => sprintMatchesFilters(sprint, filters));
+export function sprintResults(board, query, filters) {
+  const filtered = (board?.sprints || []).filter((sprint) =>
+    sprintMatchesFilters(board, sprint, filters),
+  );
   const matches = filtered.filter(
     (sprint) => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query),
   );

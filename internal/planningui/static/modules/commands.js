@@ -111,14 +111,14 @@ function optimisticApply(command) {
   };
 }
 function itemTitle(id) {
-  return findItem(id)?.title || 'work item';
+  return findItem(id, state)?.title || 'work item';
 }
 // The inverse must be read before the command is applied, because a move undo
 // is expressed as the anchor the card currently sits in front of.
 function undoableInverse(command) {
   switch (command.kind) {
     case 'item.archive': {
-      const item = findItem(command.target);
+      const item = findItem(command.target, state);
       return {
         text: `Archived “${itemTitle(command.target)}”`,
         commands: [

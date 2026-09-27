@@ -20,6 +20,7 @@ import {
   blocked,
   findItem,
 } from './items.js';
+import { itemLookup, selectLookups } from './lookups.js';
 import { participantStackTemplate } from './people.js';
 import { itemDateStatus, dueDateBadgeTemplate, selectDueDateNow } from './due-dates.js';
 import { filteredItems } from './filters.js';
@@ -40,7 +41,7 @@ import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitl
 import { editItem } from './actions.js';
 import { useDismiss, useFocusRestore } from './ui-hooks.js';
 
-export function ProjectSummary({ board, view, projectID }) {
+export function ProjectSummary({ board, lookups, items: itemsByID, view, projectID }) {
   const project = board?.projects?.find((value) => value.id === projectID);
   const visible = view === 'board' && !!project && !['all', 'none'].includes(projectID);
   const items = visible
@@ -55,9 +56,11 @@ export function ProjectSummary({ board, view, projectID }) {
       )
     : [];
   const active = openSprints.filter((sprint) => sprint.state === 'active');
-  const completed = items.filter(done).length;
-  const blockedCount = items.filter(blocked).length;
-  const unscheduled = items.filter((item) => !done(item) && !item.sprint_ids.length).length;
+  const completed = items.filter((item) => done(lookups, item)).length;
+  const blockedCount = items.filter((item) => blocked(lookups, itemsByID, item)).length;
+  const unscheduled = items.filter(
+    (item) => !done(lookups, item) && !item.sprint_ids.length,
+  ).length;
   const coverage = active.map((sprint) => {
     const count = items.filter((item) => item.sprint_ids.includes(sprint.id)).length;
     return html`<span key=${sprint.id} class="badge">${`${sprint.name} · ${count}`}</span>`;
@@ -97,9 +100,10 @@ export function ProjectSummary({ board, view, projectID }) {
   </section>`;
 }
 
-// Everything a card or list row renders besides its own item. It changes only
-// with the board data it reads, the due-date clock or permissions, so a
-// memoized row skips rendering when its item and flags are unchanged.
+// Everything a card or list row renders besides its own item: the board
+// lookups its templates resolve names with, its links, the due-date clock and
+// permissions. Templates read only what the context carries, so a memoized row
+// skips rendering exactly when its item, flags and this context are unchanged.
 function selectBoard(current) {
   return current.board;
 }
@@ -107,12 +111,11 @@ function selectArchiveItems(current) {
   return current.archiveItems;
 }
 export function useRowContext() {
-  const board = useStore(selectBoard);
+  const links = useStore((current) => current.board?.links);
+  const lookups = useStore(selectLookups);
   const now = useStore(selectDueDateNow);
   const { write, writeDisabled, busy, role } = usePermissions();
-  const session = useStore((current) => current.session);
   const root = useStore((current) => current.root);
-  const { links, sprints, labels, members, projects, participants, columns } = board;
   return useMemo(() => {
     const linksByItem = new Map();
     for (const link of links)
@@ -121,43 +124,28 @@ export function useRowContext() {
         linksByItem.get(id).push(link);
       }
     return {
+      lookups,
       linksByItem,
-      sprintName: (id) => sprints.find((s) => s.id === id)?.name || id,
+      sprintName: (id) => lookups.sprintsById.get(id)?.name || id,
       canWrite: write,
       writeDisabled,
       busy,
       role,
       now,
       root,
-      // Identity for the remaining board data templates read.
-      data: [labels, members, projects, participants, columns, session],
     };
-  }, [
-    links,
-    sprints,
-    labels,
-    members,
-    projects,
-    participants,
-    columns,
-    session,
-    write,
-    writeDisabled,
-    busy,
-    role,
-    now,
-    root,
-  ]);
+  }, [links, lookups, write, writeDisabled, busy, role, now, root]);
 }
 const NO_LINKS = Object.freeze([]);
 // Blocked flags depend on other cards, so they are computed per list.
 export function useBlockedIDs(items) {
   const board = useStore(selectBoard);
   const archiveItems = useStore(selectArchiveItems);
-  return useMemo(
-    () => new Set(items.filter(blocked).map((item) => item.id)),
-    [items, board.items, board.columns, archiveItems],
-  );
+  const lookups = useStore(selectLookups);
+  return useMemo(() => {
+    const byID = itemLookup(board, archiveItems);
+    return new Set(items.filter((item) => blocked(lookups, byID, item)).map((item) => item.id));
+  }, [items, board.items, lookups, archiveItems]);
 }
 // Board cards and List rows are both drop targets for a card: before or after
 // the target within its column.
@@ -165,9 +153,9 @@ export function cardDropZones(itemID) {
   return [
     {
       type: 'card',
-      enabled: () => !findItem(itemID)?.archived,
+      enabled: () => !findItem(itemID, state)?.archived,
       command: (dragged, after) => {
-        const current = findItem(itemID);
+        const current = findItem(itemID, state);
         if (!current) return undefined;
         const peers = filteredItems().filter((value) => value.column_id === current.column_id);
         const index = peers.findIndex((value) => value.id === current.id);
@@ -283,12 +271,12 @@ function CardAttachments({ item, total, list, open, onToggle }) {
   </details>`;
 }
 function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsToggle }) {
-  const { now, canWrite, writeDisabled, sprintName } = context;
+  const { lookups, now, canWrite, writeDisabled, sprintName } = context;
   const list = useAttachmentList(item.id);
   const drag = useDraggable('card', item.id, () => canWrite && !item.archived);
   const drop = useDropZone(`card:${item.id}`, cardDropZones(item.id));
   const files = useItemFileDrop(item.id);
-  const overdue = !!itemDateStatus(item, now)?.overdue;
+  const overdue = !!itemDateStatus(lookups, item, now)?.overdue;
   const links = context.linksByItem.get(item.id) || NO_LINKS;
   const total = attachmentCount(item, list);
   const { draggable, ...dragEvents } = drag.props;
@@ -317,11 +305,11 @@ function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsTogg
         data-focus-key=${`item:${item.id}:title`}
         onClick=${() => editItem(item)}
       >${item.title}</button>
-      ${overdue ? dueDateBadgeTemplate(item, now, ' card-title-due') : null}
+      ${overdue ? dueDateBadgeTemplate(lookups, item, now, ' card-title-due') : null}
     </div>
     <div class="card-meta">
-      <div class="card-projects">${projectBadgesTemplate(item)}</div>
-      ${participantStackTemplate(item)}
+      <div class="card-projects">${projectBadgesTemplate(lookups, item)}</div>
+      ${participantStackTemplate(lookups, item)}
     </div>
     <div class="tags" data-card-section="sprints">
       ${item.sprint_ids.map(
@@ -330,9 +318,9 @@ function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsTogg
       )}
     </div>
     <div class="tags" data-card-section="labels">
-      ${item.labels.map(labelBadgeTemplate)}
+      ${item.labels.map((name) => labelBadgeTemplate(lookups, name))}
       ${isBlocked ? html`<span class="badge warning">Blocked by dependency</span>` : null}
-      ${overdue ? null : dueDateBadgeTemplate(item, now)}
+      ${overdue ? null : dueDateBadgeTemplate(lookups, item, now)}
       ${item.archived ? html`<span class="badge">Archived</span>` : null}
     </div>
     ${

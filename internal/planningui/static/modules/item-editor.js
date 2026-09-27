@@ -9,6 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js
 import { state, useStore } from './state.js';
 import { usePermissions, writable } from './permissions.js';
 import { itemProjectIDs, labelInfo, blocked } from './items.js';
+import { itemLookup, selectLookups } from './lookups.js';
 import { memberName } from './people.js';
 import { helpPopoverTemplate, MultiSelect } from './multi-select.js';
 import {
@@ -149,6 +150,7 @@ function DatesField({ item, draft, readOnly, onChange }) {
 }
 function ItemTitleField({ item, draft, readOnly, dueBadgeID, inputRef }) {
   const now = useStore(selectDueDateNow);
+  const lookups = useStore(selectLookups);
   return html`<label
     ><span class="item-title-label">Title</span><input
       name="title"
@@ -157,7 +159,7 @@ function ItemTitleField({ item, draft, readOnly, dueBadgeID, inputRef }) {
       required
       maxlength="240"
       aria-label="Title"
-      aria-describedby=${dueBadgeID && itemDateStatus(item, now)?.overdue ? dueBadgeID : undefined}
+      aria-describedby=${dueBadgeID && itemDateStatus(lookups, item, now)?.overdue ? dueBadgeID : undefined}
       disabled=${readOnly}
       defaultValue=${draft?.title ?? item.title}
       ref=${inputRef}
@@ -166,24 +168,24 @@ function ItemTitleField({ item, draft, readOnly, dueBadgeID, inputRef }) {
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled
 // as cached provider observations, never as authoritative planning state.
+function selectItemLookup(current) {
+  return itemLookup(current.board, current.archiveItems);
+}
 function ItemStatus({ item }) {
   const now = useStore(selectDueDateNow);
-  const column = state.board.columns.find((value) => value.id === item.column_id);
+  const lookups = useStore(selectLookups);
+  const byID = useStore(selectItemLookup);
+  const column = lookups.columnsById.get(item.column_id);
   const category =
     { todo: 'To do', doing: 'In progress', done: 'Done' }[column?.category] || 'Uncategorised';
   const columnName = column?.name || item.column_id;
-  const openSprints = (item.sprint_ids || []).map(
-    (id) => state.board.sprints.find((sprint) => sprint.id === id)?.name || id,
-  );
+  const sprintName = (id) => lookups.sprintsById.get(id)?.name || id;
+  const openSprints = (item.sprint_ids || []).map(sprintName);
   const closedSprints = state.board.closed_scope
     .filter((scope) => scope.item_id === item.id)
-    .map(
-      (scope) =>
-        state.board.sprints.find((sprint) => sprint.id === scope.sprint_id)?.name ||
-        scope.sprint_id,
-    );
+    .map((scope) => sprintName(scope.sprint_id));
   const links = state.board.links.filter((link) => link.items.includes(item.id));
-  const due = itemDateStatus(item, now);
+  const due = itemDateStatus(lookups, item, now);
   // The summary is the whole status in one line; everything that would push the
   // editor down — sprint history and cached provider observations — waits behind
   // the disclosure, whose open state belongs to the user.
@@ -215,8 +217,8 @@ function ItemStatus({ item }) {
               : 'Live: on the board and not archived. Completion is the column category, and sprint scope is the sprint badge.'
           }
         >${item.archived ? 'Archived' : 'Live'}</span>
-        ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : null}
-        ${due && !due.overdue ? dueDateBadgeTemplate(item, now) : null}
+        ${blocked(lookups, byID, item) ? html`<span class="badge warning">Blocked by dependency</span>` : null}
+        ${due && !due.overdue ? dueDateBadgeTemplate(lookups, item, now) : null}
         <span class="badge"
           >${
             openSprints.length
@@ -284,6 +286,7 @@ export function ItemEditorFields({
   onChange,
 }) {
   const board = state.board;
+  const lookups = useStore(selectLookups);
   const { gitlab } = usePermissions();
   const selfSubject = board.members.find(
     (member) => member.subject === state.session?.subject,
@@ -304,7 +307,7 @@ export function ItemEditorFields({
     .map((scope) => board.sprints.find((s) => s.id === scope.sprint_id)?.name || scope.sprint_id);
   const itemLinks = item.id ? board.links.filter((link) => link.items.includes(item.id)) : [];
   const labelChip = (value) => {
-    const label = labelInfo(value);
+    const label = labelInfo(lookups, value);
     return {
       className: 'label-badge',
       style: { backgroundColor: label.color, color: labelForeground(label.color) },
@@ -344,7 +347,7 @@ export function ItemEditorFields({
         <${MultiSelect}
           name="assignee"
           title="Assignee"
-          entries=${[['', 'Unassigned'], ...board.members.map((m) => [m.subject, memberName(m.subject)])]}
+          entries=${[['', 'Unassigned'], ...board.members.map((m) => [m.subject, memberName(lookups, m.subject)])]}
           defaultValue=${[draft?.assignee ?? item.assignee]}
           single=${true}
           disabled=${readOnly}

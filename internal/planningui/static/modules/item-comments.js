@@ -6,7 +6,8 @@ import { panelHeadTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useReducer, useRef, useState } from './vendor-preact.js';
 
-import { state } from './state.js';
+import { state, useStore } from './state.js';
+import { selectLookups } from './lookups.js';
 import { canComment, usePermissions } from './permissions.js';
 import { memberInfo, avatarImageTemplate } from './people.js';
 import { useCommittedChange, useMutation, useRequest } from './ui-hooks.js';
@@ -40,8 +41,8 @@ function validCommentPage(data) {
       (Number.isSafeInteger(data.next_before) && data.next_before >= 0))
   );
 }
-function commentTemplate(comment) {
-  const info = memberInfo(comment.author);
+function commentTemplate(lookups, comment) {
+  const info = memberInfo(lookups, comment.author);
   const time = commentTime(comment.created_at);
   return html`<article class="comment" data-comment-id=${String(comment.id)}>
     <span class="avatar comment-avatar" aria-hidden="true">
@@ -57,8 +58,8 @@ function commentTemplate(comment) {
     </div>
   </article>`;
 }
-function CommentItem({ comment }) {
-  return commentTemplate(comment);
+function CommentItem({ lookups, comment }) {
+  return commentTemplate(lookups, comment);
 }
 function commentsReducer(current, action) {
   switch (action.type) {
@@ -116,6 +117,7 @@ function ItemComments({ item, onDraftChange }) {
   const composer = useRef(null);
   const writes = useMutation();
   const { comment: allowed } = usePermissions();
+  const lookups = useStore(selectLookups);
   // The enclosing editor counts an unsent comment as unsaved input.
   useCommittedChange(local.draft, onDraftChange);
   const writer = state.board.role === 'member' || state.board.role === 'admin';
@@ -189,7 +191,7 @@ function ItemComments({ item, onDraftChange }) {
         if (nextBefore && !writes.pending) setBefore(nextBefore);
       }}
     >Load older comments</button>
-    <div class="comment-list">${comments.map((comment) => html`<${CommentItem} key=${comment.id} comment=${comment} />`)}</div>
+    <div class="comment-list">${comments.map((comment) => html`<${CommentItem} key=${comment.id} lookups=${lookups} comment=${comment} />`)}</div>
     ${
       writer
         ? html`<div class="comment-composer">

@@ -17,10 +17,11 @@ import {
 import { html, shallowEqual } from './vdom.js';
 import { useReducer, useState } from './vendor-preact.js';
 
-import { setState, state, useStore } from './state.js';
+import { setState, useStore } from './state.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { itemProjectIDs } from './items.js';
 import { memberName } from './people.js';
+import { selectLookups } from './lookups.js';
 import { gitlabProjectLabel, loadGitLabProjects } from './gitlab-catalog.js';
 import { PROJECT_FILTER_NAMES, withFilterValue, matchesFilter, FilterChips } from './filters.js';
 import { openDialog } from './dialog-state.js';
@@ -50,9 +51,9 @@ export function ProjectDialog({ project }) {
 function editProject(project) {
   openDialog('project.edit', { project });
 }
-function projectMatchesFilters(project, filters) {
+function projectMatchesFilters(board, project, filters) {
   if (!filters.assignee.length && !filters.label.length) return true;
-  return state.board.items.some((item) =>
+  return board.items.some((item) =>
     item.archived
       ? false
       : itemProjectIDs(item).includes(project.id) &&
@@ -111,8 +112,8 @@ function integrationTemplate(page, approvedIDs, catalog) {
 }
 function projectRowsTemplate(page, matches, filtered, search) {
   if (!matches.length) {
-    const narrowed = filtered.length !== state.board.projects.length;
-    const message = !state.board.projects.length
+    const narrowed = filtered.length !== page.board.projects.length;
+    const message = !page.board.projects.length
       ? 'No projects yet. Items can remain unclassified.'
       : search && narrowed
         ? `No projects match \u201c${search}\u201d and the current filters.`
@@ -139,7 +140,9 @@ function projectsTemplate(page, ids, rerender) {
   const search = page.projectSearch.trim();
   const query = search.toLowerCase();
   const filters = page.projectFilters;
-  const filtered = page.board.projects.filter((project) => projectMatchesFilters(project, filters));
+  const filtered = page.board.projects.filter((project) =>
+    projectMatchesFilters(page.board, project, filters),
+  );
   const matches = filtered.filter((project) => project.name.toLowerCase().includes(query));
   // Each select adds one value and returns to its "any" entry.
   const addFilter = (name) => (event) => {
@@ -157,7 +160,10 @@ function projectsTemplate(page, ids, rerender) {
     [
       ['all', 'Any assignee'],
       ['none', 'Unassigned'],
-      ...page.board.members.map((member) => [member.subject, memberName(member.subject)]),
+      ...page.board.members.map((member) => [
+        member.subject,
+        memberName(page.lookups, member.subject),
+      ]),
     ],
     ids.assignee,
     addFilter('assignee'),
@@ -179,6 +185,7 @@ function projectsTemplate(page, ids, rerender) {
   const chips = FilterChips({
     group: filters,
     names: PROJECT_FILTER_NAMES,
+    lookups: page.lookups,
     disabled: page.busy || page.loading,
     onChange: (next) => setState({ projectFilters: next }),
     clearLabel: 'Clear project filters',
@@ -212,7 +219,10 @@ const PROJECT_PAGE_KEYS = [
   'loading',
 ];
 function selectProjectsPage(current) {
-  return Object.fromEntries(PROJECT_PAGE_KEYS.map((key) => [key, current[key]]));
+  return {
+    ...Object.fromEntries(PROJECT_PAGE_KEYS.map((key) => [key, current[key]])),
+    lookups: selectLookups(current),
+  };
 }
 export function ProjectsPage() {
   const page = useStore(selectProjectsPage, shallowEqual);

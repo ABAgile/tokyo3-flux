@@ -9,6 +9,7 @@ import { StatusBars } from './notices.js';
 import { canWrite } from './permissions.js';
 import { emptyStateTemplate } from './layout.js';
 import { selectFilteredItems, singleFilterValue } from './filters.js';
+import { itemLookup, selectLookups } from './lookups.js';
 import { useDueDateClock } from './due-dates.js';
 import { usePolling } from './sync.js';
 import { usePlanningURL } from './url-state.js';
@@ -313,15 +314,23 @@ function selectPlanningArea(current) {
 function selectSummaries(current) {
   return {
     board: current.board,
+    lookups: selectLookups(current),
+    items: itemLookup(current.board, current.archiveItems),
     view: current.view,
     scope: current.scope,
     projectID: singleFilterValue('project', current.filters),
   };
 }
 function Summaries() {
-  const { board, view, scope, projectID } = useStore(selectSummaries, shallowEqual);
+  const { board, lookups, items, view, scope, projectID } = useStore(selectSummaries, shallowEqual);
   return html`<${Fragment}>
-    <${ProjectSummary} board=${board} view=${view} projectID=${projectID} />
+    <${ProjectSummary}
+      board=${board}
+      lookups=${lookups}
+      items=${items}
+      view=${view}
+      projectID=${projectID}
+    />
     <${SprintSummary} board=${board} view=${view} scope=${scope} />
   </${Fragment}>`;
 }

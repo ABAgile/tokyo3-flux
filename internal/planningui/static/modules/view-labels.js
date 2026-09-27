@@ -12,6 +12,7 @@ import { html } from './vdom.js';
 import { state, useStore } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
+import { selectLookups } from './lookups.js';
 import { labelColorPickerTemplate } from './multi-select.js';
 import { openDialog } from './dialog-state.js';
 import { CommandDialog } from './dialog.js';
@@ -38,7 +39,10 @@ export function LabelDialog({ name = '', color = '#dcefe4' }) {
 }
 function editLabel(label) {
   const name = typeof label === 'string' ? label : label?.name || '';
-  const color = typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
+  const color =
+    typeof label === 'string'
+      ? labelInfo(selectLookups(state), label).color
+      : label?.color || '#dcefe4';
   openDialog('label.edit', { name, color });
 }
 export function DeleteLabelDialog({ label, count }) {
@@ -54,14 +58,14 @@ function deleteLabel(label) {
   const count = state.board.items.filter((i) => i.labels.includes(label.name)).length;
   openDialog('label.delete', { label, count });
 }
-function labelRowTemplate(label, items) {
+function labelRowTemplate(lookups, label, items) {
   const usage = items.filter((item) => item.labels.includes(label.name)).length;
   return maintenanceRowTemplate({
     key: label.name,
     tag: 'article',
     className: 'label-maintenance-row',
     content: [
-      labelBadgeTemplate(label.name),
+      labelBadgeTemplate(lookups, label.name),
       html`<small class="muted">${`${usage} card${usage === 1 ? '' : 's'}`}</small>`,
     ],
     actions: [
@@ -74,13 +78,16 @@ function selectLabelPage(current) {
   return {
     labels: current.board?.labels || [],
     items: current.board?.items || [],
+    lookups: selectLookups(current),
   };
 }
 function sameLabelPage(left, right) {
-  return left.labels === right.labels && left.items === right.items;
+  return (
+    left.labels === right.labels && left.items === right.items && left.lookups === right.lookups
+  );
 }
 export function LabelsPage() {
-  const { labels, items } = useStore(selectLabelPage, sameLabelPage);
+  const { labels, items, lookups } = useStore(selectLabelPage, sameLabelPage);
   return html`${sectionHeadTemplate(
     'Workspace labels',
     accessButtonTemplate('＋ New label', () => editLabel(), { className: 'primary' }),
@@ -92,7 +99,7 @@ export function LabelsPage() {
       labels.length
         ? maintenanceListTemplate(
             'label-maintenance-list',
-            labels.map((label) => labelRowTemplate(label, items)),
+            labels.map((label) => labelRowTemplate(lookups, label, items)),
           )
         : emptyStateTemplate('No labels yet. Create reusable labels for this workspace.')
     }`;

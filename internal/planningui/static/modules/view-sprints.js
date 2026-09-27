@@ -22,6 +22,7 @@ import {
   usePermissions,
 } from './permissions.js';
 import { done, blocked, scopeItems } from './items.js';
+import { boardLookups, itemLookup, selectLookups } from './lookups.js';
 import { sprintFilterItems, sprintResults } from './filters.js';
 import { PlanningFilters } from './planning-filters.js';
 import { burndownTemplate } from './view-burndown.js';
@@ -118,9 +119,14 @@ function SprintActions({ sprint: s, expanded }) {
 function selectBurndownExpanded(current) {
   return current.burndownExpanded;
 }
+function selectItemLookup(current) {
+  return itemLookup(current.board, current.archiveItems);
+}
 // A changed goal gets a fresh goal widget; otherwise it keeps its measurement.
 function SprintPanel({ sprint: s, items }) {
   const expanded = useStore(selectBurndownExpanded).has(s.id);
+  const lookups = useStore(selectLookups);
+  const byID = useStore(selectItemLookup);
   return html`<article class="panel sprint-panel" data-sprint-id=${s.id}>
     <div class="sprint-info">
       <div class="sprint-title-row">
@@ -142,19 +148,20 @@ function SprintPanel({ sprint: s, items }) {
     <${SprintActions} sprint=${s} expanded=${expanded} />
     ${metricListTemplate([
       [items.length, 'In scope'],
-      [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'],
-      [items.filter(blocked).length, 'Blocked'],
+      [items.filter((i) => done(lookups, i)).length, s.state === 'closed' ? 'Done now' : 'Done'],
+      [items.filter((i) => blocked(lookups, byID, i)).length, 'Blocked'],
     ])}
     ${expanded ? burndownTemplate(s) : null}
   </article>`;
 }
-function sprintRowsTemplate({ filtered, matches }) {
-  const search = state.searchInput.trim();
-  const query = state.searchQuery;
+function sprintRowsTemplate(page, { filtered, matches }) {
+  const { board, filters } = page;
+  const search = page.searchInput.trim();
+  const query = page.searchQuery;
   if (!matches.length) {
-    const message = !state.board.sprints.length
+    const message = !board.sprints.length
       ? 'No sprints yet. Create a goal and time box, then add work from the backlog.'
-      : query && filtered.length !== state.board.sprints.length
+      : query && filtered.length !== board.sprints.length
         ? `No sprints match “${search}” and the current filters.`
         : query
           ? `No sprints match “${search}”.`
@@ -165,7 +172,7 @@ function sprintRowsTemplate({ filtered, matches }) {
     (sprint) => html`<${SprintPanel}
       key=${sprint.id}
       sprint=${sprint}
-      items=${sprintFilterItems(sprint)}
+      items=${sprintFilterItems(board, sprint, filters)}
     />`,
   );
 }
@@ -194,32 +201,32 @@ function SprintHistoryRow({ record }) {
     </div>
   </div>`;
 }
-function sprintHistoryBody() {
-  if (state.sprintHistoryError) return emptyStateTemplate(state.sprintHistoryError);
-  if (!state.sprintHistory.length)
+function sprintHistoryBody(page) {
+  if (page.sprintHistoryError) return emptyStateTemplate(page.sprintHistoryError);
+  if (!page.sprintHistory.length)
     return emptyStateTemplate(
       'No archived sprints yet. Close and archive a sprint to preserve its closure summary.',
     );
   return maintenanceListTemplate(
     'sprint-history-list',
-    state.sprintHistory.map(
+    page.sprintHistory.map(
       (record) => html`<${SprintHistoryRow} key=${record.sprint?.id} record=${record} />`,
     ),
   );
 }
-function sprintHistoryTemplate() {
+function sprintHistoryTemplate(page) {
   return html`<section class="panel sprint-history">
     ${panelHeadTemplate('Archived sprint history', {
       description:
         'Immutable snapshots captured when each sprint closed. Archived sprints are read-only and do not consume the planning limit.',
     })}
-    ${sprintHistoryBody()}
+    ${sprintHistoryBody(page)}
     ${
-      !state.sprintHistoryError && state.sprintHistoryMore
+      !page.sprintHistoryError && page.sprintHistoryMore
         ? html`<button
             type="button"
             data-sprint-history-more="true"
-            disabled=${state.busy || state.loading}
+            disabled=${page.busy || page.loading}
             onClick=${loadOlderSprintHistory}
           >Load older archived sprints</button>`
         : null
@@ -230,6 +237,7 @@ function sprintHistoryTemplate() {
 // first, then a titled section whose shared planning filters sit below its heading.
 const SPRINT_PAGE_KEYS = [
   'board',
+  'session',
   'filters',
   'searchQuery',
   'searchInput',
@@ -245,9 +253,11 @@ function selectSprintPage(current) {
 // The page lists the sprints matching the planning filters and search; the
 // shared filter bar renders in its slot below the section heading.
 export function SprintsPage() {
-  const { board, searchQuery } = useStore(selectSprintPage, shallowEqual);
-  const results = sprintResults(board, searchQuery);
-  return html`${sprintVelocityTemplate()}
+  const page = useStore(selectSprintPage, shallowEqual);
+  const { board, searchQuery, filters } = page;
+  const lookups = boardLookups(board, page.session);
+  const results = sprintResults(board, searchQuery, filters);
+  return html`${sprintVelocityTemplate(board, lookups, filters)}
       <section class="sprint-planning">
         ${sectionHeadTemplate(
           'Goals, scope, and deliberate carry-over',
@@ -257,9 +267,9 @@ export function SprintsPage() {
           }),
         )}
         <div class="filter-slot" id="sprint-filter-slot"><${PlanningFilters} /></div>
-        <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate(results)}</div>
+        <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate(page, results)}</div>
       </section>
-      ${sprintHistoryTemplate()}`;
+      ${sprintHistoryTemplate(page)}`;
 }
 function selectSummaryFilters(current) {
   return current.filters;
@@ -279,7 +289,7 @@ export function SprintSummary({ board, view, scope }) {
       ? null
       : html`${sprints.map(
           (sprint) =>
-            html`<${SprintPanel} key=${sprint.id} sprint=${sprint} items=${scopeItems(sprint)} />`,
+            html`<${SprintPanel} key=${sprint.id} sprint=${sprint} items=${scopeItems(board, sprint)} />`,
         )}${
           sprints.length
             ? null
@@ -338,11 +348,12 @@ export function SprintDialog({ sprint }) {
   </${CommandDialog}>`;
 }
 function closeSprint(sprint) {
-  const items = scopeItems(sprint);
+  const items = scopeItems(state.board, sprint);
+  const lookups = selectLookups(state);
   openDialog('sprint.close', {
     sprint,
     scoped: items.length,
-    unfinished: items.filter((i) => !done(i)).length,
+    unfinished: items.filter((i) => !done(lookups, i)).length,
     destinations: state.board.sprints
       .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
       .map((s) => [s.id, s.name]),

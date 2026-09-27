@@ -12,6 +12,7 @@ import { html } from './vdom.js';
 import { useEffect } from './vendor-preact.js';
 import { setState, state, subscribe, useStore } from './state.js';
 import { singleFilterValue, selectedFilterText } from './filters.js';
+import { selectLookups } from './lookups.js';
 import { useRequest, waitUntil } from './ui-hooks.js';
 import { usePermissions } from './permissions.js';
 
@@ -192,6 +193,7 @@ function selectBurndownInputs(current) {
 function BurndownPanel({ sprint }) {
   const inputs = useStore(selectBurndownInputs);
   const filters = useStore((current) => current.filters);
+  const lookups = useStore(selectLookups);
   const { busy } = usePermissions();
   const [root, revision, project, assignee] = inputs.split('\u0000');
   const result = useRequest(
@@ -205,8 +207,8 @@ function BurndownPanel({ sprint }) {
   }, [result.loading]);
   const headingID = `burndown-heading-${sprint.id}`;
   const filterCondition = html`<div class="burndown-filter-condition">
-    <p class="muted">${`Project: ${selectedFilterText('project', filters)}`}</p>
-    <p class="muted">${`Assignee: ${selectedFilterText('assignee', filters)}`}</p>
+    <p class="muted">${`Project: ${selectedFilterText(lookups, 'project', filters)}`}</p>
+    <p class="muted">${`Assignee: ${selectedFilterText(lookups, 'assignee', filters)}`}</p>
   </div>`;
   const context = (...extra) => html`<div class="burndown-context">
     ${panelHeadTemplate('Remaining work', {

@@ -2,27 +2,33 @@
 import { dueDatePresentation } from './format.js';
 import { html } from './vdom.js';
 import { useEffect } from './vendor-preact.js';
-import { setState, state, useStore } from './state.js';
+import { setState, useStore } from './state.js';
+import { selectLookups } from './lookups.js';
 import { useEventListener } from './ui-hooks.js';
 
 // `now` is the store's due-date clock; callers that render subscribe to it.
-export function itemDateStatus(item, now = state.dueDateNow || new Date()) {
-  const category =
-    state.board?.columns.find((column) => column.id === item.column_id)?.category || '';
-  return dueDatePresentation(item.due_date, category, !!item.archived, now || new Date());
+// The item's column category comes from the board lookups.
+function columnCategory(lookups, item) {
+  return lookups.columnsById.get(item.column_id)?.category || '';
+}
+export function itemDateStatus(lookups, item, now) {
+  return dueDatePresentation(
+    item.due_date,
+    columnCategory(lookups, item),
+    !!item.archived,
+    now || new Date(),
+  );
 }
 // `extraClass` places the badge, for example beside an overdue card title.
-export function dueDateBadgeTemplate(item, now, extraClass = '', id) {
-  const status = itemDateStatus(item, now);
+export function dueDateBadgeTemplate(lookups, item, now, extraClass = '', id) {
+  const status = itemDateStatus(lookups, item, now);
   if (!status) return null;
-  const category =
-    state.board?.columns.find((column) => column.id === item.column_id)?.category || '';
   return html`<span
     id=${id}
     class="badge badge-due${status.overdue ? ' is-overdue' : ''}${extraClass}"
     data-due-date-badge=${item.id}
     data-due-date=${item.due_date}
-    data-due-category=${category}
+    data-due-category=${columnCategory(lookups, item)}
     data-due-archived=${String(!!item.archived)}
   >${status.label}</span>`;
 }
@@ -31,7 +37,10 @@ export function selectDueDateNow(current) {
 }
 export function EditorDueBadge({ item, id }) {
   const now = useStore(selectDueDateNow);
-  return itemDateStatus(item, now)?.overdue ? dueDateBadgeTemplate(item, now, '', id) : null;
+  const lookups = useStore(selectLookups);
+  return itemDateStatus(lookups, item, now)?.overdue
+    ? dueDateBadgeTemplate(lookups, item, now, '', id)
+    : null;
 }
 // The date-dependent UI updates at local midnight and whenever the page becomes
 // visible again; both only move the store's clock.
