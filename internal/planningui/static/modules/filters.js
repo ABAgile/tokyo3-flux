@@ -1,7 +1,7 @@
 // Planning filters, work search and the filter chips.
 import { $ } from './dom.js';
 import { labelForeground } from './format.js';
-import { html, render } from './preact.js';
+import { html } from './preact.js';
 import { state } from './state.js';
 import { hooks } from './hooks.js';
 import {
@@ -205,12 +205,12 @@ export function placeFilters(host = $('planning-filter-slot')) {
   if (bar.parentElement !== host) host.append(bar);
   if (chips.parentElement !== host || chips.previousElementSibling !== bar) host.append(chips);
 }
-export function renderFilterChips() {
-  const host = $('filter-chips');
-  const names = FILTER_NAMES.filter((name) => !(name === 'label' && $('label-filter').hidden));
-  const chips = filterChipTemplates(filters, names, applyFilterChange);
-  host.hidden = !chips.length || $('planning-filters').hidden;
-  render(html`${chips}`, host);
+export function planningFilterChipsTemplate(show, includeLabels) {
+  const names = FILTER_NAMES.filter((name) => includeLabels || name !== 'label');
+  const chips = show ? filterChipTemplates(filters, names, applyFilterChange) : [];
+  return html`<div id="filter-chips" class="filter-chips" role="group" aria-label="Active filters" hidden=${!chips.length}>
+    ${chips}
+  </div>`;
 }
 // Project and assignee filters feed the burn-down request, so changing them
 // invalidates any cached chart; label filtering is client-side only.

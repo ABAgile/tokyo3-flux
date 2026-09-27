@@ -7,7 +7,7 @@ import { memberName } from './people.js';
 import { StatusBars } from './notices.js';
 import { EditorDialog } from './dialog.js';
 import { emptyStateTemplate } from './layout.js';
-import { filteredItems } from './filters.js';
+import { filteredItems, planningFilterChipsTemplate } from './filters.js';
 import { labelOptionColors } from './items.js';
 import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
 import { ProjectsPage } from './view-projects.js';
@@ -121,13 +121,12 @@ function PageContent({
   return Page ? html`<div class="page-stack" data-content-view=${view}><${Page} /></div>` : nothing;
 }
 
-function PlanningContent({ board, view, presentation, busy, loading, integrationFormOpen }) {
+function PlanningContent({ board, view, presentation, busy, loading, integrationFormOpen, items }) {
   if (showFirstRun())
     return html`<${FirstRunPage}
       board=${board}
       disabled=${board.role === 'viewer' || busy || loading || integrationFormOpen}
     />`;
-  const items = filteredItems();
   if (view === 'board' && presentation === 'list')
     return html`<${ListPresentation} items=${items} />`;
   if (view === 'board') return html`<${BoardContent} items=${items} />`;
@@ -139,7 +138,16 @@ function PlanningContent({ board, view, presentation, busy, loading, integration
   />`;
 }
 
-function PlanningBody({ active, board, view, presentation, busy, loading, integrationFormOpen }) {
+function PlanningBody({
+  active,
+  board,
+  view,
+  presentation,
+  busy,
+  loading,
+  integrationFormOpen,
+  items,
+}) {
   const content = useRef(nothing);
   if (active && board && ['board', 'archive'].includes(view))
     content.current = html`${withKey(
@@ -151,6 +159,7 @@ function PlanningBody({ active, board, view, presentation, busy, loading, integr
         busy=${busy}
         loading=${loading}
         integrationFormOpen=${integrationFormOpen}
+        items=${items}
       />`,
     )}`;
   return content.current;
@@ -176,6 +185,18 @@ function PlanningArea({
   onSearchChange,
   onSearchKeyDown,
 }) {
+  const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
+  const showLabelFilter = !['sprints', 'history'].includes(view);
+  const items = board && ['board', 'archive'].includes(view) ? filteredItems() : [];
+  const count =
+    !board || !['board', 'archive'].includes(view)
+      ? ''
+      : view === 'archive'
+        ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
+        : `${items.length} items · workspace revision ${board.workspace.revision}`;
+  const selectedSprint = board?.sprints?.find((sprint) => sprint.id === scope);
+  const summaryLabel =
+    selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints';
   const focusKey = useRef('');
   const focusRoute = `${showPageRoot ? 'page' : view}:${view === 'board' ? presentation : ''}`;
   const previousRoute = useRef(focusRoute);
@@ -202,11 +223,11 @@ function PlanningArea({
       <section id="content" aria-label="Planning content">
         <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
           <section id="project-summary" class="panel project-summary" hidden aria-label="Project summary"></section>
-          <section id="sprint-summary" class="sprints" aria-label="Active sprints"></section>
+          <section id="sprint-summary" class="sprints" aria-label=${summaryLabel}></section>
           <div id="planning-filter-slot" class="filter-slot">
-            <div id="planning-filters" class="filter-bar">
+            <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
               <div class="actions">
-                <label id="scope-label">Scope<select id="scope" value=${scope} onChange=${onScopeChange}>
+                <label id="scope-label" hidden=${view !== 'board'}>Scope<select id="scope" value=${scope} onChange=${onScopeChange}>
                   <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
                   ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
                 </select></label>
@@ -218,21 +239,21 @@ function PlanningArea({
                   <option value="all">All assignees</option><option value="none">Unassigned</option>
                   ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
                 </select></label>
-                <label id="label-filter">Label<select id="label" aria-label="Label" value="all" onChange=${(event) => onFilterChange('label', event)}>
+                <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" aria-label="Label" value="all" onChange=${(event) => onFilterChange('label', event)}>
                   <option value="all">All labels</option><option value="none">No labels</option>
                   ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
                 </select></label>
-                <label id="search-filter">Search<input id="search" type="search" autocomplete="off" placeholder="Find work… (press /)" maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
+                <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" type="search" autocomplete="off" placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
               </div>
               <div class="filter-bar-end">
                 <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation">
                   <button id="presentation-board" type="button" aria-pressed="true" onClick=${() => onPresentation('board')}>Board</button>
                   <button id="presentation-list" type="button" aria-pressed="false" onClick=${() => onPresentation('list')}>List</button>
                 </div>
-                <span id="count" class="filter-bar-count muted"></span>
+                <span id="count" class="filter-bar-count muted">${count}</span>
               </div>
             </div>
-            <div id="filter-chips" class="filter-chips" hidden role="group" aria-label="Active filters"></div>
+            ${planningFilterChipsTemplate(showFilters, showLabelFilter)}
           </div>
           <div
             id="planning-body"
@@ -248,6 +269,7 @@ function PlanningArea({
             busy=${busy}
             loading=${loading}
             integrationFormOpen=${integrationFormOpen}
+            items=${items}
           /></div>
         </div>
         <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>

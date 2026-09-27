@@ -28,7 +28,6 @@ export function renderControls() {
     !state.board || state.busy || state.loading || state.integrationFormOpen;
   $('presentation-board').setAttribute('aria-pressed', String(state.presentation === 'board'));
   $('presentation-list').setAttribute('aria-pressed', String(state.presentation === 'list'));
-  $('planning-filters').hidden = !state.board;
   $('project').disabled = !state.board || state.busy || state.loading;
   $('assignee').disabled = !state.board || state.busy || state.loading;
   $('label').disabled = !state.board || state.busy || state.loading;

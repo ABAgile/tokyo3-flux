@@ -18,9 +18,7 @@ import {
   knownFilterValue,
   flushSearch,
   queueSearch,
-  filteredItems,
   placeFilters,
-  renderFilterChips,
   applyFilterChange,
 } from './modules/filters.js';
 import { resetBurndown } from './modules/view-burndown.js';
@@ -149,10 +147,7 @@ function render() {
     renderTemplate(nothing, $('project-summary'));
     // Both hosts are rendered by Preact, so they are cleared through Preact.
     renderTemplate(nothing, $('sprint-summary'));
-    $('count').textContent = '';
     clearPlanningChangeNotice();
-    $('filter-chips').hidden = true;
-    renderTemplate(nothing, $('filter-chips'));
     placeFilters();
     renderApp();
     return;
@@ -172,34 +167,17 @@ function render() {
       filterValues(name).filter((value) => knownFilterValue(name, value)),
     ),
   );
-  $('search').placeholder = state.view === 'sprints' ? 'Find sprints…' : 'Find work…';
   const active = activeSprints();
   const selectedSprint = state.board.sprints.find((sprint) => sprint.id === state.scope);
   const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
-  $('sprint-summary').setAttribute(
-    'aria-label',
-    selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints',
-  );
   renderProjectSummary();
   renderSprintSummary(state.view === 'board' ? summarySprints : []);
-  $('scope-label').hidden = state.view !== 'board';
-  $('label-filter').hidden = state.view === 'sprints' || state.view === 'history';
-  $('search-filter').hidden = state.view === 'history';
-  $('planning-filters').hidden = ['history', 'projects', 'labels', 'members'].includes(state.view);
   // Views that own a page layout host the filter bar themselves, below their
   // heading; everywhere else it stays in its slot above the content.
   if (state.view !== 'sprints') placeFilters();
-  renderFilterChips();
   renderContent();
 }
 function renderContent() {
-  if (state.board && ['board', 'archive'].includes(state.view)) {
-    const items = filteredItems();
-    $('count').textContent =
-      state.view === 'archive'
-        ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${state.board.workspace.revision}`
-        : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
-  }
   renderApp();
 }
 initObservationTooltips();
