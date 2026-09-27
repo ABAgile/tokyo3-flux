@@ -23,6 +23,7 @@ async function run(page) {
       await import('/modules/notices.js');
     const { App } = await import('/modules/app-shell.js');
     const { LabelsPage } = await import('/modules/view-labels.js');
+    const { MembersPage } = await import('/modules/view-members.js');
     const { openEditor, openFormDialog, closeEditor } = await import('/modules/dialog.js');
     const { api } = await import('/modules/api.js');
     const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
@@ -159,6 +160,30 @@ async function run(page) {
     check(host.textContent.includes('0 cards'), 'Labels page updates when item usage changes');
     unmountIsland(host);
     setState({ board: previousLabelBoard });
+
+    const previousMembersBoard = state.board;
+    const previousSession = state.session;
+    const members = [{ subject: '1', name: 'Ada Example', role: 'member' }];
+    setState({
+      board: { role: 'admin', members, items: [] },
+      session: { subject: '1', name: 'Ada Example' },
+    });
+    renderIsland(host, html`<${MembersPage} />`);
+    await flush();
+    check(
+      host.querySelector('.member-role-member') && host.querySelector('button[data-admin-write]'),
+      'Members page renders admin actions and role details',
+    );
+    setState({ board: { role: 'viewer', members, items: [] } });
+    await flush();
+    check(
+      !host.querySelector('button[data-admin-write]') &&
+        !host.querySelector('[aria-label="Edit member"]') &&
+        host.textContent.includes('Review workspace members'),
+      'Members page reacts to role changes',
+    );
+    unmountIsland(host);
+    setState({ board: previousMembersBoard, session: previousSession });
 
     const previousGate = state.workspaceGate;
     const previousBoard = state.board;

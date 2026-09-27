@@ -17,7 +17,7 @@ import {
   maintenanceRowTemplate,
 } from './layout.js';
 import { html, withKey, nothing, keyedList, useMemo, useRef } from './preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { itemProjectIDs } from './items.js';
@@ -229,6 +229,29 @@ function projectsTemplate() {
     ${maintenanceListTemplate('', projectRowsTemplate(matches, filtered, search))}
   </section>`;
 }
+const PROJECT_PAGE_KEYS = [
+  'board',
+  'projectSearch',
+  'projectFilterIDs',
+  'integrationFormOpen',
+  'integrationCatalog',
+  'integrationCatalogLoaded',
+  'integrationCatalogError',
+  'integrationCatalogLoading',
+  'busy',
+  'loading',
+];
+function selectProjectsPage(current) {
+  return Object.fromEntries(PROJECT_PAGE_KEYS.map((key) => [key, current[key]]));
+}
+function sameProjectsPage(left, right) {
+  return PROJECT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
+}
+export function ProjectsPage() {
+  useStore(selectProjectsPage, sameProjectsPage);
+  const approvedIDs = state.board.integration?.projects || [];
+  return html`${integrationTemplate(approvedIDs)}${projectsTemplate()}`;
+}
 export function renderProjects(content) {
   const approvedIDs = state.board.integration?.projects || [];
   if (
@@ -239,5 +262,5 @@ export function renderProjects(content) {
     !state.integrationCatalogLoading
   )
     void loadIntegrationCatalog();
-  renderPage(content, 'projects', html`${integrationTemplate(approvedIDs)}${projectsTemplate()}`);
+  renderPage(content, 'projects', html`<${ProjectsPage} />`);
 }

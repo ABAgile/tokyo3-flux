@@ -10,7 +10,7 @@ import {
   maintenanceRowTemplate,
 } from './layout.js';
 import { html, nothing, keyedList } from './preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
 import { adminIconTemplate, adminWritable, accessButtonTemplate } from './permissions.js';
 import { memberListingInfo, avatarTemplate } from './people.js';
 import { multiSelectTemplate } from './multi-select.js';
@@ -180,10 +180,30 @@ function addMember() {
   );
   setEditorSaveText('Add member');
 }
-export function renderMembers(content) {
-  const members = state.board.members;
-  $('count').textContent = `${members.length} member${members.length === 1 ? '' : 's'}`;
-  const admin = state.board.role === 'admin';
+const EMPTY_MEMBERS = [];
+function selectMembersPage(current) {
+  return {
+    members: current.board?.members || EMPTY_MEMBERS,
+    role: current.board?.role,
+    session: current.session,
+    busy: current.busy,
+    loading: current.loading,
+    integrationFormOpen: current.integrationFormOpen,
+  };
+}
+function sameMembersPage(left, right) {
+  return (
+    left.members === right.members &&
+    left.role === right.role &&
+    left.session === right.session &&
+    left.busy === right.busy &&
+    left.loading === right.loading &&
+    left.integrationFormOpen === right.integrationFormOpen
+  );
+}
+export function MembersPage() {
+  const { members, role } = useStore(selectMembersPage, sameMembersPage);
+  const admin = role === 'admin';
   const rows = keyedList(
     members,
     (member) => member.subject,
@@ -198,23 +218,24 @@ export function renderMembers(content) {
           : [],
       }),
   );
-  renderPage(
-    content,
-    'members',
-    html`${sectionHeadTemplate(
-      'Workspace members',
-      admin
-        ? accessButtonTemplate('＋ Add member', addMember, {
-            className: 'primary',
-            access: 'admin',
-          })
-        : undefined,
-    )}
+  return html`${sectionHeadTemplate(
+    'Workspace members',
+    admin
+      ? accessButtonTemplate('＋ Add member', addMember, {
+          className: 'primary',
+          access: 'admin',
+        })
+      : undefined,
+  )}
     ${helpTextTemplate(
       admin
         ? 'Manage workspace access and roles. OAuth supplies the signed-in user’s GitLab profile; other numeric members need the server-side read connector for names, usernames, and avatars. Bootstrap, non-GitLab, or unavailable profiles may not have a username or avatar.'
         : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.',
     )}
-    ${members.length ? maintenanceListTemplate('', rows) : emptyStateTemplate('No workspace members yet.')}`,
-  );
+    ${members.length ? maintenanceListTemplate('', rows) : emptyStateTemplate('No workspace members yet.')}`;
+}
+export function renderMembers(content) {
+  const members = state.board.members;
+  $('count').textContent = `${members.length} member${members.length === 1 ? '' : 's'}`;
+  renderPage(content, 'members', html`<${MembersPage} />`);
 }

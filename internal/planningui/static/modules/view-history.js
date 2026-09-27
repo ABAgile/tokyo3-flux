@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { workspaceHistoryLabel } from './format.js';
 import { renderPage, emptyStateTemplate } from './layout.js';
 import { html, nothing, keyedList } from './preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { notice } from './notices.js';
 import { memberListingInfo } from './people.js';
@@ -45,28 +45,44 @@ function historyRowTemplate(event, label) {
     ${event.reason ? html`<p>${event.reason}</p>` : nothing}
   </article>`;
 }
-export function renderHistory(content) {
-  const label = workspaceHistoryLabel(state.board.workspace);
-  renderPage(
-    content,
-    'history',
-    html`<p class="muted">${label}</p>
-      ${state.history.length ? nothing : emptyStateTemplate('No planning changes yet.')}
-      ${
-        state.history.length
-          ? html`<div class="history-list">
-              ${keyedList(
-                state.history,
-                (event) => event.id,
-                (event) => historyRowTemplate(event, label),
-              )}
-            </div>`
-          : nothing
-      }
-      ${
-        state.historyMore
-          ? html`<button type="button" onClick=${loadOlderHistory}>Load older changes</button>`
-          : nothing
-      }`,
+function selectHistoryPage(current) {
+  return {
+    board: current.board,
+    history: current.history,
+    historyMore: current.historyMore,
+    session: current.session,
+  };
+}
+function sameHistoryPage(left, right) {
+  return (
+    left.board === right.board &&
+    left.history === right.history &&
+    left.historyMore === right.historyMore &&
+    left.session === right.session
   );
+}
+export function HistoryPage() {
+  const { board, history, historyMore } = useStore(selectHistoryPage, sameHistoryPage);
+  const label = workspaceHistoryLabel(board.workspace);
+  return html`<p class="muted">${label}</p>
+    ${history.length ? nothing : emptyStateTemplate('No planning changes yet.')}
+    ${
+      history.length
+        ? html`<div class="history-list">
+            ${keyedList(
+              history,
+              (event) => event.id,
+              (event) => historyRowTemplate(event, label),
+            )}
+          </div>`
+        : nothing
+    }
+    ${
+      historyMore
+        ? html`<button type="button" onClick=${loadOlderHistory}>Load older changes</button>`
+        : nothing
+    }`;
+}
+export function renderHistory(content) {
+  renderPage(content, 'history', html`<${HistoryPage} />`);
 }

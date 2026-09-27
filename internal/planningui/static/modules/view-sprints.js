@@ -23,7 +23,7 @@ import {
   useRef,
   useState,
 } from './preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { done, blocked, scopeItems } from './items.js';
@@ -249,11 +249,24 @@ function sprintHistoryTemplate() {
 // first, then a titled section whose filter bar sits directly below its heading.
 // The filter slot has no bound children, because the shared planning filter
 // bar is moved into it (placeFilters).
-export function renderSprintPage(content) {
-  renderPage(
-    content,
-    'sprint-page',
-    html`${sprintVelocityTemplate()}
+const SPRINT_PAGE_KEYS = [
+  'board',
+  'searchQuery',
+  'busy',
+  'loading',
+  'sprintHistory',
+  'sprintHistoryMore',
+  'sprintHistoryError',
+];
+function selectSprintPage(current) {
+  return Object.fromEntries(SPRINT_PAGE_KEYS.map((key) => [key, current[key]]));
+}
+function sameSprintPage(left, right) {
+  return SPRINT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
+}
+export function SprintsPage() {
+  useStore(selectSprintPage, sameSprintPage);
+  return html`${sprintVelocityTemplate()}
       <section class="sprint-planning">
         ${sectionHeadTemplate(
           'Goals, scope, and deliberate carry-over',
@@ -265,8 +278,10 @@ export function renderSprintPage(content) {
         <div class="filter-slot" id="sprint-filter-slot"></div>
         <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate()}</div>
       </section>
-      ${sprintHistoryTemplate()}`,
-  );
+      ${sprintHistoryTemplate()}`;
+}
+export function renderSprintPage(content) {
+  renderPage(content, 'sprint-page', html`<${SprintsPage} />`);
   placeFilters($('sprint-filter-slot'));
 }
 // #sprint-summary collapses with :empty, so this template has no whitespace
