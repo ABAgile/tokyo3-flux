@@ -23,6 +23,7 @@ import { closeDetail, selectItem, setBulkSelected } from './actions.js';
 import { isEditorOpen } from './dialog-state.js';
 import { useFocusRestore } from './ui-hooks.js';
 import { ErrorBoundary } from './error-boundary.js';
+import { useFocusRequest } from './focus-request.js';
 import { cardDropZones, columnDropZones, useBlockedIDs, useRowContext } from './view-board.js';
 
 // Rows and the complete detail form are rendered from shared state. The keyed
@@ -269,6 +270,7 @@ export function ListPresentation({ items }) {
   const blockedIDs = useBlockedIDs(items);
   const root = useRef(null);
   const focus = useFocusRestore(root, 'list');
+  useFocusRequest('list', root);
   // Selection keeps to the shown, selectable cards.
   useEffect(() => {
     const next = prunedBulkSelection(state.bulkSelection, items);

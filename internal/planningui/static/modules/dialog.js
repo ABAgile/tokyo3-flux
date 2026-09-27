@@ -4,7 +4,8 @@ import { html } from './vdom.js';
 import { createContext, useContext, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 import { requestKey } from './api.js';
 import { setState, state, useStore } from './state.js';
-import { focusByKey } from './ui-hooks.js';
+import { focusKey } from './ui-hooks.js';
+import { clearFocusRequest } from './focus-request.js';
 import { change } from './commands.js';
 import { closeEditor, setEditorError } from './dialog-state.js';
 import { setSharedItem } from './url-state.js';
@@ -73,7 +74,15 @@ export function EditorDialog({ dialogs }) {
     previous.current = record;
     if (!before || record) return;
     dialogs[before.type]?.onClose?.(before.props);
-    focusByKey(before.returnFocusKey, { onlyIfLost: true });
+    // The page is no longer inert: a focus move requested while the dialog
+    // was open wins; otherwise focus returns to the dialog's opener. A dialog
+    // that `onClose` opened in its place takes focus itself.
+    const request = state.focusRequest;
+    if (state.editorDialog) return;
+    if (request) {
+      focusKey(request.key);
+      clearFocusRequest(request);
+    } else focusKey(before.returnFocusKey, { onlyIfLost: true });
     // A closed item editor is no longer a view of that card. Closing one dialog
     // to open another in the same task keeps the card in the URL.
     if (!state.detail && !state.editorDialog) {

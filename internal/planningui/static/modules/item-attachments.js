@@ -4,7 +4,7 @@ import { workspaceSignal } from './workspace-session.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useReducer, useRef, useState } from './vendor-preact.js';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from './vendor-preact.js';
 
 import { setState, state, useStore } from './state.js';
 import { usePermissions, writable } from './permissions.js';
@@ -329,6 +329,13 @@ function ItemAttachments({ root, item, readOnly }) {
   const { writeDisabled } = usePermissions();
   const fileInput = useRef(null);
   const addButton = useRef(null);
+  // Bumped when an upload settles; the add button takes focus back once the
+  // render that re-enables it has committed.
+  const [refocusAdd, setRefocusAdd] = useState(0);
+  useLayoutEffect(() => {
+    const add = addButton.current;
+    if (refocusAdd && add && !add.disabled) add.focus();
+  }, [refocusAdd]);
   const setStatus = (text, error = false) => dispatch({ type: 'status', text, error });
   useEffect(() => {
     if (!Array.isArray(list)) void ensureAttachments(item.id);
@@ -400,11 +407,7 @@ function ItemAttachments({ root, item, readOnly }) {
       }
       if (uploaded > 1 && !signal.aborted) setStatus(`${uploaded} attachments uploaded.`);
     });
-    // The add button is re-enabled once the write settles; focus returns to it.
-    setTimeout(() => {
-      const add = addButton.current;
-      if (add && !add.disabled) add.focus();
-    }, 0);
+    setRefocusAdd((value) => value + 1);
   }
   const dropAllowed = () => writable() && !writes.pending && !state.uploadBusy;
   const showDrop = (event) => {

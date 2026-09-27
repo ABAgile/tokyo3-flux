@@ -3,10 +3,12 @@ import { html } from './vdom.js';
 import { useLayoutEffect, useRef } from './vendor-preact.js';
 import { setState, useStore } from './state.js';
 import { useFocusRestore } from './ui-hooks.js';
+import { useFocusRequest } from './focus-request.js';
 
 export function WorkspaceSelection({ workspaces, choose, create }) {
   const root = useRef();
   const { onFocusCapture, onBlurCapture } = useFocusRestore(root, 'workspaces');
+  useFocusRequest('workspaces', root);
   return html`
     <p class="help">Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.</p>
     <div class="workspace-choice-list" role="list" ref=${root} onFocusCapture=${onFocusCapture} onBlurCapture=${onBlurCapture}>

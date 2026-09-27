@@ -159,20 +159,18 @@ function focusKeyTarget(root, key) {
   return root.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
 }
 
-// Moves focus to the control with a logical focus key once the render the
-// caller's state change scheduled has committed: Preact renders in a microtask
-// queued by that change, ahead of this one. `onlyIfLost` leaves focus alone
-// when it already moved on.
-export function focusByKey(key, { select = false, onlyIfLost = false } = {}) {
-  if (!key) return;
-  queueMicrotask(() => {
-    const active = document.activeElement;
-    if (onlyIfLost && active && active !== document.body) return;
-    const target = focusKeyTarget(document, key);
-    if (!target || target.disabled) return;
-    target.focus({ preventScroll: true });
-    if (select) target.select?.();
-  });
+// Moves focus to the control with a logical focus key inside `within`. Call it
+// from a layout effect of the component that rendered the control, so the
+// render that shows it has committed. `onlyIfLost` leaves focus alone when it
+// already moved on. Returns whether the request is settled.
+export function focusKey(key, { within = document, onlyIfLost = false } = {}) {
+  if (!key) return false;
+  const active = document.activeElement;
+  if (onlyIfLost && active && active !== document.body) return true;
+  const target = within && focusKeyTarget(within, key);
+  if (!target || target.disabled) return false;
+  target.focus({ preventScroll: true });
+  return true;
 }
 
 // One focus-restore effect for keyed content whose element can be recreated,

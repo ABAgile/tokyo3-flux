@@ -22,6 +22,7 @@ async function run(page) {
     const { MembersPage } = await import('/modules/view-members.js');
     const { FormDialog, CommandDialog } = await import('/modules/dialog.js');
     const { ErrorBoundary } = await import('/modules/error-boundary.js');
+    const { focusRequestPatch, useFocusRequest } = await import('/modules/focus-request.js');
     const { openDialog, closeEditor } = await import('/modules/dialog-state.js');
     const { api, apiUpload } = await import('/modules/api.js');
     const { helpPopoverTemplate, MultiSelect } = await import('/modules/multi-select.js');
@@ -200,6 +201,39 @@ async function run(page) {
     );
     unmount(host);
     setState({ probeBroken: false, probeCount: 1 });
+    // A focus request rides in the patch that renders its target; the scoped
+    // consumer focuses the target after that render commits and clears it.
+    setState({ probeShown: false });
+    function FocusRequestProbe({ scope }) {
+      const ref = useRef(null);
+      const shown = useStore((current) => current.probeShown);
+      useFocusRequest(scope, ref);
+      return html`<div ref=${ref}>${
+        shown ? html`<button data-focus-key="probe:target">Target</button>` : null
+      }</div>`;
+    }
+    renderIsland(
+      host,
+      html`<div><${FocusRequestProbe} scope="probe" /><${FocusRequestProbe} scope="other" /></div>`,
+    );
+    await flush();
+    setState({ probeShown: true, ...focusRequestPatch('probe', 'probe:target') });
+    await flush();
+    check(
+      document.activeElement === host.querySelector('[data-focus-key="probe:target"]') &&
+        state.focusRequest === undefined,
+      'a focus request is consumed by its scope after the render showing its target',
+    );
+    document.activeElement.blur();
+    setState(focusRequestPatch('missing', 'probe:target'));
+    await flush();
+    check(
+      document.activeElement !== host.querySelector('[data-focus-key="probe:target"]') &&
+        state.focusRequest?.scope === 'missing',
+      'other scopes leave a focus request alone',
+    );
+    setState({ focusRequest: undefined, probeShown: false });
+    unmount(host);
     let rejected = false;
     try {
       state.probeCount = 5;

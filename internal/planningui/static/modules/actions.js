@@ -26,7 +26,7 @@ import {
   workspacePreference,
   workspaceURLState,
 } from './url-state.js';
-import { focusByKey } from './ui-hooks.js';
+import { focusRequestPatch } from './focus-request.js';
 
 const EMPTY_FILTERS = Object.freeze(Object.fromEntries(FILTER_NAMES.map((name) => [name, []])));
 const EMPTY_PROJECT_FILTERS = Object.freeze({ assignee: [], label: [] });
@@ -63,9 +63,16 @@ export function closeDetail({ force = false, focus = true } = {}) {
     !window.confirm(`Discard unsaved changes to “${detail.item?.title || 'this item'}”?`)
   )
     return false;
-  setState({ detail: undefined, selectedItemID: '', detailError: '' });
+  // Focus returns to the row the details were opened from once the pane is gone.
+  setState({
+    detail: undefined,
+    selectedItemID: '',
+    detailError: '',
+    ...(focus
+      ? focusRequestPatch('list', detail.originFocusKey || `item:${detail.itemID}:list-row`)
+      : {}),
+  });
   setSharedItem('');
-  if (focus) focusByKey(detail.originFocusKey || `item:${detail.itemID}:list-row`);
   return true;
 }
 function openItemDetail(item, draft, originFocusKey) {
@@ -362,9 +369,11 @@ const EMPTY_CREATE = {
 };
 export function showWorkspaceSelection() {
   if (state.busy || state.loading) return;
-  setState({ workspaceGate: 'select' });
   const first = state.workspaces[0];
-  if (first) focusByKey(`workspace:${first.id}`);
+  setState({
+    workspaceGate: 'select',
+    ...(first ? focusRequestPatch('workspaces', `workspace:${first.id}`) : {}),
+  });
 }
 export function showWorkspaceCreate() {
   if (interactionBlocked()) return;

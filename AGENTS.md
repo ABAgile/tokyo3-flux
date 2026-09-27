@@ -82,7 +82,10 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   ```
 
 - Native form drafts stay uncontrolled (`defaultValue`) unless the UI owns the changing value; widgets report committed changes with `useCommittedChange`.
-- Document and window listeners, timers, observers and focus lookups live in `modules/ui-hooks.js` effects (`useEventListener`, `useDismiss`, `useFocusRestore`, `focusByKey`); every resource needs cleanup.
+- Document and window listeners, timers, observers and focus lookups live in `modules/ui-hooks.js` effects (`useEventListener`, `useDismiss`, `useFocusRestore`, `focusKey`); every resource needs cleanup.
+- Focus moves are state, never scheduled callbacks.
+  An action adds `focusRequestPatch(scope, key)` to the patch that renders the target, and the component named by `scope` consumes it with `useFocusRequest(scope, ref)` in a layout effect after that render commits; the dialog host fulfils a request made while a modal dialog was open, then returns focus to its opener.
+  Local focus follows a nonce or flag in component state and a layout effect, as the detail pane's `focusNonce` does.
   Drag and drop are `useDraggable`/`useDropZone` props; tooltips are `useAttachmentTooltip`/`useObservationTooltip` props.
   `make lint-web` fails on `$(`, `document.querySelector`, `addEventListener` and `state.x =` outside `api.js`, `actions.js` and `ui-hooks.js`.
 - The planning content, the List detail pane and the dialog host each render inside an `ErrorBoundary` (`modules/error-boundary.js`), keyed or reset by what they show, so a render failure replaces only that part with a Retry notice.
@@ -113,7 +116,7 @@ No module imports `app.js`; `app.js` sets the saved theme, renders `App` once an
 |---|---|
 | Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `error-boundary`, `dom`, `api`, `workspace-session`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
 | State | `state`: the store with every shared UI value, as data |
-| Services | `permissions`, `notices`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
+| Services | `permissions`, `notices`, `focus-request`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
 | Actions | `actions`: navigation, presentation, detail, editor, workspace and startup actions; `dialog`: `Modal`, `FormDialog`, `CommandDialog` and the dialog host; `drag` |
 | Item | `gitlab`, `item-links`, `item-editor`, `item-detail` |
 | Views | `planning-filters`, `view-board`, `view-archive`, `bulk`, `view-list`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `view-gate`, `shortcuts` |

@@ -95,6 +95,9 @@ const initialState = {
   editorDialog: undefined,
   editorError: '',
   shortcutsOpen: false,
+  // A pending focus move, { scope, key, nonce }: the component named by `scope`
+  // focuses the control with logical focus `key` once its render committed.
+  focusRequest: undefined,
 };
 
 const { state, getState, setState, subscribe, useStore } = createStore(initialState);
