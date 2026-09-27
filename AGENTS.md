@@ -101,6 +101,9 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   GritQL regexes must not use capture groups, and plugins listed under Biome `overrides` are silently ignored.
 - The planning content, the List detail pane and the dialog host each render inside an `ErrorBoundary` (`modules/error-boundary.js`), keyed or reset by what they show, so a render failure replaces only that part with a Retry notice.
   A store selector that throws re-selects during render, so its error reaches the nearest boundary instead of interrupting `setState`.
+  The `App` itself is an outer boundary around the shell whose fallback offers Reload; the failed shell unmounts, which stops its effects.
+  Boundaries see render and effect failures only: the shell's `unhandledrejection` and `error` window listeners pass everything else to `reportUnexpectedError` (`modules/notices.js`), which logs it and shows it in the error bar unless it is an `AbortError`.
+  Fire-and-forget `void` calls still handle their expected failures themselves; the listeners are the backstop.
 - Use Preact style objects for dynamic colors and CSS variables; Preact applies these through CSSOM, which preserves the existing CSP.
   Never pass a style string or use `dangerouslySetInnerHTML`.
 - No CSS, API or CSP changes are part of rendering work; never introduce inline styles, scripts or `eval`.

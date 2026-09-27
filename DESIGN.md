@@ -57,6 +57,8 @@ No external fonts or assets are required for the base UI; optional GitLab avatar
 - Viewer mode disables write actions.
 - A rendering failure stays contained: the planning content, the List detail pane and the open dialog each replace only themselves with the danger `notice-bar`, naming what could not be shown and offering Retry, while navigation and the rest of the page keep working.
   A failed dialog keeps its head with the close button, so it can always be dismissed.
+  A failure in the rest of the shell — sidebar, heading or status bars — replaces the page with the same danger `notice-bar`, offering Reload.
+  A failure outside rendering, such as a rejected background action or an exception in an event handler, appears in the error bar; cancelled work stays silent.
 - Loading, no-work, no-workspace, unavailable, and stale-revision states must be explicit.
   Render user Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system.

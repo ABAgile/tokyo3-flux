@@ -2,6 +2,7 @@
 import { Fragment } from './vendor-preact.js';
 import { html, shallowEqual } from './vdom.js';
 import { state, setState, useStore } from './state.js';
+import { isAbortError } from './api.js';
 
 export function StatusBars({ refresh }) {
   const {
@@ -61,6 +62,13 @@ function setStatus(text) {
 function showError(text) {
   const value = String(text || '');
   if (value !== state.errorText) setState({ errorText: value });
+}
+// A failure no caller handled: a rejected fire-and-forget promise or an
+// exception thrown by an event handler. Cancelled work is the caller moving on.
+export function reportUnexpectedError(error) {
+  if (isAbortError(error)) return;
+  console.error('Unexpected failure.', error);
+  showError(error?.message || (typeof error === 'string' && error) || 'Something went wrong.');
 }
 export function clearError() {
   if (state.errorText) setState({ errorText: '' });

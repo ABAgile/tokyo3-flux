@@ -545,6 +545,52 @@ async function run(page) {
       document.removeEventListener = removeListener;
     }
     setState({ board: previousBoard, workspaceGate: previousGate, view: previousView });
+    // Failures outside rendering reach the error bar; cancelled work and
+    // browser notices without an exception stay silent.
+    renderIsland(host, html`<${App} dialogs=${dialogs} />`);
+    await flush();
+    const errorBar = () => {
+      const bar = host.querySelector('#error-bar');
+      return bar.hidden ? '' : bar.textContent;
+    };
+    const rejectUnhandled = (reason) => {
+      const promise = Promise.reject(reason);
+      promise.catch(() => {});
+      window.dispatchEvent(new PromiseRejectionEvent('unhandledrejection', { promise, reason }));
+    };
+    rejectUnhandled(new DOMException('Aborted', 'AbortError'));
+    await flush();
+    check(!errorBar(), 'an aborted fire-and-forget action stays silent');
+    rejectUnhandled(new Error('Background action failed'));
+    await flush();
+    check(
+      errorBar().includes('Background action failed'),
+      'an unhandled rejection reaches the error bar',
+    );
+    window.dispatchEvent(new ErrorEvent('error', { error: new Error('Handler failed') }));
+    await flush();
+    check(errorBar().includes('Handler failed'), 'a throwing event handler reaches the error bar');
+    setState({ errorText: '' });
+    window.dispatchEvent(new ErrorEvent('error', { message: 'ResizeObserver loop completed' }));
+    await flush();
+    check(!errorBar(), 'an error event without an exception stays silent');
+    // A render failure outside the inner boundaries replaces the shell and
+    // stops its effects, leaving a Reload notice.
+    const previousWorkspaces = state.workspaces;
+    setState({ workspaces: null });
+    await flush();
+    const shellFailure = host.querySelector('[data-error-boundary]');
+    check(
+      shellFailure?.getAttribute('role') === 'alert' &&
+        shellFailure.querySelector('button')?.textContent === 'Reload' &&
+        !host.querySelector('.sidebar'),
+      'a shell render failure replaces the page with a Reload notice',
+    );
+    rejectUnhandled(new Error('After the shell failed'));
+    await flush();
+    check(!state.errorText, 'a failed shell no longer reports into the removed error bar');
+    unmount(host);
+    setState({ workspaces: previousWorkspaces });
 
     let refreshes = 0;
     renderIsland(host, html`<${StatusBars} refresh=${() => refreshes++} />`);

@@ -5,7 +5,7 @@ import { html, shallowEqual } from './vdom.js';
 
 import { useStore } from './state.js';
 import { workspaceLabel } from './format.js';
-import { StatusBars } from './notices.js';
+import { StatusBars, reportUnexpectedError } from './notices.js';
 import { canWrite } from './permissions.js';
 import { emptyStateTemplate } from './layout.js';
 import { selectFilteredItems, singleFilterValue } from './filters.js';
@@ -366,8 +366,25 @@ function PlanningArea() {
 function selectTheme(current) {
   return current.theme;
 }
+function reloadTemplate() {
+  return html`<main id="main" tabindex="-1">
+    <div class="notice-bar notice-bar-danger" role="alert" data-error-boundary="true">
+      <span>Flux could not be shown. Reload the page to continue.</span>
+      <button type="button" onClick=${() => location.reload()}>Reload</button>
+    </div>
+  </main>`;
+}
+
 // The App renders once at the body; every change reaches it through the store.
+// A failure outside the inner boundaries replaces the whole shell, which also
+// stops its effects, with a Reload notice.
 export function App({ dialogs = DIALOGS }) {
+  return html`<${ErrorBoundary} label="Flux" fallback=${reloadTemplate}>
+    <${Shell} dialogs=${dialogs} />
+  </${ErrorBoundary}>`;
+}
+
+function Shell({ dialogs }) {
   const main = useRef(null);
   const theme = useStore(selectTheme);
   useLayoutEffect(() => {
@@ -379,6 +396,16 @@ export function App({ dialogs = DIALOGS }) {
   useDueDateClock();
   useEventListener(window, 'popstate', () => {
     void applyHistoryNavigation();
+  });
+  // Error boundaries see render and effect failures only. A rejected
+  // fire-and-forget action or a throwing event handler reaches the error bar
+  // instead of failing silently. An error event without an error object is a
+  // browser notice, such as a ResizeObserver loop, not an exception.
+  useEventListener(window, 'unhandledrejection', (event) => {
+    reportUnexpectedError(event.reason);
+  });
+  useEventListener(window, 'error', (event) => {
+    if (event.error) reportUnexpectedError(event.error);
   });
   // A file dropped outside an attachment target must not navigate the page away.
   const guardFileDrop = (event) => {
