@@ -421,6 +421,24 @@ async function run(page) {
     'viewer link associations enabled',
   );
   await close();
+  const listToggle = page.getByRole('button', { name: 'List', exact: true });
+  if ((await listToggle.getAttribute('aria-pressed')) !== 'true') await listToggle.click();
+  const viewerRow = page.locator(`.list-row[data-item="${a.id}"]`);
+  await viewerRow.focus();
+  await page.keyboard.press('Enter');
+  const detailPane = page.locator('.item-detail-pane');
+  const detailTitle = detailPane.getByLabel('Title', { exact: true });
+  await detailTitle.waitFor();
+  check(
+    (await detailTitle.isDisabled()) &&
+      (await detailPane.getByRole('button', { name: 'Edit Dates', exact: true }).isDisabled()) &&
+      (await detailPane.getByRole('combobox', { name: 'Move to', exact: true }).isDisabled()) &&
+      (await detailPane.locator('button[type="submit"]').isHidden()),
+    'viewer detail fields or save action are not rendered read-only',
+  );
+  await detailPane.getByRole('button', { name: 'Close item details', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.item-detail-pane')?.hidden);
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
   await openObservations(a);
   check(
     await page
