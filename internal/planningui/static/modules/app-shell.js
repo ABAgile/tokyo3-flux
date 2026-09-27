@@ -3,10 +3,12 @@
 import { Fragment, html, nothing, useLayoutEffect, useRef, withKey } from './preact.js';
 import { state, useStore } from './state.js';
 import { workspaceLabel } from './format.js';
+import { memberName } from './people.js';
 import { StatusBars } from './notices.js';
 import { EditorDialog } from './dialog.js';
 import { emptyStateTemplate } from './layout.js';
 import { filteredItems } from './filters.js';
+import { labelOptionColors } from './items.js';
 import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
 import { ProjectsPage } from './view-projects.js';
 import { SprintsPage } from './view-sprints.js';
@@ -49,6 +51,7 @@ function selectShell(state) {
     workspaces: state.workspaces,
     view: state.view,
     presentation: state.presentation,
+    scope: state.scope,
     workspaceGate: state.workspaceGate,
     busy: state.busy,
     loading: state.loading,
@@ -162,6 +165,7 @@ function PlanningArea({
   board,
   view,
   presentation,
+  scope,
   busy,
   loading,
   integrationFormOpen,
@@ -202,10 +206,22 @@ function PlanningArea({
           <div id="planning-filter-slot" class="filter-slot">
             <div id="planning-filters" class="filter-bar">
               <div class="actions">
-                <label id="scope-label">Scope<select id="scope" onChange=${onScopeChange}><option value="active" selected>Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option></select></label>
-                <label>Project<select id="project" aria-label="Project" onChange=${(event) => onFilterChange('project', event)}><option value="all">All projects</option><option value="none">No project</option></select></label>
-                <label>Assignee<select id="assignee" aria-label="Assignee" onChange=${(event) => onFilterChange('assignee', event)}><option value="all">All assignees</option><option value="none">Unassigned</option></select></label>
-                <label id="label-filter">Label<select id="label" aria-label="Label" onChange=${(event) => onFilterChange('label', event)}><option value="all">All labels</option><option value="none">No labels</option></select></label>
+                <label id="scope-label">Scope<select id="scope" value=${scope} onChange=${onScopeChange}>
+                  <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
+                  ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
+                </select></label>
+                <label>Project<select id="project" aria-label="Project" value="all" onChange=${(event) => onFilterChange('project', event)}>
+                  <option value="all">All projects</option><option value="none">No project</option>
+                  ${board?.projects?.map((project) => html`<option key=${project.id} value=${project.id}>${project.name}</option>`)}
+                </select></label>
+                <label>Assignee<select id="assignee" aria-label="Assignee" value="all" onChange=${(event) => onFilterChange('assignee', event)}>
+                  <option value="all">All assignees</option><option value="none">Unassigned</option>
+                  ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
+                </select></label>
+                <label id="label-filter">Label<select id="label" aria-label="Label" value="all" onChange=${(event) => onFilterChange('label', event)}>
+                  <option value="all">All labels</option><option value="none">No labels</option>
+                  ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
+                </select></label>
                 <label id="search-filter">Search<input id="search" type="search" autocomplete="off" placeholder="Find work… (press /)" maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
               </div>
               <div class="filter-bar-end">
@@ -298,6 +314,7 @@ export function App({
     root,
     view,
     presentation,
+    scope,
     workspaceGate,
     busy,
     loading,
@@ -358,6 +375,7 @@ export function App({
         board=${board}
         view=${view}
         presentation=${presentation}
+        scope=${scope}
         busy=${busy}
         loading=${loading}
         integrationFormOpen=${integrationFormOpen}

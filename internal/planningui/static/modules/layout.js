@@ -14,10 +14,9 @@
 //           └── body: .panel / .maintenance-list / .empty
 //
 // Every component is a Preact template (`*Template`); emptyState also has a node
-// form for the loading page, which is appended to a static host. The only
-// module-level state is the per-select option mount cache below.
+// form for the loading page, which is appended to a static host.
 import { el, uid } from './dom.js';
-import { html, mount, nodeOf, nothing, render, keyedList, replaceContent } from './preact.js';
+import { html, nodeOf, nothing, render, replaceContent } from './preact.js';
 
 // #content holds exactly one page root. `data-content-view` names the
 // composition, so the next render updates the same root while the page kind is
@@ -227,22 +226,6 @@ function controlSlug(title) {
       .replace(/^-|-$/g, '') || 'control'
   );
 }
-// The shell's static <select>s (scope, planning filters, workspace) get their
-// options from Preact. The first render replaces the options written in the page;
-// later renders update that mount in place. `colors(value)` styles an option.
-const optionMounts = new WeakMap();
-function renderOptions(select, entries, value, colors) {
-  const template = html`${keyedList(
-    entries,
-    ([optionValue]) => optionValue,
-    ([optionValue, text]) =>
-      html`<option value=${optionValue} style=${colors?.(optionValue) ?? {}}>${text}</option>`,
-  )}`;
-  const update = optionMounts.get(select);
-  if (update) update(template);
-  else optionMounts.set(select, mount(select, template));
-  if (value !== undefined) select.value = value;
-}
 // Removable chips are the authoritative view of a multi-value filter group.
 function filterChipRowTemplate(ariaLabel, chips) {
   return html`<div class="filter-chips" role="group" aria-label=${ariaLabel} hidden=${!chips.length}>
@@ -291,7 +274,6 @@ export {
   filterSelectTemplate,
   filterSearchTemplate,
   fieldTemplate,
-  renderOptions,
   filterChipRowTemplate,
   filterSlotTemplate,
   maintenanceListTemplate,

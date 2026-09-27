@@ -90,7 +90,7 @@ function toggleBurndown(s) {
 }
 function viewSprintScope(s) {
   state.view = 'board';
-  $('scope').value = s.id;
+  state.scope = s.id;
   hooks.render();
   persistPlanningURL();
 }

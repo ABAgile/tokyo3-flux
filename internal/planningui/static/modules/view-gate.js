@@ -240,7 +240,7 @@ export async function chooseWorkspace(workspaceID = '') {
   state.projectSearch = '';
   clearFilterGroup(projectFilters);
   clearFilters();
-  $('scope').value = 'active';
+  state.scope = 'active';
   resetSearch();
   state.root = `/api/v2/workspaces/${encodeURIComponent(selectedID)}`;
   hooks.render();

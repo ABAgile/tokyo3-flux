@@ -66,7 +66,7 @@ function openProject(project) {
   setFilterValues('project', [project.id]);
   setFilterValues('assignee', []);
   setFilterValues('label', []);
-  $('scope').value = 'all';
+  state.scope = 'all';
   resetSearch();
   hooks.render();
   persistPlanningURL();

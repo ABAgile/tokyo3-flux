@@ -15,6 +15,7 @@ const initialState = {
   root: undefined,
   view: 'board',
   presentation: 'board',
+  scope: 'active',
   busy: false,
   loading: false,
   planningChangeNotice: false,

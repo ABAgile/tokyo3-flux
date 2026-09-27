@@ -1,5 +1,4 @@
 // The Archive view and its paging.
-import { $ } from './dom.js';
 import { api } from './api.js';
 import { emptyStateTemplate } from './layout.js';
 import { Fragment, html, nothing, keyedList } from './preact.js';
@@ -18,7 +17,7 @@ async function loadOlderArchive() {
 }
 export function CardListContent({ items, view, archiveMore, disabled }) {
   const empty =
-    view === 'board' && $('scope').value === 'backlog'
+    view === 'board' && state.scope === 'backlog'
       ? 'Backlog is clear. Create work without a sprint to plan what comes next.'
       : 'No matching work.';
   return html`<${Fragment}>

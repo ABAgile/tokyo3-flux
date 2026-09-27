@@ -1,15 +1,13 @@
 import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
-import { renderOptions } from './modules/layout.js';
 import { html, nothing, render as renderTemplate } from './modules/preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
 import { App } from './modules/app-shell.js';
 import { notice, clearPlanningChangeNotice } from './modules/notices.js';
-import { activeSprints, labelOptionColors } from './modules/items.js';
+import { activeSprints } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
-import { memberName } from './modules/people.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import { setContentBusy } from './modules/mount.js';
 import {
@@ -161,34 +159,13 @@ function render() {
   }
   // The selects choose one value at a time and reset; the chip row below the
   // toolbar carries the full multi-value filter state.
-  renderOptions(
-    $('project'),
-    [
-      ['all', 'All projects'],
-      ['none', 'No project'],
-      ...state.board.projects.map((p) => [p.id, p.name]),
-    ],
+  const scopes = new Set([
+    'active',
+    'backlog',
     'all',
-  );
-  renderOptions(
-    $('assignee'),
-    [
-      ['all', 'All assignees'],
-      ['none', 'Unassigned'],
-      ...state.board.members.map((m) => [m.subject, memberName(m.subject)]),
-    ],
-    'all',
-  );
-  renderOptions(
-    $('label'),
-    [
-      ['all', 'All labels'],
-      ['none', 'No labels'],
-      ...state.board.labels.map((label) => [label.name, label.name]),
-    ],
-    'all',
-    labelOptionColors,
-  );
+    ...state.board.sprints.map((sprint) => sprint.id),
+  ]);
+  if (!scopes.has(state.scope)) state.scope = 'active';
   FILTER_NAMES.forEach((name) =>
     setFilterValues(
       name,
@@ -197,19 +174,7 @@ function render() {
   );
   $('search').placeholder = state.view === 'sprints' ? 'Find sprints…' : 'Find work…';
   const active = activeSprints();
-  const selected = $('scope').value;
-  renderOptions(
-    $('scope'),
-    [
-      ['active', 'Active sprints'],
-      ['backlog', 'Backlog'],
-      ['all', 'All open work'],
-      ...state.board.sprints.map((s) => [s.id, `${s.name} (${s.state})`]),
-    ],
-    selected,
-  );
-  if (!$('scope').value) $('scope').value = 'active';
-  const selectedSprint = state.board.sprints.find((s) => s.id === $('scope').value);
+  const selectedSprint = state.board.sprints.find((sprint) => sprint.id === state.scope);
   const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
   $('sprint-summary').setAttribute(
     'aria-label',
@@ -267,7 +232,8 @@ function setPresentation(next) {
 // A closed item editor is no longer a view of that card. The check is deferred
 // because closing one dialog to open another — archive, observations, restore —
 // happens within the same task and must not drop the card from the URL.
-function changeScope() {
+function changeScope(event) {
+  state.scope = event.currentTarget.value;
   render();
   persistPlanningURL();
 }

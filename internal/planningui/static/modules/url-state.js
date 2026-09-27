@@ -59,7 +59,7 @@ export function persistPlanningURL({ push = false } = {}) {
   const url = new URL(window.location.href);
   url.searchParams.set('mode', state.presentation);
   FILTER_NAMES.forEach((name) => url.searchParams.set(name, filterURLValue(name)));
-  url.searchParams.set('scope', $('scope').value || 'active');
+  url.searchParams.set('scope', state.scope || 'active');
   if (state.sharedItemID) url.searchParams.set('item', state.sharedItemID);
   else url.searchParams.delete('item');
   if (url.href === window.location.href) return;
@@ -204,7 +204,7 @@ export function applyPlanningURLState(urlState = planningURLState()) {
     requestedScope &&
     (['active', 'backlog', 'all'].includes(requestedScope) ||
       state.board.sprints.some((value) => value.id === requestedScope));
-  $('scope').value = validScope
+  state.scope = validScope
     ? requestedScope
     : project !== 'all' && project !== 'none'
       ? 'all'

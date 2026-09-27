@@ -181,7 +181,7 @@ function matchesItemFilters(item) {
 }
 export function filteredItems() {
   const query = state.searchQuery;
-  const scope = $('scope').value;
+  const scope = state.scope;
   const sprint = state.board.sprints.find((s) => s.id === scope);
   return (state.view === 'archive' ? state.archiveItems : state.board.items).filter((i) => {
     if (state.view === 'archive') {
