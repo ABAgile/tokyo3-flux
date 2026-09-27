@@ -13,7 +13,7 @@ import {
   useState,
 } from './vendor-preact.js';
 
-import { setState, state, useStore } from './state.js';
+import { setState, state, useStore, sessionCSRF } from './state.js';
 import { usePermissions, writable } from './permissions.js';
 import { notice } from './notices.js';
 import { memberName } from './people.js';
@@ -120,7 +120,7 @@ async function uploadItemFile(item, file, onProgress, signal) {
   const form = new FormData();
   form.append('file', file);
   const data = await apiUpload(`${state.root}/items/${encodeURIComponent(item.id)}/attachments`, {
-    headers: { 'X-CSRF-Token': state.session.csrf, 'Idempotency-Key': request.key },
+    headers: { 'X-CSRF-Token': sessionCSRF(), 'Idempotency-Key': request.key },
     body: form,
     onProgress,
     signal,
@@ -334,8 +334,8 @@ function ItemAttachments({ root, item, readOnly }) {
   const generation = useStore(selectBoardGeneration);
   const lookups = useStore(selectLookups);
   const { writeDisabled } = usePermissions();
-  const fileInput = useRef(null);
-  const addButton = useRef(null);
+  const fileInput = useRef(/** @type {HTMLInputElement | null} */ (null));
+  const addButton = useRef(/** @type {HTMLButtonElement | null} */ (null));
   // Bumped when an upload settles; the add button takes focus back once the
   // render that re-enables it has committed.
   const [refocusAdd, setRefocusAdd] = useState(0);
@@ -354,7 +354,7 @@ function ItemAttachments({ root, item, readOnly }) {
       try {
         await api(attachmentHref(item, attachment, root), {
           method: 'DELETE',
-          headers: { 'X-CSRF-Token': state.session.csrf },
+          headers: { 'X-CSRF-Token': sessionCSRF() },
           signal,
         });
         if (signal.aborted) return;

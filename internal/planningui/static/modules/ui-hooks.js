@@ -4,10 +4,17 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from './ven
 
 // `request` receives an AbortSignal. Every captured value that should restart
 // the request belongs in `dependencies`; previous data remains while reloading.
+/**
+ * @template T
+ * @param {(signal: AbortSignal) => T | Promise<T>} request
+ * @param {unknown[]} [dependencies]
+ */
 export function useRequest(request, dependencies = []) {
   const requestRef = useRef(request);
   requestRef.current = request;
-  const [result, setResult] = useState({ data: undefined, error: undefined, loading: false });
+  /** @type {{ data: T | undefined, error: any, loading: boolean }} */
+  const initial = { data: undefined, error: undefined, loading: false };
+  const [result, setResult] = useState(initial);
   const [generation, setGeneration] = useState(0);
 
   useEffect(() => {

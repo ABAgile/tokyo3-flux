@@ -2,7 +2,7 @@
 import { api, apiRevalidated } from './api.js';
 import { beginWorkspaceSession, withWorkspace, workspaceSignal } from './workspace-session.js';
 import { useEffect } from './vendor-preact.js';
-import { setState, state } from './state.js';
+import { setState, state, requireBoard } from './state.js';
 import {
   notice,
   clearError,
@@ -204,7 +204,7 @@ function pollBlocked() {
 // board read follows only when the digest moved, so an idle board costs two
 // indexed lookups instead of a full board load every fifteen seconds.
 async function pollObservations() {
-  const current = state.board,
+  const current = requireBoard(),
     path = state.root,
     signal = workspaceSignal();
   try {
@@ -275,7 +275,7 @@ async function pollObservations() {
   }
 }
 async function pollMembership() {
-  const current = state.board,
+  const current = requireBoard(),
     selectedID = current.workspace.id,
     before = workspaceListSignature(state.workspaces),
     signal = workspaceSignal();

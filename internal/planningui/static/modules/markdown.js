@@ -390,7 +390,7 @@ function MarkdownEditor({
   const input = settings.inputRef || ownInput;
   const controlled = typeof settings.onValueChange === 'function';
   const onInput = (event) => {
-    if (controlled) settings.onValueChange(event.currentTarget.value);
+    if (controlled) settings.onValueChange?.(event.currentTarget.value);
   };
   const wasPreviewing = useRef(previewing);
   useLayoutEffect(() => {

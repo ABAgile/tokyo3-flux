@@ -9,7 +9,7 @@ import {
 } from './layout.js';
 import { html } from './vdom.js';
 
-import { state, useStore } from './state.js';
+import { state, useStore, requireBoard } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
 import { selectLookups } from './lookups.js';
@@ -57,7 +57,7 @@ export function DeleteLabelDialog({ label, count }) {
   </${CommandDialog}>`;
 }
 function deleteLabel(label) {
-  const count = state.board.items.filter((i) => i.labels.includes(label.name)).length;
+  const count = requireBoard().items.filter((i) => i.labels.includes(label.name)).length;
   openDialog('label.delete', { label, count });
 }
 function labelRowTemplate(lookups, label, items) {

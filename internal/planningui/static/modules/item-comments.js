@@ -6,7 +6,7 @@ import { panelHeadTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useReducer, useRef, useState } from './vendor-preact.js';
 
-import { state, useStore } from './state.js';
+import { useStore, sessionCSRF } from './state.js';
 import { selectLookups } from './lookups.js';
 import { canComment, usePermissions } from './permissions.js';
 import { memberInfo, avatarImageTemplate } from './people.js';
@@ -113,7 +113,7 @@ function ItemComments({ root, item, onDraftChange }) {
   const [reload, setReload] = useState(0);
   const [before, setBefore] = useState(0);
   const pending = useRef({ body: '', key: '' });
-  const composer = useRef(null);
+  const composer = useRef(/** @type {HTMLTextAreaElement | null} */ (null));
   const writes = useMutation();
   const { comment: allowed, role } = usePermissions();
   const lookups = useStore(selectLookups);
@@ -155,7 +155,7 @@ function ItemComments({ root, item, onDraftChange }) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-CSRF-Token': state.session.csrf,
+            'X-CSRF-Token': sessionCSRF(),
             'Idempotency-Key': pending.current.key,
           },
           body: JSON.stringify({ body }),

@@ -3,7 +3,7 @@ import { html } from './vdom.js';
 import { useId, useLayoutEffect, useRef } from './vendor-preact.js';
 import { requestKey } from './api.js';
 import { itemPayloadFromForm } from './item-command.js';
-import { state, setState, useStore } from './state.js';
+import { state, setState, useStore, requireBoard } from './state.js';
 import { notice } from './notices.js';
 import { change } from './commands.js';
 import { reconcileItemLinks } from './item-links.js';
@@ -35,9 +35,10 @@ function selectRole(current) {
 // One form lifetime per opened card: the pane is keyed by the detail's form
 // key, so native drafts and widget state survive unrelated renders. Its input
 // and change handlers report whether the draft differs from what was opened.
+/** @param {{ detail: Flux.Detail }} props */
 export function ItemDetailPane({ detail }) {
-  const form = useRef(null);
-  const title = useRef(null);
+  const form = useRef(/** @type {HTMLFormElement | null} */ (null));
+  const title = useRef(/** @type {HTMLInputElement | null} */ (null));
   const initial = useRef('');
   const pending = useRef({ serialized: '', key: '' });
   const busy = useStore(selectBusy);
@@ -67,7 +68,7 @@ export function ItemDetailPane({ detail }) {
     const data = new FormData(node);
     const desiredLinkIDs = data.getAll('link_ids');
     const command = {
-      revision: state.board.workspace.revision,
+      revision: requireBoard().workspace.revision,
       kind: 'item.update',
       target: item.id,
       item: { ...itemPayloadFromForm(data, item), revision: detail.itemRevision },

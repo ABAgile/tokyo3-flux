@@ -66,7 +66,7 @@ export function done(lookups, item) {
 // Dependency targets may be archived, so resolution spans the board payload and
 // the loaded archive page. Event handlers and commands pass the current state.
 /**
- * @param {string} id
+ * @param {string | undefined} id
  * @param {Readonly<Flux.State>} current
  * @returns {Flux.Item | undefined}
  */

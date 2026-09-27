@@ -5,7 +5,7 @@ import { markdownEditorTemplate } from './markdown.js';
 import { fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
-import { state, useStore } from './state.js';
+import { state, useStore, requireBoard } from './state.js';
 import { usePermissions, writable } from './permissions.js';
 import { itemProjectIDs, labelInfo, blocked } from './items.js';
 import { itemLookup, selectLookups } from './lookups.js';
@@ -63,7 +63,7 @@ function DatesField({ item, draft, readOnly, onChange }) {
   );
   /** @type {{ current: Record<string, HTMLInputElement | null> }} */
   const inputs = useRef({});
-  const edit = useRef(null);
+  const edit = useRef(/** @type {HTMLButtonElement | null} */ (null));
   const wasEditing = useRef(false);
   useCommittedChange(values, onChange);
   const setValue = (name, value) => setValues((current) => ({ ...current, [name]: value }));
@@ -181,10 +181,11 @@ function ItemStatus({ item }) {
   const columnName = column?.name || item.column_id;
   const sprintName = (id) => lookups.sprintsById.get(id)?.name || id;
   const openSprints = (item.sprint_ids || []).map(sprintName);
-  const closedSprints = state.board.closed_scope
+  const board = requireBoard();
+  const closedSprints = board.closed_scope
     .filter((scope) => scope.item_id === item.id)
     .map((scope) => sprintName(scope.sprint_id));
-  const links = state.board.links.filter((link) => link.items.includes(item.id));
+  const links = board.links.filter((link) => link.items.includes(item.id));
   const due = itemDateStatus(lookups, item, now);
   // The summary is the whole status in one line; everything that would push the
   // editor down — sprint history and cached provider observations — waits behind
@@ -285,7 +286,7 @@ export function ItemEditorFields({
   originFocusKey,
   onChange,
 }) {
-  const board = state.board;
+  const board = requireBoard();
   const lookups = useStore(selectLookups);
   const { gitlab } = usePermissions();
   const selfSubject = board.members.find(

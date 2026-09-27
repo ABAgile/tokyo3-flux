@@ -197,6 +197,7 @@ export function selectFilteredItems(current, view = current.view) {
   filteredCache[view] = { inputs, items };
   return items;
 }
+/** @type {readonly never[]} */
 const EMPTY = Object.freeze([]);
 export function filteredItems() {
   return selectFilteredItems(state);

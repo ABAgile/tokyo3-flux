@@ -13,7 +13,7 @@ import { classNames } from './dom.js';
 import { html, shallowEqual } from './vdom.js';
 import { useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 
-import { setState, state, useStore } from './state.js';
+import { setState, state, useStore, requireBoard } from './state.js';
 import {
   actionIconTemplate,
   writeIconTemplate,
@@ -348,14 +348,14 @@ export function SprintDialog({ sprint }) {
   </${CommandDialog}>`;
 }
 function closeSprint(sprint) {
-  const items = scopeItems(state.board, sprint);
+  const items = scopeItems(requireBoard(), sprint);
   const lookups = selectLookups(state);
   openDialog('sprint.close', {
     sprint,
     scoped: items.length,
     unfinished: items.filter((i) => !done(lookups, i)).length,
-    destinations: state.board.sprints
-      .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
+    destinations: requireBoard()
+      .sprints.filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
       .map((s) => [s.id, s.name]),
   });
 }

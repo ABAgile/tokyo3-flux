@@ -13,7 +13,7 @@ import { AttachmentTooltip } from './tooltip.js';
 import { ErrorBoundary } from './error-boundary.js';
 
 // The open dialog record: { type, props, key, revision, returnFocusKey }.
-const DialogContext = createContext(undefined);
+const DialogContext = createContext(/** @type {Flux.DialogRecord | undefined} */ (undefined));
 function useDialog() {
   return useContext(DialogContext);
 }
@@ -21,9 +21,10 @@ function useDialog() {
 // A native <dialog> whose modal state follows `open`. Native Escape, backdrop
 // clicks and closes are reported; the caller decides what they mean.
 export function Modal({ id, labelledBy, open, onCancel, onBackdrop, onClosed, children }) {
-  const ref = useRef(null);
+  const ref = useRef(/** @type {HTMLDialogElement | null} */ (null));
   useLayoutEffect(() => {
     const dialog = ref.current;
+    if (!dialog) return;
     if (open && !dialog.open) dialog.showModal();
     else if (!open && dialog.open) dialog.close();
   }, [open]);
@@ -198,6 +199,7 @@ export function FormDialog({
 // retried save of the same command reuses its idempotency key.
 export function CommandDialog({ command, afterSave, ...props }) {
   const dialog = useDialog();
+  /** @type {{ current: { serialized: string | undefined, key: string | undefined } }} */
   const pending = useRef({ serialized: undefined, key: undefined });
   async function onSubmit(data) {
     try {

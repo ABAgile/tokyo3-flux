@@ -11,7 +11,7 @@
     "checkJs": true,
     "noEmit": true,
     "strict": false,
-    "strictNullChecks": false,
+    "strictNullChecks": true,
     "noImplicitAny": false,
     "skipLibCheck": true
   },

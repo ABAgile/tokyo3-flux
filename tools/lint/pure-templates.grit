@@ -15,6 +15,9 @@ or {
   $body <: contains or {
     `state.$property`,
     `pointer.$property`,
+    `requireBoard()`,
+    `requireRoot()`,
+    `sessionCSRF()`,
     `useStore($selector)`,
     `useStore($selector, $equal)`,
     `usePointer($selector)`,

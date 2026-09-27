@@ -2,7 +2,7 @@
 import { api } from './api.js';
 import { useLayoutEffect } from './vendor-preact.js';
 import { shallowEqual } from './vdom.js';
-import { setState, state, useStore } from './state.js';
+import { setState, state, useStore, requireBoard } from './state.js';
 import { notice } from './notices.js';
 import { FILTER_NAMES, knownFilterValue, singleFilterValue, withFilterValue } from './filters.js';
 
@@ -140,7 +140,7 @@ function cardShareURL(itemID) {
   const url = new URL(window.location.href);
   url.hash = '';
   url.search = '';
-  url.searchParams.set('workspace', state.board.workspace.id);
+  url.searchParams.set('workspace', requireBoard().workspace.id);
   url.searchParams.set('item', itemID);
   return url.href;
 }
@@ -163,7 +163,7 @@ export async function copyCardLink(item) {
 // read, which answers for archived cards too. Archive pages are never walked:
 // the card is found by identity regardless of how much history exists.
 export async function resolveSharedItem(itemID, signal) {
-  const local = state.board.items.find((value) => value.id === itemID);
+  const local = requireBoard().items.find((value) => value.id === itemID);
   if (local) return local;
   let response;
   try {

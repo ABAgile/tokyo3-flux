@@ -2,6 +2,7 @@
 // sprint, column and participant resolution reads these maps instead of the
 // store, so a memoized row that receives them re-renders exactly when the data
 // it can show changes.
+/** @type {readonly never[]} */
 const NONE = Object.freeze([]);
 
 function byKey(values, key) {

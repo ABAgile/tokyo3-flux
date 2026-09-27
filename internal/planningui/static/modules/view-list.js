@@ -135,6 +135,7 @@ function statusCellTemplate(lookups, item, due, isBlocked, links, total, now) {
     empty ? emptyCell : html`<div class="list-row-status-content">${content}</div>`,
   );
 }
+/** @type {readonly never[]} */
 const NO_LINKS = Object.freeze([]);
 /**
  * @param {{ item: Flux.Item, context: Flux.RowContext, isBlocked: boolean,

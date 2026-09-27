@@ -2,7 +2,7 @@
 // one store update for everything it changes; components import them directly.
 import { api, isAbortError, requestKey } from './api.js';
 import { beginWorkspaceSession, workspaceSignal } from './workspace-session.js';
-import { setState, state } from './state.js';
+import { setState, state, requireBoard, sessionCSRF, requireRoot } from './state.js';
 import { notice, clearError, clearUndo, clearPlanningChangeNotice } from './notices.js';
 import { writable } from './permissions.js';
 import { singleFilterValue } from './filters.js';
@@ -117,7 +117,7 @@ export function selectItem(itemID, originFocusKey) {
     return true;
   }
   if (!closeDetail({ focus: false })) return false;
-  const item = state.board.items.find((value) => value.id === itemID);
+  const item = requireBoard().items.find((value) => value.id === itemID);
   if (!item) return false;
   openItemDetail(item, undefined, originFocusKey);
   return true;
@@ -136,7 +136,7 @@ export function setDetailDirty(formKey, dirty) {
 
 function editItemModal(item, draft) {
   const existing = !!item;
-  const readOnly = state.board.role === 'viewer' || !!item?.archived;
+  const readOnly = requireBoard().role === 'viewer' || !!item?.archived;
   const project = singleFilterValue('project', state.filters);
   const projectIDs = ['all', 'none'].includes(project) ? [] : [project];
   const snapshot = item || {
@@ -145,7 +145,7 @@ function editItemModal(item, draft) {
     start_date: '',
     end_date: '',
     due_date: '',
-    column_id: state.board.columns[0].id,
+    column_id: requireBoard().columns[0].id,
     project_id: projectIDs[0] || '',
     project_ids: projectIDs,
     sprint_ids: [],
@@ -204,7 +204,7 @@ export async function openSharedItem(itemID) {
 }
 export function showProposals() {
   if (!state.board || state.busy || state.loading) return;
-  openDialog('proposals', { root: state.root });
+  openDialog('proposals', { root: requireRoot() });
 }
 
 // ── Views, presentation, scope and filters ──────────────────────────────────
@@ -455,7 +455,7 @@ export async function createWorkspace(value) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-CSRF-Token': state.session.csrf,
+        'X-CSRF-Token': sessionCSRF(),
         'Idempotency-Key': state.workspaceCreateKey,
       },
       body: JSON.stringify({ name }),

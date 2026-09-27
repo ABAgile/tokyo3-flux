@@ -10,7 +10,7 @@ import {
 import { html } from './vdom.js';
 import { useRef, useState } from './vendor-preact.js';
 
-import { state, useStore } from './state.js';
+import { useStore, requireBoard, requireRoot } from './state.js';
 import { adminIconTemplate, adminWritable, accessButtonTemplate } from './permissions.js';
 import { memberListingInfo, avatarTemplate } from './people.js';
 import { MultiSelect } from './multi-select.js';
@@ -97,7 +97,7 @@ export function RemoveMemberDialog({ member, assigned }) {
 }
 function removeMember(member) {
   if (!adminWritable()) return;
-  const assigned = state.board.items.filter((item) => item.assignee === member.subject).length;
+  const assigned = requireBoard().items.filter((item) => item.assignee === member.subject).length;
   openDialog('member.remove', { member, assigned });
 }
 // The GitLab user picker searches while its menu is open; the typed query is
@@ -202,7 +202,7 @@ export function AddMemberDialog({ root, connector }) {
 }
 function addMember() {
   if (!adminWritable()) return;
-  openDialog('member.add', { root: state.root, connector: !!state.board.connector_instance });
+  openDialog('member.add', { root: requireRoot(), connector: !!requireBoard().connector_instance });
 }
 const EMPTY_MEMBERS = [];
 function selectMembersPage(current) {

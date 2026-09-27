@@ -18,6 +18,7 @@ import { setPresentation, setScope } from './actions.js';
 
 // The one mounted search field, for the `/` shortcut: the planning frame and
 // the Sprints page render the bar in turn, never both.
+/** @type {{ current: HTMLInputElement | null }} */
 export const searchInputRef = { current: null };
 function planningCount(current) {
   const { board, view } = current;

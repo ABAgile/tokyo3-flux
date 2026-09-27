@@ -102,3 +102,24 @@ const initialState = {
 
 const { state, getState, setState, subscribe, useStore } = createStore(initialState);
 export { state, getState, setState, subscribe, useStore };
+
+// The board of the open workspace, for actions and handlers the UI offers only
+// while a board is shown. Calling one without a board is a broken precondition.
+/** @returns {Flux.Board} */
+export function requireBoard() {
+  if (!state.board) throw new Error('No workspace board is open.');
+  return state.board;
+}
+// The API root of the open workspace, under the same precondition.
+/** @returns {string} */
+export function requireRoot() {
+  if (!state.root) throw new Error('No workspace is open.');
+  return state.root;
+}
+// The session's CSRF token, for writes, which the UI offers only once the
+// session has loaded.
+/** @returns {string} */
+export function sessionCSRF() {
+  if (!state.session) throw new Error('The session has not loaded.');
+  return state.session.csrf;
+}

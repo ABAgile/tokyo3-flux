@@ -3,7 +3,7 @@
 // this module; the planning store holds whether a drag is on, and the pointer
 // store the marked target, which changes on every drag-over.
 import { useState } from './vendor-preact.js';
-import { setState, state } from './state.js';
+import { setState, requireBoard } from './state.js';
 import { pointer, setPointer, usePointer } from './pointer-state.js';
 import { writable } from './permissions.js';
 import { quick } from './commands.js';
@@ -57,7 +57,7 @@ export function useDraggable(type, id, canDrag) {
       session = {
         type,
         id,
-        revision: state.board.workspace.revision,
+        revision: requireBoard().workspace.revision,
         workspace: workspaceSignal(),
       };
       setState({ dragging: true });
@@ -107,6 +107,7 @@ const DROP_CLASSES = { before: 'drop-before', after: 'drop-after', end: 'drop-en
 // A drop target identified by `key`. Each zone accepts one drag `type`, places
 // the drop on `axis` ('y', 'x', or 'end' for the whole element) and builds the
 // planning command from the dragged id. `enabled()` can refuse at event time.
+/** @param {string} key */
 export function useDropZone(key, zones) {
   const mark = usePointer((current) =>
     current.dropTarget?.key === key ? current.dropTarget.mark : '',

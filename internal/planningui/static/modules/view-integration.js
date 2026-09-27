@@ -2,7 +2,7 @@
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useRef } from './vendor-preact.js';
-import { setState, state, useStore } from './state.js';
+import { setState, state, useStore, requireBoard } from './state.js';
 import { notice } from './notices.js';
 import { MultiSelect } from './multi-select.js';
 import { integrationProjectEntries } from './gitlab-catalog.js';
@@ -40,9 +40,9 @@ async function submitIntegration(event, readOnly, loading) {
       throw new Error('A GitLab project may only be selected once.');
     setState({ integrationFormOpen: false, integrationSubmitting: true, integrationFormError: '' });
     await change({
-      revision: state.board.workspace.revision,
+      revision: requireBoard().workspace.revision,
       kind: 'integration.save',
-      integration: { instance: state.board.connector_instance, projects: parts.map(Number) },
+      integration: { instance: requireBoard().connector_instance, projects: parts.map(Number) },
     });
     setState({ integrationDraft: undefined, integrationConsent: false });
   } catch (submitError) {

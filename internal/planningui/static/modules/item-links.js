@@ -2,7 +2,7 @@
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useId, useRef, useState } from './vendor-preact.js';
-import { state, useStore } from './state.js';
+import { state, useStore, requireBoard, requireRoot } from './state.js';
 import { workspaceSignal } from './workspace-session.js';
 import { gitLabWritable, usePermissions } from './permissions.js';
 import { notice } from './notices.js';
@@ -88,7 +88,7 @@ function returnToCard({ item, draft, mode, originFocusKey, previousLinkIDs, root
 // The write outlives the editor it started in, so it belongs to the workspace
 // session and nothing is reopened after that session ended.
 async function attachItemGitLabLink(item, link, origin) {
-  const currentBoard = state.board,
+  const currentBoard = requireBoard(),
     signal = workspaceSignal();
   const context = { item, ...origin, root: state.root };
   const previousLinkIDs = itemLinkIDs(currentBoard, item.id);
@@ -117,7 +117,7 @@ async function attachItemGitLabLink(item, link, origin) {
 function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }) {
   const inputID = `gitlab-mr-url-${useId()}`;
   const [status, setStatus] = useState({ text: '', error: false });
-  const input = useRef(null);
+  const input = useRef(/** @type {HTMLInputElement | null} */ (null));
   const writes = useMutation();
   const { gitlab } = usePermissions();
   async function resolve() {
@@ -190,7 +190,7 @@ export function addGitLabLink(item, origin) {
     mode: origin.mode,
     originFocusKey: origin.originFocusKey,
     previousLinkIDs: itemLinkIDs(state.board, item.id),
-    root: state.root,
+    root: requireRoot(),
   });
 }
 // The merge-request picker owns its search: one request per project, quick
@@ -329,7 +329,7 @@ export function AddLinkDialog({ item, root }) {
       !projects.length &&
       !catalogError &&
       !catalog.loading &&
-      !state.board.integration.projects.length
+      !requireBoard().integration.projects.length
         ? helpTextTemplate('No approved GitLab projects are available for linking.')
         : null
     }
@@ -338,26 +338,26 @@ export function AddLinkDialog({ item, root }) {
 AddLinkDialog.onClose = returnToCard;
 export async function reconcileItemLinks(itemID, desiredIDs) {
   const desired = new Set(desiredIDs);
-  for (const link of state.board.links.filter(
+  for (const link of requireBoard().links.filter(
     (link) => link.items.includes(itemID) && !desired.has(link.id),
   )) {
     await change({
-      revision: state.board.workspace.revision,
+      revision: requireBoard().workspace.revision,
       kind: 'link.detach',
       target: itemID,
       destination: link.id,
     });
   }
   for (const linkID of desired) {
-    if (state.board.links.some((link) => link.id === linkID && link.items.includes(itemID)))
+    if (requireBoard().links.some((link) => link.id === linkID && link.items.includes(itemID)))
       continue;
-    const link = state.board.links.find((value) => value.id === linkID);
+    const link = requireBoard().links.find((value) => value.id === linkID);
     if (!link)
       throw new Error(
         'A selected GitLab link is no longer available. Refresh and reopen the card.',
       );
     await change({
-      revision: state.board.workspace.revision,
+      revision: requireBoard().workspace.revision,
       kind: 'link.attach',
       target: itemID,
       link: { project: link.project, kind: link.kind, number: link.number },

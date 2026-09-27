@@ -1,6 +1,6 @@
 // Server-side GitLab catalogs: projects, users and merge requests.
 import { api } from './api.js';
-import { state } from './state.js';
+import { requireBoard } from './state.js';
 
 export function gitlabProjectLabel(project) {
   const name = String(project.name || '').trim();
@@ -55,7 +55,7 @@ function validGitLabUserCatalog(data) {
 export function memberUserEntries(users, selected = []) {
   const entries = [],
     seen = new Set(),
-    existing = new Set(state.board.members.map((member) => member.subject)),
+    existing = new Set(requireBoard().members.map((member) => member.subject)),
     selectedSet = new Set(selected.map(String));
   users.forEach((user) => {
     const value = String(user.id);
@@ -105,10 +105,10 @@ export async function loadGitLabMergeRequests(currentRoot, { project, scope, sea
   return data;
 }
 export function approvedGitLabProjectEntries(projects) {
-  const approved = new Set(state.board.integration.projects.map(String));
+  const approved = new Set(requireBoard().integration.projects.map(String));
   return integrationProjectEntries(
     projects.filter((project) => approved.has(String(project.id))),
-    state.board.integration.projects.map(String),
+    requireBoard().integration.projects.map(String),
   );
 }
 function mergeRequestLabel(mergeRequest) {

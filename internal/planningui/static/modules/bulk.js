@@ -2,7 +2,7 @@
 import { labelForeground } from './format.js';
 import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { setState, state, useStore } from './state.js';
+import { setState, state, useStore, requireBoard } from './state.js';
 import { accessButtonTemplate } from './permissions.js';
 import { notice, UNDO_TTL, offerUndo } from './notices.js';
 import { findItem } from './items.js';
@@ -173,16 +173,16 @@ export function BulkArchiveDialog({ selected }) {
   </${BulkDialog}>`;
 }
 function bulkAssign() {
-  openDialog('bulk.assign', { selected: bulkTargets().length, members: state.board.members });
+  openDialog('bulk.assign', { selected: bulkTargets().length, members: requireBoard().members });
 }
 function bulkSprint() {
   openDialog('bulk.sprint', {
     selected: bulkTargets().length,
-    sprints: state.board.sprints.filter((sprint) => sprint.state !== 'closed'),
+    sprints: requireBoard().sprints.filter((sprint) => sprint.state !== 'closed'),
   });
 }
 function bulkLabel() {
-  openDialog('bulk.label', { selected: bulkTargets().length, labels: state.board.labels });
+  openDialog('bulk.label', { selected: bulkTargets().length, labels: requireBoard().labels });
 }
 function bulkArchive() {
   openDialog('bulk.archive', { selected: bulkTargets().length });

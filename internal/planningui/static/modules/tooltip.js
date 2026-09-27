@@ -49,8 +49,8 @@ export function hideAttachmentTooltip() {
 // scroll listeners are installed only while this trigger's tooltip is shown.
 export function useAttachmentTooltip(text) {
   const owner = useId();
-  const ref = useRef(null);
-  const anchorRef = useRef(null);
+  const ref = useRef(/** @type {HTMLElement | null} */ (null));
+  const anchorRef = useRef(/** @type {HTMLElement | null} */ (null));
   const active = usePointer((current) => current.attachmentTooltip?.owner === owner);
   const hide = () => {
     if (pointer.attachmentTooltip?.owner === owner) setPointer({ attachmentTooltip: undefined });
@@ -122,9 +122,11 @@ export function AttachmentTooltip({ inDialog = false }) {
 // An observation icon's tooltip is its own CSS ::after box, placed through
 // custom properties computed while the icon is hovered or focused.
 export function useObservationTooltip() {
-  const ref = useRef(null);
+  const ref = useRef(/** @type {HTMLElement | null} */ (null));
   const [active, setActive] = useState(false);
-  const [position, setPosition] = useState(undefined);
+  const [position, setPosition] = useState(
+    /** @type {{ left: number, top: number } | undefined} */ (undefined),
+  );
   const place = () => {
     const target = ref.current;
     if (!target?.isConnected) return;

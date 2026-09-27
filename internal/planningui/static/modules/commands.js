@@ -1,6 +1,6 @@
 // Planning changes: posting, optimistic apply, undo and sequences.
 import { api, requestKey } from './api.js';
-import { state, setState } from './state.js';
+import { state, setState, requireBoard, sessionCSRF } from './state.js';
 import { writable } from './permissions.js';
 import { notice, offerUndo, UNDO_TTL } from './notices.js';
 import { findItem } from './items.js';
@@ -12,7 +12,7 @@ import { refresh } from './sync.js';
 function postChange(command, key = requestKey(), minimal = false) {
   const headers = {
     'Content-Type': 'application/json',
-    'X-CSRF-Token': state.session.csrf,
+    'X-CSRF-Token': sessionCSRF(),
     'Idempotency-Key': key,
   };
   if (minimal) headers.Prefer = 'return=minimal';
@@ -92,7 +92,7 @@ export function optimisticPatch(current, command) {
   )
     return undefined;
   const moved =
-    command.kind === 'item.move'
+    command.kind === 'item.move' && command.destination
       ? { ...board.items[index], column_id: command.destination }
       : board.items[index];
   const items = board.items.filter((_value, position) => position !== index);
@@ -153,6 +153,7 @@ export function undoableInverse(current, command) {
       };
     case 'item.move':
     case 'item.rank': {
+      if (!board) return undefined;
       const index = board.items.findIndex((value) => value.id === command.target);
       if (index < 0) return undefined;
       const item = board.items[index];
@@ -174,7 +175,7 @@ export function undoableInverse(current, command) {
 }
 /** @param {Flux.Command} command */
 export async function quick(command) {
-  const full = { revision: state.board.workspace.revision, ...command };
+  const full = { revision: requireBoard().workspace.revision, ...command };
   const allowed = writable();
   const undo = allowed ? undoableInverse(state, full) : undefined;
   const rollback = allowed ? optimisticApply(full) : undefined;
@@ -206,7 +207,7 @@ export async function runSequence(label, commands) {
     notice('Nothing to apply for the current selection.');
     return true;
   }
-  let revision = state.board.workspace.revision,
+  let revision = requireBoard().workspace.revision,
     receipt,
     applied = 0,
     failure = '';

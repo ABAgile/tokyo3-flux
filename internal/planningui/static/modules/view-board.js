@@ -10,7 +10,7 @@ import { classNames } from './dom.js';
 import { html, memo } from './vdom.js';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from './vendor-preact.js';
 
-import { state, useStore } from './state.js';
+import { state, useStore, requireBoard } from './state.js';
 import { usePermissions, accessButtonTemplate } from './permissions.js';
 import {
   itemProjectIDs,
@@ -119,7 +119,7 @@ export function useRowContext() {
   const root = useStore((current) => current.root);
   return useMemo(() => {
     const linksByItem = new Map();
-    for (const link of links)
+    for (const link of links || [])
       for (const id of link.items) {
         if (!linksByItem.has(id)) linksByItem.set(id, []);
         linksByItem.get(id).push(link);
@@ -137,6 +137,7 @@ export function useRowContext() {
     };
   }, [links, lookups, write, writeDisabled, busy, role, now, root]);
 }
+/** @type {readonly never[]} */
 const NO_LINKS = Object.freeze([]);
 // Blocked flags depend on other cards, so they are computed per list.
 /**
@@ -186,11 +187,11 @@ export function columnDropZones(columnID) {
       type: 'list',
       axis: 'x',
       command: (dragged, after) => {
-        const index = state.board.columns.findIndex((value) => value.id === columnID);
+        const index = requireBoard().columns.findIndex((value) => value.id === columnID);
         return {
           kind: 'column.rank',
           target: dragged,
-          before: after ? state.board.columns[index + 1]?.id || '' : columnID,
+          before: after ? requireBoard().columns[index + 1]?.id || '' : columnID,
         };
       },
     },

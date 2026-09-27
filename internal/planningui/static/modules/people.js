@@ -5,6 +5,7 @@ import { classNames } from './dom.js';
 import { html } from './vdom.js';
 import { useState } from './vendor-preact.js';
 
+/** @type {readonly never[]} */
 const NO_PARTICIPANTS = Object.freeze([]);
 
 /**

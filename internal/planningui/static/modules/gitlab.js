@@ -3,7 +3,7 @@ import { requestKey } from './api.js';
 import { helpTextTemplate, emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useState } from './vendor-preact.js';
-import { state, useStore } from './state.js';
+import { state, useStore, requireBoard } from './state.js';
 import { writable } from './permissions.js';
 import { change } from './commands.js';
 import { openDialog, setEditorError } from './dialog-state.js';
@@ -192,7 +192,7 @@ async function refreshObservation(item, link, key) {
   if (!writable()) return;
   try {
     await change(
-      { kind: 'link.refresh', target: link.id, revision: state.board.workspace.revision },
+      { kind: 'link.refresh', target: link.id, revision: requireBoard().workspace.revision },
       key,
     );
     const latest = state.board?.items.find((i) => i.id === item.id);
@@ -264,7 +264,7 @@ function LinkObservation({ item, link }) {
 // The observations dialog is a snapshot of the card's links when it opened;
 // refresh controls follow the live board and busy state.
 export function showLinks(item) {
-  const board = state.board;
+  const board = requireBoard();
   openDialog('links.show', {
     item,
     links: board.links.filter((l) => l.items.includes(item.id)),
