@@ -300,8 +300,10 @@ export function SprintSummary({ board, view, scope }) {
         }`;
   return html`<section id="sprint-summary" class="sprints" aria-label=${label}>${content}</section>`;
 }
+/** @param {Flux.DialogProps['sprint.edit']} props */
 export function SprintDialog({ sprint }) {
   const existing = !!sprint;
+  /** @type {Partial<Flux.Sprint>} */
   const value = sprint || {
     name: '',
     goal: '',
@@ -360,6 +362,7 @@ function closeSprint(sprint) {
       .map((s) => [s.id, s.name]),
   });
 }
+/** @param {Flux.DialogProps['sprint.close']} props */
 export function CloseSprintDialog({ sprint, scoped, unfinished, destinations }) {
   return html`<${CommandDialog}
     title="Close sprint & decide carry-over"
@@ -385,6 +388,7 @@ export function CloseSprintDialog({ sprint, scoped, unfinished, destinations }) 
     })}
   </${CommandDialog}>`;
 }
+/** @param {Flux.DialogProps['sprint.archive']} props */
 export function ArchiveSprintDialog({ sprint }) {
   return html`<${CommandDialog}
     title="Archive sprint"

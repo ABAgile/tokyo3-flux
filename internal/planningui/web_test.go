@@ -31,6 +31,7 @@ func TestNativeAssets(t *testing.T) {
 	}
 	for _, path := range []string{"/missing", "/static/", "/index.html",
 		"/modules/", "/modules/missing.js", "/modules/nested/dom.js", "/modules/../app.js", "/modules/dom.css",
+		"/modules/vendor-preact.d.ts",
 		"/styles/", "/styles/010-tokens.css"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))

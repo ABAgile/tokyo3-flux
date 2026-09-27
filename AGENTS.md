@@ -8,6 +8,10 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
 
 ## Rendering with Preact
 
+- Modules are type-checked without a build step: `make typecheck-web` runs `tsc --checkJs` over them with `tools/types/tsconfig.json`.
+  Shared contracts live in `tools/types/flux.d.ts` as `Flux.*` — the store `State`, board entities, `Lookups`, `RowContext`, `Command` and every dialog's props in `DialogProps` — and modules refer to them in JSDoc.
+  A new state key goes into `Flux.State` and a new dialog into `Flux.DialogProps` and the App's `DIALOGS` map; its component takes `@param {Flux.DialogProps['type']} props`.
+  `modules/vendor-preact.d.ts` types the bundle's exports for the checker only; it is never served.
 - Import Preact runtime APIs directly from `modules/vendor-preact.js`; `modules/vdom.js` binds HTM's `html` tag to Preact's `h` and provides `memo` and `shallowEqual`.
   Use HTM templates, not JSX or raw HTML injection.
 - `tools/vendor/package-lock.json` pins the runtime and bundler; `make vendor-web` rebuilds the checked-in bundle.
@@ -158,7 +162,7 @@ Each file holds one feature, including its media queries; a feature's responsive
 
 ## Checks
 
-- After editing JS or CSS, run `make fmt-web lint-web`, then `make test-web`.
+- After editing JS or CSS, run `make fmt-web lint-web typecheck-web`, then `make test-web`.
 - After editing Markdown, run `make fmt-md`.
 - Before handing off, run `make check-web test-web`.
 - Any Go change (for example `web.go`) needs `make check` with `FLUX_TEST_DATABASE_URL` set to a disposable database.
@@ -166,5 +170,5 @@ Each file holds one feature, including its media queries; a feature's responsive
   `tests/style-snapshot.browser.js` returns a JSON style snapshot; save it outside the repository and diff two runs made on the same day.
   `tests/rendering.browser.js` checks store-driven identity and cross-column focus/disclosure preservation.
   `tests/board-perf.browser.js` measures synthetic 100/500/1000-card boards; compare runs on the same browser host only.
-- Tool versions are pinned in the `Makefile` (`BIOME_VERSION`, `RUMDL_VERSION`) and in CI.
-  Set `BIOME=biome` or `RUMDL=rumdl` to use installed binaries.
+- Tool versions are pinned in the `Makefile` (`BIOME_VERSION`, `RUMDL_VERSION`, `TYPESCRIPT_VERSION`) and in CI.
+  Set `BIOME=biome`, `RUMDL=rumdl` or `TSC=tsc` to use installed binaries.

@@ -273,6 +273,7 @@ export function showLinks(item) {
     ready: !!board.connector_instance && board.connector_instance === board.integration.instance,
   });
 }
+/** @param {Flux.DialogProps['links.show']} props */
 export function LinksDialog({ item, links, instance, refreshSeconds, ready }) {
   return html`<${FormDialog} title="Linked GitLab observations" readOnly=${true}>
     ${helpTextTemplate(`${item.title} · ${instance || 'No approved integration'}`)}

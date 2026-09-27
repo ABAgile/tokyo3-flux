@@ -51,7 +51,8 @@ jobs:
           out=$(deadcode -test ./...)
           if [ -n "$out" ]; then echo "$out"; echo "deadcode: unreachable functions found (above)"; exit 1; fi
 
-      # Frontend tool versions match BIOME_VERSION and RUMDL_VERSION in the Makefile.
+      # Frontend tool versions match BIOME_VERSION and RUMDL_VERSION in the Makefile;
+      # check-web runs TypeScript through its pinned TYPESCRIPT_VERSION npx command.
       - uses: actions/setup-node@v5
         with:
           node-version: 24

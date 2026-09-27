@@ -21,15 +21,17 @@ GOFLAGS :=
 # Frontend tools are pinned; override BIOME/RUMDL to use installed binaries.
 BIOME_VERSION := 2.5.14
 RUMDL_VERSION := 0.2.77
+TYPESCRIPT_VERSION := 7.0.2
 BIOME ?= npx --yes @biomejs/biome@$(BIOME_VERSION)
 RUMDL ?= uvx rumdl@$(RUMDL_VERSION)
+TSC ?= npx --yes -p typescript@$(TYPESCRIPT_VERSION) tsc
 WEB_JS = internal/planningui/static/app.js $(wildcard internal/planningui/static/modules/*.js)
 
 IMAGE_NAME ?= abagile/tokyo3-flux
 IMAGE_TAG  ?= $(VERSION)
 
 .PHONY: all build build-linux build-linux-amd64 build-darwin \
-        test tidy vet lint check fmt-web lint-web fmt-md check-web test-web \
+        test tidy vet lint check fmt-web lint-web typecheck-web fmt-md check-web test-web \
         docker-build docker-build-amd64 docker-push \
         docker-up docker-down install clean help
 
@@ -92,6 +94,10 @@ lint-web:
 	$(BIOME) lint .
 	node tools/lint-web.mjs
 
+## typecheck-web: Type-check the frontend modules against their JSDoc and tools/types/flux.d.ts
+typecheck-web:
+	$(TSC) -p tools/types/tsconfig.json
+
 ## fmt-md: Reflow Markdown docs to one sentence per line
 fmt-md:
 	$(RUMDL) check --fix .
@@ -100,6 +106,7 @@ fmt-md:
 check-web:
 	$(BIOME) ci --diagnostic-level=error .
 	node tools/lint-web.mjs
+	$(TSC) -p tools/types/tsconfig.json
 	$(RUMDL) check .
 
 ## test-web: Syntax-check browser modules and run the Node tests

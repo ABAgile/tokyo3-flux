@@ -5,7 +5,7 @@ import { beginWorkspaceSession, workspaceSignal } from './workspace-session.js';
 import { setState, state } from './state.js';
 import { notice, clearError, clearUndo, clearPlanningChangeNotice } from './notices.js';
 import { writable } from './permissions.js';
-import { FILTER_NAMES, singleFilterValue } from './filters.js';
+import { singleFilterValue } from './filters.js';
 import { quick, runSequence } from './commands.js';
 import { refresh, enterWorkspaceGate, beginLoad, finishLoad } from './sync.js';
 import { closeEditor, isEditorOpen, openDialog } from './dialog-state.js';
@@ -28,7 +28,8 @@ import {
 } from './url-state.js';
 import { focusRequestPatch } from './focus-request.js';
 
-const EMPTY_FILTERS = Object.freeze(Object.fromEntries(FILTER_NAMES.map((name) => [name, []])));
+/** @type {Readonly<Flux.Filters>} */
+const EMPTY_FILTERS = Object.freeze({ project: [], assignee: [], label: [] });
 const EMPTY_PROJECT_FILTERS = Object.freeze({ assignee: [], label: [] });
 
 // Navigation and presentation wait while a request is in flight or the
@@ -50,6 +51,10 @@ export function refreshWorkspace() {
 function listPresentation() {
   return !!state.board && state.view === 'board' && state.presentation === 'list';
 }
+/**
+ * @param {{ force?: boolean, focus?: boolean }} [options]
+ * @returns {boolean}
+ */
 export function closeDetail({ force = false, focus = true } = {}) {
   if (state.busy) return false;
   const detail = state.detail;
@@ -93,6 +98,11 @@ function openItemDetail(item, draft, originFocusKey) {
   });
   setSharedItem(item.id);
 }
+/**
+ * @param {string} itemID
+ * @param {string} [originFocusKey]
+ * @returns {boolean}
+ */
 export function selectItem(itemID, originFocusKey) {
   if (!listPresentation()) return false;
   const detail = state.detail;
@@ -112,6 +122,10 @@ export function selectItem(itemID, originFocusKey) {
   openItemDetail(item, undefined, originFocusKey);
   return true;
 }
+/**
+ * @param {string} formKey
+ * @param {boolean} dirty
+ */
 export function setDetailDirty(formKey, dirty) {
   const detail = state.detail;
   if (detail?.formKey === formKey && detail.dirty !== dirty)
@@ -143,6 +157,10 @@ function editItemModal(item, draft) {
   if (existing) setSharedItem(item.id);
   openDialog('item.edit', { item: snapshot, draft, readOnly });
 }
+/**
+ * @param {Flux.Item} [item]
+ * @param {Flux.ItemDraft} [draft]
+ */
 export function editItem(item, draft) {
   if (item && listPresentation()) return selectItem(item.id);
   return editItemModal(item, draft);
@@ -152,10 +170,20 @@ export function newItem() {
   editItem();
 }
 // Reopens a card in the surface it was edited in, carrying the draft over.
+/**
+ * @param {Flux.Item} item
+ * @param {Flux.ItemDraft | undefined} draft
+ * @param {Flux.EditorMode} mode
+ * @param {string} [originFocusKey]
+ */
 export function reopenItemEditor(item, draft, mode, originFocusKey) {
   if (mode === 'detail') openItemDetail(item, draft, originFocusKey);
   else editItemModal(item, draft);
 }
+/**
+ * @param {string} itemID
+ * @returns {Promise<boolean>}
+ */
 export async function openSharedItem(itemID) {
   if (!state.board || !itemID) return false;
   if (state.detail?.itemID === itemID || (state.editorItemID === itemID && isEditorOpen()))
@@ -181,6 +209,7 @@ export function showProposals() {
 
 // ── Views, presentation, scope and filters ──────────────────────────────────
 
+/** @param {Flux.State['view']} view */
 export async function navigate(view) {
   if (!state.board || interactionBlocked()) return;
   if (state.view === 'board' && view !== 'board' && state.detail && !closeDetail({ focus: false }))
@@ -201,15 +230,18 @@ export async function navigate(view) {
     notice(e.message, true);
   }
 }
+/** @param {Flux.State['presentation']} next */
 export function setPresentation(next) {
   if (!['board', 'list'].includes(next) || next === state.presentation || interactionBlocked())
     return;
   if (state.detail && !closeDetail({ focus: false })) return;
   setState({ presentation: next, bulkSelection: new Set() });
 }
+/** @param {string} scope */
 export function setScope(scope) {
   setState({ scope });
 }
+/** @param {Flux.Project} project */
 export function openProject(project) {
   if (!state.board || !project || interactionBlocked()) return;
   if (state.detail && !closeDetail({ focus: false })) return;
@@ -222,6 +254,7 @@ export function openProject(project) {
     searchQuery: '',
   });
 }
+/** @param {Flux.Sprint} sprint */
 export function viewSprintScope(sprint) {
   setState({ view: 'board', scope: sprint.id });
 }
@@ -231,15 +264,21 @@ function toggled(set, id) {
   else next.add(id);
   return next;
 }
+/** @param {string} sprintID */
 export function toggleBurndown(sprintID) {
   setState((current) => ({ burndownExpanded: toggled(current.burndownExpanded, sprintID) }));
 }
+/**
+ * @param {string} itemID
+ * @param {boolean} selected
+ */
 export function setBulkSelected(itemID, selected) {
   setState((current) => {
     if (current.bulkSelection.has(itemID) === selected) return undefined;
     return { bulkSelection: toggled(current.bulkSelection, itemID) };
   });
 }
+/** @param {string[]} ids */
 export function selectAllBulk(ids) {
   setState((current) => ({ bulkSelection: new Set([...current.bulkSelection, ...ids]) }));
 }
@@ -268,6 +307,10 @@ function applyPlanningURLState(urlState = planningURLState()) {
   setState(patch);
   if (patch.sharedItemID) void openSharedItem(patch.sharedItemID);
 }
+/**
+ * @param {string} workspaceID
+ * @returns {Promise<boolean>}
+ */
 export async function chooseWorkspace(workspaceID) {
   if (state.busy || state.loading) return false;
   if (state.detail && !closeDetail({ focus: false })) return false;
@@ -384,6 +427,7 @@ export function showWorkspaceCreate() {
   }
   setState({ workspaceGate: 'create' });
 }
+/** @param {string} value */
 export async function createWorkspace(value) {
   if (state.workspaceCreating || state.busy || state.loading) return;
   const name = String(value || '').trim();

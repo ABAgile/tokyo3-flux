@@ -23,6 +23,11 @@ function isRedirectResponse(response) {
   );
 }
 // Fetch options are forwarded, including `signal` for effect-owned cancellation.
+/**
+ * @param {string} path
+ * @param {RequestInit & { headers?: Record<string, string> }} [init]
+ * @returns {Promise<any>}
+ */
 async function api(path, init = {}) {
   const r = await fetch(path, {
     ...init,
@@ -43,6 +48,12 @@ async function api(path, init = {}) {
 // Conditional read. Planning responses are no-store, so the browser never
 // revalidates on its own; the caller keeps the last ETag and passes it back,
 // and an unchanged resource answers with an empty 304.
+/**
+ * @param {string} path
+ * @param {string} [etag]
+ * @param {{ signal?: AbortSignal }} [options]
+ * @returns {Promise<{ modified: boolean, etag: string, data: any }>}
+ */
 async function apiRevalidated(path, etag = '', { signal } = {}) {
   const headers = { Accept: 'application/json' };
   if (etag) headers['If-None-Match'] = etag;
@@ -63,6 +74,12 @@ async function apiRevalidated(path, etag = '', { signal } = {}) {
 // attachment uploads use XMLHttpRequest and report bytes sent to the caller.
 // Response and error normalization matches `api` so call sites are identical.
 // An aborted `signal` cancels the request and rejects with an AbortError.
+/**
+ * @param {string} path
+ * @param {{ headers?: Record<string, string>, body?: FormData,
+ *   onProgress?: (fraction: number | undefined) => void, signal?: AbortSignal }} [options]
+ * @returns {Promise<any>}
+ */
 function apiUpload(path, { headers = {}, body, onProgress, signal } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {

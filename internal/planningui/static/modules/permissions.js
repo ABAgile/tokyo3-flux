@@ -78,6 +78,12 @@ function ActionIcon({ label, icon, onClick, className, access, disabled }) {
     onClick=${onClick}
   ></button>`;
 }
+/**
+ * @param {string} label
+ * @param {string} icon
+ * @param {() => void} onClick
+ * @param {{ className?: string, access?: 'write' | 'admin', disabled?: boolean }} [options]
+ */
 export function actionIconTemplate(label, icon, onClick, { className, access, disabled } = {}) {
   return html`<${ActionIcon}
     label=${label}

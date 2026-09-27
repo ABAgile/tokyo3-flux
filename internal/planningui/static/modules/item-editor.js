@@ -62,6 +62,7 @@ function DatesField({ item, draft, readOnly, onChange }) {
       DATE_FIELDS.map(([name]) => [name, String(draft?.[name] ?? item[name] ?? '')]),
     ),
   );
+  /** @type {{ current: Record<string, HTMLInputElement | null> }} */
   const inputs = useRef({});
   const edit = useRef(null);
   const wasEditing = useRef(false);
@@ -488,6 +489,7 @@ export function ItemFooterActions({ item, readOnly, mode }) {
 }
 // The modal editor for a new or existing card, opened with the card snapshot
 // and any draft carried over from another surface.
+/** @param {Flux.DialogProps['item.edit']} props */
 export function ItemEditorDialog({ item, draft, readOnly }) {
   const existing = !!item.id;
   const [dueBadgeID] = useState(() => uid('item-title-overdue'));
@@ -520,6 +522,7 @@ export function ItemEditorDialog({ item, draft, readOnly }) {
     getDraft=${getDraft}
   /></${CommandDialog}>`;
 }
+/** @param {Flux.DialogProps['item.archive']} props */
 export function ArchiveItemDialog({ item, mode }) {
   return html`<${CommandDialog}
     title="Archive work item"

@@ -56,6 +56,7 @@ function BulkDialog({ title, saveText, plan, label, undoFor, hideSave = false, c
 function count(n) {
   return `${n} selected work item${n === 1 ? '' : 's'}`;
 }
+/** @param {Flux.DialogProps['bulk.assign']} props */
 export function BulkAssignDialog({ selected, members }) {
   const lookups = useStore(selectLookups);
   return html`<${BulkDialog}
@@ -75,6 +76,7 @@ export function BulkAssignDialog({ selected, members }) {
     ])}
   </${BulkDialog}>`;
 }
+/** @param {Flux.DialogProps['bulk.sprint']} props */
 export function BulkSprintDialog({ selected, sprints }) {
   return html`<${BulkDialog}
     title="Add selected work to a sprint"
@@ -106,6 +108,7 @@ export function BulkSprintDialog({ selected, sprints }) {
     }
   </${BulkDialog}>`;
 }
+/** @param {Flux.DialogProps['bulk.label']} props */
 export function BulkLabelDialog({ selected, labels }) {
   return html`<${BulkDialog}
     title="Add a label to selected work"
@@ -144,6 +147,7 @@ export function BulkLabelDialog({ selected, labels }) {
     }
   </${BulkDialog}>`;
 }
+/** @param {Flux.DialogProps['bulk.archive']} props */
 export function BulkArchiveDialog({ selected }) {
   return html`<${BulkDialog}
     title="Archive selected work"

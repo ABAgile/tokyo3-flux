@@ -68,6 +68,7 @@ import { FirstRunPage, showFirstRun } from './view-gate.js';
 import { ShortcutsDialog, useGlobalShortcuts } from './shortcuts.js';
 
 // Every editor dialog, by the type named in `openDialog(type, props)`.
+/** @type {Readonly<{ [T in Flux.DialogType]: (props: Flux.DialogProps[T]) => unknown }>} */
 export const DIALOGS = Object.freeze({
   'item.edit': ItemEditorDialog,
   'item.archive': ArchiveItemDialog,

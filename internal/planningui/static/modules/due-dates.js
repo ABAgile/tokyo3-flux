@@ -11,6 +11,11 @@ import { useEventListener } from './ui-hooks.js';
 function columnCategory(lookups, item) {
   return lookups.columnsById.get(item.column_id)?.category || '';
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ * @param {Date | undefined} now
+ */
 export function itemDateStatus(lookups, item, now) {
   return dueDatePresentation(
     item.due_date,
@@ -20,6 +25,13 @@ export function itemDateStatus(lookups, item, now) {
   );
 }
 // `extraClass` places the badge, for example beside an overdue card title.
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ * @param {Date | undefined} now
+ * @param {string} [extraClass]
+ * @param {string} [id]
+ */
 export function dueDateBadgeTemplate(lookups, item, now, extraClass = '', id) {
   const status = itemDateStatus(lookups, item, now);
   if (!status) return null;

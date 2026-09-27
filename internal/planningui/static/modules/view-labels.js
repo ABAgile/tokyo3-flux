@@ -17,6 +17,7 @@ import { labelColorPickerTemplate } from './multi-select.js';
 import { openDialog } from './dialog-state.js';
 import { CommandDialog } from './dialog.js';
 
+/** @param {Flux.DialogProps['label.edit']} props */
 export function LabelDialog({ name = '', color = '#dcefe4' }) {
   return html`<${CommandDialog}
     title=${name ? 'Rename label' : 'Create label'}
@@ -45,6 +46,7 @@ function editLabel(label) {
       : label?.color || '#dcefe4';
   openDialog('label.edit', { name, color });
 }
+/** @param {Flux.DialogProps['label.delete']} props */
 export function DeleteLabelDialog({ label, count }) {
   return html`<${CommandDialog}
     title="Delete label"

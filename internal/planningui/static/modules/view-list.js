@@ -136,6 +136,10 @@ function statusCellTemplate(lookups, item, due, isBlocked, links, total, now) {
   );
 }
 const NO_LINKS = Object.freeze([]);
+/**
+ * @param {{ item: Flux.Item, context: Flux.RowContext, isBlocked: boolean,
+ *   selected: boolean, bulkSelected: boolean }} props
+ */
 function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
   const { lookups, now, canWrite, sprintName } = context;
   const list = useAttachmentList(item.id);

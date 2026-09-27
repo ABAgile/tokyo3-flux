@@ -6,6 +6,7 @@
 // browser resources live in component refs or module variables.
 import { createStore } from './store.js';
 
+/** @type {Flux.State} */
 const initialState = {
   // Board reads are revalidated against the copy already in memory, so a refresh
   // that finds nothing new transfers no payload. The ETag is scoped to the root

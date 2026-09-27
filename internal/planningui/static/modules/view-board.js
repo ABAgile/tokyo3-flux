@@ -110,6 +110,7 @@ function selectBoard(current) {
 function selectArchiveItems(current) {
   return current.archiveItems;
 }
+/** @returns {Flux.RowContext} */
 export function useRowContext() {
   const links = useStore((current) => current.board?.links);
   const lookups = useStore(selectLookups);
@@ -138,6 +139,10 @@ export function useRowContext() {
 }
 const NO_LINKS = Object.freeze([]);
 // Blocked flags depend on other cards, so they are computed per list.
+/**
+ * @param {Flux.Item[]} items
+ * @returns {Set<string>}
+ */
 export function useBlockedIDs(items) {
   const board = useStore(selectBoard);
   const archiveItems = useStore(selectArchiveItems);
@@ -271,6 +276,10 @@ function CardAttachments({ root, item, total, list, open, onToggle }) {
     </div>
   </details>`;
 }
+/**
+ * @param {{ item: Flux.Item, context: Flux.RowContext, isBlocked: boolean,
+ *   attachmentsOpen: boolean, onAttachmentsToggle: (id: string, open: boolean) => void }} props
+ */
 function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsToggle }) {
   const { lookups, now, canWrite, writeDisabled, sprintName } = context;
   const list = useAttachmentList(item.id);
@@ -352,6 +361,7 @@ function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsTogg
 }
 export const Card = memo(CardView);
 // Open card-attachment disclosures, by item id, for one list of cards.
+/** @returns {[Set<string>, (id: string, open: boolean) => void]} */
 export function useExpandedAttachments() {
   const [expanded, setExpanded] = useState(() => new Set());
   const toggle = useCallback((id, open) => {
@@ -423,8 +433,10 @@ export function BoardContent({ items }) {
 
 // ── Board setup dialogs ─────────────────────────────────────────────────────
 
+/** @param {Flux.DialogProps['column.edit']} props */
 export function ColumnDialog({ column }) {
   const existing = !!column;
+  /** @type {Partial<Flux.Column>} */
   const value = column || { name: '', category: 'todo', wip: 0 };
   return html`<${CommandDialog}
     title=${existing ? 'Edit board column' : 'Add board column'}
@@ -465,6 +477,7 @@ export function ColumnDialog({ column }) {
     )}
   </${CommandDialog}>`;
 }
+/** @param {Flux.DialogProps['column.remove']} props */
 export function RemoveColumnDialog({ column, destinations }) {
   return html`<${CommandDialog}
     title="Remove column & move cards"
@@ -484,6 +497,7 @@ async function moveColumnLeft(columns, column, index) {
 }
 // A snapshot of the columns when the dialog opened; each action opens its own
 // dialog, and a reorder closes setup.
+/** @param {Flux.DialogProps['board.setup']} props */
 export function BoardSetupDialog({ columns }) {
   const action = (text, fn) => accessButtonTemplate(text, fn, { tracked: false });
   return html`<${FormDialog} title="Board setup" readOnly=${true}>

@@ -39,7 +39,8 @@ export function useRequest(request, dependencies = []) {
 // rejects with an AbortError when `signal` aborts first.
 export function waitUntil(subscribe, ready, signal) {
   if (ready()) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+  /** @type {Promise<void>} */
+  const settled = new Promise((resolve, reject) => {
     const stop = subscribe(() => {
       if (!ready()) return;
       stop();
@@ -52,6 +53,7 @@ export function waitUntil(subscribe, ready, signal) {
     };
     signal.addEventListener('abort', abort, { once: true });
   });
+  return settled;
 }
 
 // Writes owned by a component: one at a time, each with an AbortSignal that is

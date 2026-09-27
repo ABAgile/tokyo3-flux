@@ -31,7 +31,7 @@ async function submitIntegration(event, readOnly, loading) {
   event.preventDefault();
   const form = event.currentTarget;
   if (readOnly || state.busy || loading || state.integrationSubmitting) return;
-  const parts = new FormData(form).getAll('projects');
+  const parts = new FormData(form).getAll('projects').map(String);
   try {
     if (parts.length > 100) throw new Error('Select at most 100 GitLab projects.');
     if (parts.some((value) => !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))))

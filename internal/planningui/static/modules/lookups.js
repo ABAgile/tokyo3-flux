@@ -27,6 +27,11 @@ function sameInputs(left, right) {
 // unchanged lists by identity, so moving or editing a card keeps the same
 // lookups and every row that did not change can skip rendering.
 let lookupsCache;
+/**
+ * @param {Flux.Board | undefined} board
+ * @param {Flux.Session | undefined} session
+ * @returns {Flux.Lookups}
+ */
 export function boardLookups(board, session) {
   const inputs = [
     board?.members,
@@ -52,6 +57,7 @@ export function boardLookups(board, session) {
   lookupsCache = { inputs, lookups };
   return lookups;
 }
+/** @param {Flux.State} current */
 export function selectLookups(current) {
   return boardLookups(current.board, current.session);
 }
@@ -59,6 +65,11 @@ export function selectLookups(current) {
 // Items by id across the board payload and the loaded archive page, for
 // dependency resolution. Rebuilt only when either list changes.
 let itemsCache;
+/**
+ * @param {Flux.Board | undefined} board
+ * @param {Flux.Item[]} archiveItems
+ * @returns {ReadonlyMap<string, Flux.Item>}
+ */
 export function itemLookup(board, archiveItems) {
   const inputs = [board?.items, archiveItems];
   if (itemsCache && sameInputs(itemsCache.inputs, inputs)) return itemsCache.items;

@@ -48,6 +48,7 @@ function memberIdentityTemplate(member, session) {
     </div>
   </div>`;
 }
+/** @param {Flux.DialogProps['member.edit']} props */
 export function MemberDialog({ member }) {
   return html`<${CommandDialog}
     title="Edit workspace member"
@@ -75,6 +76,7 @@ function editMember(member) {
 function selectSession(current) {
   return current.session;
 }
+/** @param {Flux.DialogProps['member.remove']} props */
 export function RemoveMemberDialog({ member, assigned }) {
   const session = useStore(selectSession);
   return html`<${CommandDialog}
@@ -101,6 +103,7 @@ function removeMember(member) {
 // The GitLab user picker searches while its menu is open; the typed query is
 // debounced, the first open is immediate. Choosing a user fills the subject
 // and, until the admin edits it, the workspace name.
+/** @param {Flux.DialogProps['member.add']} props */
 export function AddMemberDialog({ root, connector }) {
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');

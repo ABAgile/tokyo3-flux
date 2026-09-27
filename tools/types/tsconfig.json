@@ -1,0 +1,25 @@
+{
+  // The planning UI has no build step: this configuration only type-checks the
+  // served ES modules (`make typecheck-web`, part of `make check-web`). Shared
+  // types live in flux.d.ts; vendor-preact.d.ts sits beside the bundle it types.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "strictNullChecks": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "../../internal/planningui/static/app.js",
+    "../../internal/planningui/static/modules/*.js",
+    "../../internal/planningui/static/modules/*.d.ts",
+    "./flux.d.ts"
+  ],
+  "exclude": ["../../internal/planningui/static/modules/vendor-preact.js"]
+}

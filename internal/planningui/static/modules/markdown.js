@@ -298,6 +298,7 @@ const prefixLines = (text, prefix) =>
     .map((line) => prefix + line)
     .join('\n');
 // Toolbar entries in order; `null` is a divider.
+/** @type {([string, string, (text: string) => string, string] | null)[]} */
 const MARKDOWN_TOOLS = [
   null,
   ['Bold', 'B', (text) => `**${text}**`, 'bold text'],
@@ -364,6 +365,13 @@ function markdownEditorTemplate(
     settings=${settings}
   />`;
 }
+/**
+ * @typedef {{ inputRef?: { current: HTMLTextAreaElement | null },
+ *   onValueChange?: (value: string) => void, subject?: string,
+ *   commentControl?: boolean }} MarkdownEditorSettings
+ */
+/** @param {{ name: string, title: string, value?: string, maxLength?: number,
+ *   readOnly?: boolean, previewByDefault?: boolean, settings?: MarkdownEditorSettings }} props */
 function MarkdownEditor({
   name,
   title,

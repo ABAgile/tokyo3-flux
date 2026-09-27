@@ -235,6 +235,7 @@ function GitLabLinkPicker({ root, project, scope, value, onChange }) {
     }}
   />`;
 }
+/** @param {Flux.DialogProps['link.add']} props */
 export function AddLinkDialog({ item, root }) {
   const catalog = useRequest((signal) => loadGitLabProjects(root, signal), [root]);
   const [project, setProject] = useState('');

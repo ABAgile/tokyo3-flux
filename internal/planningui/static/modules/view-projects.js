@@ -30,6 +30,7 @@ import { openProject } from './actions.js';
 import { editIntegration, IntegrationForm } from './view-integration.js';
 import { useRequest } from './ui-hooks.js';
 
+/** @param {Flux.DialogProps['project.edit']} props */
 export function ProjectDialog({ project }) {
   return html`<${CommandDialog}
     title=${project ? 'Edit project' : 'Create project'}

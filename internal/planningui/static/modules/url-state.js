@@ -28,6 +28,7 @@ export function persistWorkspaceURL(id) {
   }
   window.history.replaceState(null, '', url);
 }
+/** @returns {Flux.PlanningURLState} */
 export function planningURLState() {
   const params = new URLSearchParams(window.location.search);
   const mode = params.get('mode');
@@ -43,16 +44,23 @@ export function planningURLState() {
 // The store patch that applies a planning URL to the loaded board. Unknown
 // filter values and scopes are dropped; the requested card is kept while it
 // resolves, so a reload of a shared link never drops the card it names.
+/**
+ * @param {Flux.PlanningURLState} urlState
+ * @param {Flux.Board} board
+ * @returns {Partial<Flux.State>}
+ */
 export function planningPatchFromURL(urlState, board) {
-  const filters = Object.fromEntries(
-    FILTER_NAMES.map((name) => [
-      name,
-      String(urlState[name] || '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => value && value !== 'all' && knownFilterValue(name, value, board))
-        .reduce(withFilterValue, []),
-    ]),
+  const filters = /** @type {Flux.Filters} */ (
+    Object.fromEntries(
+      FILTER_NAMES.map((name) => [
+        name,
+        String(urlState[name] || '')
+          .split(',')
+          .map((value) => value.trim())
+          .filter((value) => value && value !== 'all' && knownFilterValue(name, value, board))
+          .reduce(withFilterValue, []),
+      ]),
+    )
   );
   const project = singleFilterValue('project', filters);
   const lens = project !== 'all' && project !== 'none';

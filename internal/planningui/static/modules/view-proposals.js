@@ -17,6 +17,7 @@ import { useRequest } from './ui-hooks.js';
 // The proposal list pages from its own request. The review dialog reads its
 // proposal's preview itself, so it shows exactly the diff the server returned
 // and a closed or replaced dialog cancels the read.
+/** @param {Flux.DialogProps['proposals']} props */
 export function ProposalsDialog({ root }) {
   const [before, setBefore] = useState(0);
   const page = useRequest(
@@ -61,6 +62,7 @@ export function ProposalsDialog({ root }) {
 function importProposal(document) {
   openDialog('proposal.import', { document, id: requestKey() });
 }
+/** @param {Flux.DialogProps['proposal.import']} props */
 export function ProposalImportDialog({ document, id }) {
   return html`<${CommandDialog}
     title="Import proposal draft"
@@ -104,6 +106,7 @@ async function loadProposalReview(root, id, signal) {
     canAccept: v.state === 'draft' && !!preview.digest && !preview.problem && writable(),
   };
 }
+/** @param {Flux.DialogProps['proposal.review']} props */
 export function ProposalReviewDialog({ root, id }) {
   const result = useRequest((signal) => loadProposalReview(root, id, signal), [root, id]);
   if (!result.data)
@@ -195,6 +198,7 @@ async function rejectProposal(id) {
   if (!(await refresh())) return;
   openDialog('proposal.reject', { id });
 }
+/** @param {Flux.DialogProps['proposal.reject']} props */
 export function ProposalRejectDialog({ id }) {
   return html`<${CommandDialog}
     title="Reject planning proposal"

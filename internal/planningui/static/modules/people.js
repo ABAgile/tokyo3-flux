@@ -7,6 +7,11 @@ import { useState } from './vendor-preact.js';
 
 const NO_PARTICIPANTS = Object.freeze([]);
 
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {string} subject
+ * @returns {{ name: string, avatarURL: string }}
+ */
 export function memberInfo(lookups, subject) {
   const { session } = lookups;
   const member = lookups.membersBySubject.get(subject);
@@ -19,9 +24,18 @@ export function memberInfo(lookups, subject) {
     avatarURL: member?.avatar_url || (subject === session?.subject && session.avatar_url) || '',
   };
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {string} subject
+ */
 export function memberName(lookups, subject) {
   return memberInfo(lookups, subject).name;
 }
+/**
+ * @param {Flux.Member} member
+ * @param {Flux.Session | undefined} session
+ * @returns {{ name: string, avatarURL: string }}
+ */
 export function memberListingInfo(member, session) {
   const name =
     String(member.name || '').trim() ||
@@ -61,9 +75,18 @@ const PARTICIPANT_ROLE_LABELS = Object.freeze({
   commenter: 'Commenter',
 });
 const PARTICIPANT_STACK_LIMIT = 4;
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ * @returns {readonly Flux.Participant[]}
+ */
 export function itemParticipants(lookups, item) {
   return lookups.participantsByItem.get(item.id) || NO_PARTICIPANTS;
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Participant} participant
+ */
 export function participantInfo(lookups, participant) {
   const { session } = lookups;
   const member = lookups.membersBySubject.get(participant.subject);
@@ -107,6 +130,10 @@ function participantAvatarTemplate(lookups, participant) {
     ${avatarImageTemplate(info.avatarURL)}
   </span>`;
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ */
 export function participantStackTemplate(lookups, item) {
   const participants = itemParticipants(lookups, item);
   const describe = (participant) => participantDescription(lookups, participant);

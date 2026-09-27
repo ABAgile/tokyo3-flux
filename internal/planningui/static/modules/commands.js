@@ -32,6 +32,11 @@ export function receiptRevision(receipt, fallback) {
   if (Number.isSafeInteger(board)) return board;
   return Number.isSafeInteger(receipt?.revision) ? receipt.revision : fallback;
 }
+/**
+ * @param {Flux.Command} command
+ * @param {string} [key]
+ * @returns {Promise<{ receipt: any, refreshed: boolean }>}
+ */
 export async function change(command, key = requestKey()) {
   if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
   setState({ busy: true });
@@ -156,6 +161,7 @@ function undoableInverse(command) {
       return undefined;
   }
 }
+/** @param {Flux.Command} command */
 export async function quick(command) {
   const full = { revision: state.board.workspace.revision, ...command };
   const allowed = writable();
@@ -175,6 +181,11 @@ export async function quick(command) {
 // the whole batch and a mid-batch conflict stops rather than skips ahead. Only
 // the final command asks for the committed board; the rest take a minimal
 // receipt so the batch does not pay for a board read it discards.
+/**
+ * @param {string} label
+ * @param {Flux.Command[]} commands
+ * @returns {Promise<boolean>}
+ */
 export async function runSequence(label, commands) {
   if (!writable()) {
     notice('Planning is read-only or a request is in progress.', true);

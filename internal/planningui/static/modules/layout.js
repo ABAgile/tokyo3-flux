@@ -30,6 +30,10 @@ function sectionHeadTemplate(title, ...actions) {
 // Subordinate heading for a panel: an h3 title above optional guidance, used by
 // the read-only chart panels so their heads match the page heads. `description`
 // is either guidance text or a ready-made template or node.
+/**
+ * @param {string} title
+ * @param {{ id?: string, description?: unknown, className?: string }} [options]
+ */
 function panelHeadTemplate(title, { id, description, className } = {}) {
   const classes = className ? `section-head ${className}` : 'section-head';
   const heading = html`<h3 id=${id || null}>${title}</h3>`;
@@ -205,6 +209,10 @@ function maintenanceListTemplate(className, rows) {
 }
 // One row shape for Projects, Members and Labels: identity on the left,
 // optional actions on the right.
+/**
+ * @param {{ tag?: 'div' | 'article', className?: string, content?: unknown[],
+ *   actions?: unknown[], key?: string }} [row]
+ */
 function maintenanceRowTemplate({
   tag = 'div',
   className = '',
