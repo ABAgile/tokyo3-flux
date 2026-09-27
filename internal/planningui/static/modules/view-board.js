@@ -7,16 +7,7 @@ import {
   emptyStateTemplate,
   metricListTemplate,
 } from './layout.js';
-import {
-  attach,
-  classNames,
-  html,
-  nothing,
-  render,
-  keyedList,
-  useLayoutEffect,
-  useRef,
-} from './preact.js';
+import { attach, classNames, html, nothing, keyedList, useLayoutEffect, useRef } from './preact.js';
 import { state } from './state.js';
 import { writable, accessButtonTemplate } from './permissions.js';
 import {
@@ -44,24 +35,20 @@ import { attachDrag, dropZone } from './drag.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
 import { editItem } from './item-editor.js';
 
-// #project-summary is a static host: its hidden state and label are set here,
-// its children rendered by Preact.
-export function renderProjectSummary() {
-  const summary = $('project-summary');
-  const projectID = singleFilterValue('project');
-  const project = state.board.projects.find((value) => value.id === projectID);
-  if (state.view !== 'board' || !project || ['all', 'none'].includes(projectID)) {
-    summary.hidden = true;
-    render(nothing, summary);
-    return;
-  }
-  const items = state.board.items.filter(
-    (item) => !item.archived && itemProjectIDs(item).includes(projectID),
-  );
-  const openSprints = state.board.sprints.filter(
-    (sprint) =>
-      sprint.state !== 'closed' && items.some((item) => item.sprint_ids.includes(sprint.id)),
-  );
+export function ProjectSummary({ board, view, projectID }) {
+  const project = board?.projects?.find((value) => value.id === projectID);
+  const visible = view === 'board' && !!project && !['all', 'none'].includes(projectID);
+  const items = visible
+    ? (board.items || []).filter(
+        (item) => !item.archived && itemProjectIDs(item).includes(projectID),
+      )
+    : [];
+  const openSprints = visible
+    ? (board.sprints || []).filter(
+        (sprint) =>
+          sprint.state !== 'closed' && items.some((item) => item.sprint_ids.includes(sprint.id)),
+      )
+    : [];
   const active = openSprints.filter((sprint) => sprint.state === 'active');
   const completed = items.filter(done).length;
   const blockedCount = items.filter(blocked).length;
@@ -70,33 +57,39 @@ export function renderProjectSummary() {
     const count = items.filter((item) => item.sprint_ids.includes(sprint.id)).length;
     return html`<span class="badge">${`${sprint.name} · ${count}`}</span>`;
   });
-  summary.hidden = false;
-  summary.setAttribute('aria-label', `${project.name} project summary`);
-  render(
-    html`<div class="project-summary-head">
-        <div class="project-summary-title">
-          <p class="eyebrow">PROJECT LENS</p>
-          <h2>${`${project.name} project`}</h2>
-          ${helpTextTemplate('Current work only · archived history is excluded.')}
+  return html`<section
+    id="project-summary"
+    class="panel project-summary"
+    hidden=${!visible}
+    aria-label=${visible ? `${project.name} project summary` : 'Project summary'}
+  >
+    ${
+      visible
+        ? html`<div class="project-summary-head">
+          <div class="project-summary-title">
+            <p class="eyebrow">PROJECT LENS</p>
+            <h2>${`${project.name} project`}</h2>
+            ${helpTextTemplate('Current work only · archived history is excluded.')}
+          </div>
         </div>
-      </div>
-      ${metricListTemplate(
-        [
-          [items.length, 'In scope'],
-          [completed, 'Done'],
-          [blockedCount, 'Blocked'],
-          [unscheduled, 'Unscheduled'],
-        ],
-        'project-summary-metrics',
-      )}
-      <div class="project-sprint-coverage">
-        <span class="project-sprint-coverage-label">Active sprint coverage</span>
-        ${coverage}
-        ${unscheduled ? html`<span class="badge">${`Backlog · ${unscheduled}`}</span>` : nothing}
-        ${!active.length && !unscheduled ? html`<span class="muted">None</span>` : nothing}
-      </div>`,
-    summary,
-  );
+        ${metricListTemplate(
+          [
+            [items.length, 'In scope'],
+            [completed, 'Done'],
+            [blockedCount, 'Blocked'],
+            [unscheduled, 'Unscheduled'],
+          ],
+          'project-summary-metrics',
+        )}
+        <div class="project-sprint-coverage">
+          <span class="project-sprint-coverage-label">Active sprint coverage</span>
+          ${coverage}
+          ${unscheduled ? html`<span class="badge">${`Backlog · ${unscheduled}`}</span>` : nothing}
+          ${!active.length && !unscheduled ? html`<span class="muted">None</span>` : nothing}
+        </div>`
+        : nothing
+    }
+  </section>`;
 }
 // Cards and columns are Preact templates: every render describes the whole board
 // and Preact updates only what changed, so focus, hover, open <details> and

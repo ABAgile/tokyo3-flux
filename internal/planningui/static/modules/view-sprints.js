@@ -16,7 +16,6 @@ import {
   html,
   withKey,
   nothing,
-  render,
   keyedList,
   useLayoutEffect,
   useRef,
@@ -283,25 +282,30 @@ export function SprintsPage() {
       </section>
       ${sprintHistoryTemplate()}`;
 }
-// #sprint-summary collapses with :empty, so this template has no whitespace
-// between its parts.
-export function renderSprintSummary(sprints) {
-  const summary = $('sprint-summary');
-  if (state.view !== 'board') {
-    render(nothing, summary);
-    return;
-  }
-  const empty = emptyStateTemplate(
-    'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.',
-  );
-  render(
-    html`${keyedList(
-      sprints,
-      (sprint) => sprint.id,
-      (sprint) => sprintPanelTemplate(sprint),
-    )}${sprints.length ? nothing : empty}`,
-    summary,
-  );
+export function SprintSummary({ board, view, scope }) {
+  const selected = board?.sprints?.find((sprint) => sprint.id === scope);
+  const sprints =
+    view !== 'board' || !board
+      ? []
+      : selected?.state === 'closed'
+        ? [selected]
+        : (board.sprints || []).filter((sprint) => sprint.state === 'active');
+  const label = selected?.state === 'closed' ? `Closed sprint: ${selected.name}` : 'Active sprints';
+  const content =
+    view !== 'board' || !board
+      ? nothing
+      : html`${keyedList(
+          sprints,
+          (sprint) => sprint.id,
+          (sprint) => sprintPanelTemplate(sprint),
+        )}${
+          sprints.length
+            ? nothing
+            : emptyStateTemplate(
+                'No active sprint. Use Sprint planning to create and start one, or keep a continuous Kanban flow.',
+              )
+        }`;
+  return html`<section id="sprint-summary" class="sprints" aria-label=${label}>${content}</section>`;
 }
 const SPRINT_HISTORY_PAGE = 50;
 export function resetSprintHistory() {

@@ -7,15 +7,15 @@ import { memberName } from './people.js';
 import { StatusBars } from './notices.js';
 import { EditorDialog } from './dialog.js';
 import { emptyStateTemplate } from './layout.js';
-import { filteredItems, planningFilterChipsTemplate } from './filters.js';
+import { filteredItems, planningFilterChipsTemplate, singleFilterValue } from './filters.js';
 import { labelOptionColors } from './items.js';
 import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
 import { ProjectsPage } from './view-projects.js';
-import { SprintsPage } from './view-sprints.js';
+import { SprintsPage, SprintSummary } from './view-sprints.js';
 import { MembersPage } from './view-members.js';
 import { LabelsPage } from './view-labels.js';
 import { HistoryPage } from './view-history.js';
-import { BoardContent } from './view-board.js';
+import { BoardContent, ProjectSummary } from './view-board.js';
 import { ListPresentation } from './view-list.js';
 import { CardListContent } from './view-archive.js';
 import { FirstRunPage, showFirstRun } from './view-gate.js';
@@ -195,9 +195,6 @@ function PlanningArea({
       : view === 'archive'
         ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
         : `${items.length} items · workspace revision ${board.workspace.revision}`;
-  const selectedSprint = board?.sprints?.find((sprint) => sprint.id === scope);
-  const summaryLabel =
-    selectedSprint?.state === 'closed' ? `Closed sprint: ${selectedSprint.name}` : 'Active sprints';
   const focusKey = useRef('');
   const focusRoute = `${showPageRoot ? 'page' : view}:${view === 'board' ? presentation : ''}`;
   const previousRoute = useRef(focusRoute);
@@ -223,8 +220,8 @@ function PlanningArea({
   return html`<${Fragment}>
       <section id="content" aria-label="Planning content">
         <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
-          <section id="project-summary" class="panel project-summary" hidden aria-label="Project summary"></section>
-          <section id="sprint-summary" class="sprints" aria-label=${summaryLabel}></section>
+          <${ProjectSummary} board=${board} view=${view} projectID=${singleFilterValue('project')} />
+          <${SprintSummary} board=${board} view=${view} scope=${scope} />
           <div id="planning-filter-slot" class="filter-slot">
             <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
               <div class="actions">

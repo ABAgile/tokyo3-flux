@@ -1,12 +1,11 @@
 import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
-import { html, nothing, render as renderTemplate } from './modules/preact.js';
+import { html, render as renderTemplate } from './modules/preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
 import { writable } from './modules/permissions.js';
 import { App } from './modules/app-shell.js';
 import { notice, clearPlanningChangeNotice } from './modules/notices.js';
-import { activeSprints } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
 import { setContentBusy } from './modules/mount.js';
@@ -41,13 +40,9 @@ import {
   editItemModal,
 } from './modules/item-editor.js';
 import { closeDetail, selectItem, openItemDetail } from './modules/item-detail.js';
-import { renderProjectSummary, setupBoard } from './modules/view-board.js';
+import { setupBoard } from './modules/view-board.js';
 import { loadArchive } from './modules/view-archive.js';
-import {
-  renderSprintSummary,
-  resetSprintHistory,
-  loadSprintHistory,
-} from './modules/view-sprints.js';
+import { resetSprintHistory, loadSprintHistory } from './modules/view-sprints.js';
 import { showProposals } from './modules/view-proposals.js';
 import { loadHistory } from './modules/view-history.js';
 import { initShortcuts } from './modules/shortcuts.js';
@@ -138,10 +133,6 @@ function render() {
   renderControls();
   if (!state.board) {
     setContentBusy(state.workspaceGate === 'loading' || state.loading);
-    $('project-summary').hidden = true;
-    renderTemplate(nothing, $('project-summary'));
-    // Both hosts are rendered by Preact, so they are cleared through Preact.
-    renderTemplate(nothing, $('sprint-summary'));
     clearPlanningChangeNotice();
     placeFilters();
     renderApp();
@@ -162,11 +153,6 @@ function render() {
       filterValues(name).filter((value) => knownFilterValue(name, value)),
     ),
   );
-  const active = activeSprints();
-  const selectedSprint = state.board.sprints.find((sprint) => sprint.id === state.scope);
-  const summarySprints = selectedSprint?.state === 'closed' ? [selectedSprint] : active;
-  renderProjectSummary();
-  renderSprintSummary(state.view === 'board' ? summarySprints : []);
   // Views that own a page layout host the filter bar themselves, below their
   // heading; everywhere else it stays in its slot above the content.
   if (state.view !== 'sprints') placeFilters();
@@ -242,10 +228,6 @@ async function navigateView(view) {
     return;
   state.view = view;
   state.bulkSelection.clear();
-  if (view !== 'board') {
-    renderProjectSummary();
-    renderSprintSummary([]);
-  }
   if (view === 'history') {
     try {
       await loadHistory(true);
