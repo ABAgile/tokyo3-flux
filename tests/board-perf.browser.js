@@ -194,6 +194,9 @@ async function run(page) {
           name,
           {
             ms: Number(median(values.map((value) => value.time)).toFixed(1)),
+            // Browser timers are coarse; the sum over all samples resolves
+            // sub-0.1 ms interaction costs.
+            total: Number(values.reduce((sum, value) => sum + value.time, 0).toFixed(1)),
             nodes: median(values.map((value) => value.added)),
             // Samples whose update scheduled a render; zero means nothing changed.
             rendered: values.filter((value) => value.rendered).length,
