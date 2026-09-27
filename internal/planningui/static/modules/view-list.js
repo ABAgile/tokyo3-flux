@@ -22,6 +22,7 @@ import { prunedBulkSelection, BulkBar } from './bulk.js';
 import { closeDetail, selectItem, setBulkSelected } from './actions.js';
 import { isEditorOpen } from './dialog-state.js';
 import { useFocusRestore } from './ui-hooks.js';
+import { ErrorBoundary } from './error-boundary.js';
 import { cardDropZones, columnDropZones, useBlockedIDs, useRowContext } from './view-board.js';
 
 // Rows and the complete detail form are rendered from shared state. The keyed
@@ -300,6 +301,12 @@ export function ListPresentation({ items }) {
       hidden=${!detailOpen}
       aria-label="Selected work item"
       onKeyDown=${closeDetailOnEscape}
-    >${detailOpen ? html`<${ItemDetailPane} key=${detail.formKey} detail=${detail} />` : null}</aside>
+    >${
+      detailOpen
+        ? html`<${ErrorBoundary} key=${detail.formKey} label="Item details"
+            ><${ItemDetailPane} detail=${detail}
+          /></${ErrorBoundary}>`
+        : null
+    }</aside>
   </div>`;
 }

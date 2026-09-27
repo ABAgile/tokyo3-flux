@@ -17,6 +17,7 @@ import { EditorDialog } from './dialog.js';
 import { AttachmentTooltip } from './tooltip.js';
 import { isFileTransfer } from './item-attachments.js';
 import { useEventListener } from './ui-hooks.js';
+import { ErrorBoundary } from './error-boundary.js';
 import {
   applyHistoryNavigation,
   chooseWorkspace,
@@ -339,7 +340,10 @@ function PlanningArea() {
   const showPageRoot = !workspaceID || PAGE_VIEWS.includes(view);
   const planningView = useRef('board');
   if (['board', 'archive'].includes(view)) planningView.current = view;
+  // A failure below renders in place of the content only; another view or
+  // workspace renders it again.
   return html`<section id="content" aria-label="Planning content">
+    <${ErrorBoundary} label="Planning content" resetKey=${`${workspaceID}\u0000${view}`}>
     <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
       <${Summaries} />
       <div id="planning-filter-slot" class="filter-slot">
@@ -354,6 +358,7 @@ function PlanningArea() {
     <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>
       ${showPageRoot ? html`<${PageContent} />` : null}
     </div>
+    </${ErrorBoundary}>
   </section>`;
 }
 

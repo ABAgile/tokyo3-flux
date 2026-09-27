@@ -44,7 +44,16 @@ export function createStore(initialState) {
 
     useLayoutEffect(() => {
       const update = () => {
-        const next = selectorRef.current(current);
+        let next;
+        try {
+          next = selectorRef.current(current);
+        } catch {
+          // Re-select during render, where the error reaches the nearest
+          // error boundary, instead of breaking this setState for everyone.
+          selectedRef.current = UNSET;
+          forceRender();
+          return;
+        }
         if (selectedRef.current !== UNSET && equalRef.current(selectedRef.current, next)) return;
         selectedRef.current = next;
         forceRender();

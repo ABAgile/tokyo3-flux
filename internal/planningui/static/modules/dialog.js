@@ -9,6 +9,7 @@ import { change } from './commands.js';
 import { closeEditor, setEditorError } from './dialog-state.js';
 import { setSharedItem } from './url-state.js';
 import { AttachmentTooltip } from './tooltip.js';
+import { ErrorBoundary } from './error-boundary.js';
 
 // The open dialog record: { type, props, key, revision, returnFocusKey }.
 const DialogContext = createContext(undefined);
@@ -42,6 +43,23 @@ export function Modal({ id, labelledBy, open, onCancel, onBackdrop, onClosed, ch
 
 function selectEditorDialog(current) {
   return current.editorDialog;
+}
+// A dialog that fails to render keeps its head and close button, so it can
+// always be dismissed.
+function dialogFallback(label, retry) {
+  const dismiss = () => {
+    if (!state.busy) closeEditor();
+  };
+  return html`<div class="dialog-panel">
+    <div class="dialog-head">
+      <div id="editor-title-group"><h2 id="editor-title">${label}</h2></div>
+      <button type="button" id="dismiss" aria-label="Close editor" onClick=${dismiss}>×</button>
+    </div>
+    <div class="notice-bar notice-bar-danger" role="alert" data-error-boundary="true">
+      <span>This dialog could not be shown. Retry, or close it and reload the page if this keeps happening.</span>
+      <button type="button" onClick=${retry}>Retry</button>
+    </div>
+  </div>`;
 }
 // Hosts the open dialog. `dialogs` maps a dialog type to its component; a
 // component's optional static `onClose(props)` runs when its dialog is closed
@@ -85,8 +103,9 @@ export function EditorDialog({ dialogs }) {
     ${
       Component
         ? html`<${DialogContext.Provider} value=${record}
-            ><${Component} key=${record.key} ...${record.props}
-          /></${DialogContext.Provider}>`
+            ><${ErrorBoundary} key=${record.key} label="Dialog unavailable" fallback=${dialogFallback}
+              ><${Component} ...${record.props}
+            /></${ErrorBoundary}></${DialogContext.Provider}>`
         : null
     }
     <${AttachmentTooltip} inDialog=${true} />

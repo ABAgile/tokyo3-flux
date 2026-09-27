@@ -21,6 +21,7 @@ async function run(page) {
     const { LabelsPage } = await import('/modules/view-labels.js');
     const { MembersPage } = await import('/modules/view-members.js');
     const { FormDialog, CommandDialog } = await import('/modules/dialog.js');
+    const { ErrorBoundary } = await import('/modules/error-boundary.js');
     const { openDialog, closeEditor } = await import('/modules/dialog-state.js');
     const { api, apiUpload } = await import('/modules/api.js');
     const { helpPopoverTemplate, MultiSelect } = await import('/modules/multi-select.js');
@@ -138,6 +139,67 @@ async function run(page) {
     await flush();
     check(storeRenders === 2, 'selector skips unrelated state changes');
     setState({ errorText: '' });
+    // A render failure replaces only its boundary; Retry and a new reset key
+    // render the content again.
+    let fragileFails = true;
+    function Fragile() {
+      if (fragileFails) throw new Error('probe render failure');
+      return html`<p id="fragile">Recovered</p>`;
+    }
+    const boundaryProbe = (key) =>
+      html`<div><button id="outside">Outside</button><${ErrorBoundary} label="Probe content" resetKey=${key}><${Fragile} /></${ErrorBoundary}></div>`;
+    renderIsland(host, boundaryProbe('a'));
+    await flush();
+    const failure = host.querySelector('[data-error-boundary]');
+    check(
+      failure?.getAttribute('role') === 'alert' &&
+        failure.textContent.includes('Probe content could not be shown') &&
+        host.querySelector('#outside'),
+      'a render failure replaces only the boundary content',
+    );
+    fragileFails = false;
+    failure.querySelector('button').click();
+    await flush();
+    check(
+      host.querySelector('#fragile')?.textContent === 'Recovered' &&
+        !host.querySelector('[data-error-boundary]'),
+      'Retry renders the boundary content again',
+    );
+    fragileFails = true;
+    renderIsland(host, boundaryProbe('a'));
+    await flush();
+    fragileFails = false;
+    renderIsland(host, boundaryProbe('b'));
+    await flush();
+    check(host.querySelector('#fragile'), 'a changed reset key clears the failure');
+    unmount(host);
+    // A selector that throws surfaces at render, where its boundary catches
+    // it, and does not stop the update from reaching other subscribers.
+    setState({ probeBroken: false });
+    function BrokenSelector() {
+      const value = useStore((current) => {
+        if (current.probeBroken) throw new Error('probe selector failure');
+        return current.probeCount;
+      });
+      return html`<span>${value}</span>`;
+    }
+    function HealthySelector() {
+      return html`<span id="healthy">${useStore((current) => current.probeCount)}</span>`;
+    }
+    renderIsland(
+      host,
+      html`<div><${ErrorBoundary} label="Broken probe"><${BrokenSelector} /></${ErrorBoundary}><${HealthySelector} /></div>`,
+    );
+    await flush();
+    setState({ probeBroken: true, probeCount: 5 });
+    await flush();
+    check(
+      host.querySelector('[data-error-boundary]') &&
+        host.querySelector('#healthy')?.textContent === '5',
+      'a throwing selector reaches its boundary without stopping other subscribers',
+    );
+    unmount(host);
+    setState({ probeBroken: false, probeCount: 1 });
     let rejected = false;
     try {
       state.probeCount = 5;
@@ -219,7 +281,15 @@ async function run(page) {
         }}
       ><label>Probe<input name="probe" defaultValue="initial" /></label></${FormDialog}>`;
     }
-    const dialogs = { ...DIALOGS, probe: ProbeDialog, 'custom.probe': CustomProbeDialog };
+    function BrokenProbeDialog() {
+      throw new Error('probe dialog failure');
+    }
+    const dialogs = {
+      ...DIALOGS,
+      probe: ProbeDialog,
+      'custom.probe': CustomProbeDialog,
+      'broken.probe': BrokenProbeDialog,
+    };
     // Mounted planning content renders from complete board payloads only.
     const fixtureBoard = (extra) => ({
       role: 'member',
@@ -386,6 +456,21 @@ async function run(page) {
         state.editorDialog === undefined &&
         !host.querySelector('[name="probe"]'),
       'native dialog close disposes its snapshot and controller state',
+    );
+    openDialog('broken.probe');
+    await flush();
+    check(
+      host.querySelector('#editor')?.open &&
+        host.querySelector('#editor-title')?.textContent === 'Dialog unavailable' &&
+        host.querySelector('#editor [data-error-boundary]')?.getAttribute('role') === 'alert' &&
+        host.querySelector('#planning-frame, #page-root'),
+      'a failing dialog renders its fallback inside the dialog only',
+    );
+    host.querySelector('#dismiss').click();
+    await flush();
+    check(
+      !host.querySelector('#editor')?.open && state.editorDialog === undefined,
+      'a failed dialog can still be dismissed',
     );
     setState({ board: previousBoard });
     setState({ undoOffer: [{}], undoText: 'Moved sample item' });
@@ -738,7 +823,7 @@ async function run(page) {
     renderIsland(host, html`<${FirstRunChecklist} steps=${steps} disabled=${false} />`);
     await new Promise((resolve) => setTimeout(resolve, 0));
     check(!violations.length, `CSP violations: ${violations}`);
-    return 'escaping, keyed identity/focus, events, native forms, lifecycle and listener cleanup, request and mutation cancellation, focus restore, dialog snapshots and permission updates';
+    return 'escaping, keyed identity/focus, events, native forms, lifecycle and listener cleanup, error boundaries, request and mutation cancellation, focus restore, dialog snapshots and permission updates';
   });
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {

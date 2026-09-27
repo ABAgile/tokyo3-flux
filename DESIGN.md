@@ -55,6 +55,8 @@ No external fonts or assets are required for the base UI; optional GitLab avatar
   Undo issues the inverse revision-checked command, so a conflict is reported like any other write.
   Undo is offered only where a true inverse exists; irreversible maintenance such as deleting a label, column, or member keeps its existing confirmation dialog instead.
 - Viewer mode disables write actions.
+- A rendering failure stays contained: the planning content, the List detail pane and the open dialog each replace only themselves with the danger `notice-bar`, naming what could not be shown and offering Retry, while navigation and the rest of the page keep working.
+  A failed dialog keeps its head with the close button, so it can always be dismissed.
 - Loading, no-work, no-workspace, unavailable, and stale-revision states must be explicit.
   Render user Markdown through the safe renderer; never execute raw HTML.
 - Theme toggle persists preference; initial theme follows system.
@@ -67,7 +69,7 @@ Module and CSS names are listed in [AGENTS.md](AGENTS.md).
 
 | Area | Design doc | JS modules | CSS files |
 |---|---|---|---|
-| Shell, pages, dialogs, first run | [shell-and-pages](docs/design/shell-and-pages.md) | `app.js`, `app-shell`, `dialog`, `dialog-state`, `view-gate`, `view-archive`, `view-history` | `010`–`030`, `033-workspace-gate`, `037-archive-history`, `040-dialog`, `130-motion`, `180-shortcuts` |
+| Shell, pages, dialogs, first run | [shell-and-pages](docs/design/shell-and-pages.md) | `app.js`, `app-shell`, `dialog`, `dialog-state`, `error-boundary`, `view-gate`, `view-archive`, `view-history` | `010`–`030`, `033-workspace-gate`, `037-archive-history`, `040-dialog`, `130-motion`, `180-shortcuts` |
 | Filters and search | [filters](docs/design/filters.md) | `filters`, `planning-filters`, `url-state` | `100-filters` |
 | Board and List | [board-and-list](docs/design/board-and-list.md) | `view-board`, `view-list`, `bulk`, `drag`, `item-detail` | `032-board`, `036-summaries`, `102-list`, `104-item-detail`, `106-list-responsive`, `120-bulk` |
 | Cards, dates and participants | [cards-and-participants](docs/design/cards-and-participants.md) | `view-board`, `items`, `people`, `due-dates` | `032-board`, `200-participants`, `220-dates` |

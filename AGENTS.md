@@ -85,6 +85,8 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
 - Document and window listeners, timers, observers and focus lookups live in `modules/ui-hooks.js` effects (`useEventListener`, `useDismiss`, `useFocusRestore`, `focusByKey`); every resource needs cleanup.
   Drag and drop are `useDraggable`/`useDropZone` props; tooltips are `useAttachmentTooltip`/`useObservationTooltip` props.
   `make lint-web` fails on `$(`, `document.querySelector`, `addEventListener` and `state.x =` outside `api.js`, `actions.js` and `ui-hooks.js`.
+- The planning content, the List detail pane and the dialog host each render inside an `ErrorBoundary` (`modules/error-boundary.js`), keyed or reset by what they show, so a render failure replaces only that part with a Retry notice.
+  A store selector that throws re-selects during render, so its error reaches the nearest boundary instead of interrupting `setState`.
 - Use Preact style objects for dynamic colors and CSS variables; Preact applies these through CSSOM, which preserves the existing CSP.
   Never pass a style string or use `dangerouslySetInnerHTML`.
 - No CSS, API or CSP changes are part of rendering work; never introduce inline styles, scripts or `eval`.
@@ -109,7 +111,7 @@ No module imports `app.js`; `app.js` sets the saved theme, renders `App` once an
 
 | Layer | Modules |
 |---|---|
-| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `dom`, `api`, `workspace-session`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
+| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `error-boundary`, `dom`, `api`, `workspace-session`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
 | State | `state`: the store with every shared UI value, as data |
 | Services | `permissions`, `notices`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
 | Actions | `actions`: navigation, presentation, detail, editor, workspace and startup actions; `dialog`: `Modal`, `FormDialog`, `CommandDialog` and the dialog host; `drag` |
@@ -125,7 +127,7 @@ Each file holds one feature, including its media queries; a feature's responsive
 
 | JS module | CSS files |
 |---|---|
-| `app-shell`, `app.js`, `actions`, `layout` | `010-tokens`, `020-base`, `030-shell` (sidebar, notices, section heads, page stack, empty state, skip link), `130-motion` |
+| `app-shell`, `app.js`, `actions`, `layout`, `error-boundary` | `010-tokens`, `020-base`, `030-shell` (sidebar, notices, section heads, page stack, empty state, skip link), `130-motion` |
 | `view-sprints` | `031-panels` (panels, sprint panel, metrics), `210-sprint-goal` |
 | `view-board`, `drag` | `032-board` (columns, cards, drag cursors, drop marks), `036-summaries` (project lens) |
 | `view-gate` | `033-workspace-gate` (workspace choice and first run) |
