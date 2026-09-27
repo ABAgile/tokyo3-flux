@@ -12,14 +12,6 @@ import { setSharedItem } from './url-state.js';
 import { reconcileItemLinks } from './item-links.js';
 import { itemEditorDraft, refreshEditorDueBadge, buildItemEditor } from './item-editor.js';
 
-export function syncListSelection() {
-  document.querySelectorAll('.list-row').forEach((row) => {
-    const selected = row.dataset.item === state.selectedItemID;
-    row.classList.toggle('is-selected', selected);
-    if (selected) row.setAttribute('aria-current', 'true');
-    else row.removeAttribute('aria-current');
-  });
-}
 export function updateDetailPaneVisibility() {
   if (!state.detailPane) return;
   const open =
@@ -29,7 +21,6 @@ export function updateDetailPaneVisibility() {
     state.detailState.form?.isConnected;
   state.detailPane.hidden = !open;
   state.detailPane.parentElement?.classList.toggle('has-detail', open);
-  syncListSelection();
 }
 function detailDraftIsDirty(state) {
   if (!state?.form?.isConnected) return false;
@@ -70,7 +61,6 @@ export function closeDetail({ force = false, focus = true } = {}) {
     replaceContent(detail.pane);
     detail.pane.parentElement?.classList.remove('has-detail');
   }
-  syncListSelection();
   if (focus) {
     const target = detail.origin?.isConnected
       ? detail.origin

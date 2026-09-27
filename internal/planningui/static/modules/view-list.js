@@ -2,7 +2,7 @@
 import { columnWIPLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
 import { attach, classNames, html, nothing, keyedList, useLayoutEffect } from './preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { projectBadgesTemplate, labelBadgeTemplate, blocked, findItem } from './items.js';
 import { memberName, participantStackTemplate } from './people.js';
@@ -16,12 +16,11 @@ import {
 import { attachDrag, dropZone } from './drag.js';
 import { writable } from './permissions.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
-import { syncListSelection, updateDetailPaneVisibility, selectItem } from './item-detail.js';
+import { updateDetailPaneVisibility, selectItem } from './item-detail.js';
 import { pruneBulkSelection, bulkBarTemplate } from './bulk.js';
 
-// Rows are Preact templates like board cards. Selection (`is-selected`,
-// aria-current) belongs to syncListSelection, and the detail pane's content and
-// visibility to item-detail, so the templates bind neither.
+// Rows are Preact templates like board cards. The selected item ID is store-
+// subscribed here; the detail pane's content and visibility remain controller-owned.
 const LIST_HEADINGS = ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'];
 function listCellTemplate(label, className, content) {
   return html`<div class=${`list-cell ${className}`} data-label=${label}>
@@ -154,16 +153,23 @@ function statusCellTemplate(item, due) {
 function listRowTemplate(item) {
   const due = itemDateStatus(item);
   const overdue = !!due?.overdue;
+  const selected = item.id === state.selectedItemID;
   const bulkSelected = state.bulkSelection.has(item.id);
   const sprintName = (id) => state.board.sprints.find((s) => s.id === id)?.name || id;
   // The list shows the same participant aggregate as a card, and keeps the
   // assignee's name in text so the column stays scannable as a table.
   return html`<article
-    class=${classNames({ 'list-row': true, 'is-overdue': overdue, 'is-bulk-selected': bulkSelected })}
+    class=${classNames({
+      'list-row': true,
+      'is-overdue': overdue,
+      'is-selected': selected,
+      'is-bulk-selected': bulkSelected,
+    })}
     data-item=${item.id}
     data-focus-key=${`item:${item.id}:list-row`}
     tabindex="0"
     aria-label=${`Open work item ${item.title}; draggable`}
+    aria-current=${selected ? 'true' : null}
     data-drag-type="card"
     draggable=${writable() && !item.archived}
     ref=${attach(attachRow, item.id)}
@@ -257,10 +263,13 @@ function listSectionTemplate(column, items) {
 function registerDetailPane(pane) {
   state.detailPane = pane;
 }
+function selectSelectedItem(current) {
+  return current.selectedItemID;
+}
 export function ListPresentation({ items }) {
+  useStore(selectSelectedItem);
   pruneBulkSelection(items);
   useLayoutEffect(() => {
-    syncListSelection();
     updateDetailPaneVisibility();
   });
   return html`<div class="list-detail-layout" data-content-view="list:board">

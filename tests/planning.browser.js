@@ -136,6 +136,14 @@ async function run(page) {
     await firstListRow.evaluate((row) => row === document.activeElement),
     'detail close did not return focus to its originating row',
   );
+  await page.waitForFunction(
+    () => !document.querySelector('.list-row.is-selected[aria-current="true"]'),
+  );
+  check(
+    (await firstListRow.getAttribute('aria-current')) === null &&
+      !(await firstListRow.evaluate((row) => row.classList.contains('is-selected'))),
+    'closing the detail pane did not clear the Preact-owned row selection',
+  );
   await boardToggle.click();
   await page.getByRole('heading', { name: 'Kanban board', exact: true }).waitFor();
   const initialScopeLabels = await page
