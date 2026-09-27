@@ -406,6 +406,17 @@ async function run(page) {
     'viewer linking enabled',
   );
   check(
+    (await page.getByLabel('Title', { exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Edit Assignee', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Edit Labels', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Edit Project', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Edit Dates', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Edit Open sprints', exact: true }).isDisabled()) &&
+      (await page.getByRole('button', { name: 'Edit Depends on', exact: true }).isDisabled()) &&
+      (await page.getByRole('combobox', { name: 'Move to', exact: true }).isDisabled()),
+    'viewer item fields are not disabled by their rendered props',
+  );
+  check(
     await page.getByRole('button', { name: 'Edit GitLab links', exact: true }).isDisabled(),
     'viewer link associations enabled',
   );

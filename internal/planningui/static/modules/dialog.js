@@ -44,7 +44,6 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
     const dialog = dialogRef.current;
     const form = formRef.current;
     if (!config || !dialog || !form) return;
-    const fields = form.querySelector('#fields');
     pending.current = { serialized: undefined, key: undefined };
     unmountIsland(form.querySelector('#editor-title'));
     clearEditorTitleExtras();
@@ -56,18 +55,6 @@ export function EditorDialog({ config, busy, saveText, errorText }) {
       ['Work item', 'Create work item'].includes(config.title),
     );
     config.onOpen?.(form);
-    if (config.readOnly) {
-      fields
-        .querySelectorAll(
-          'input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])',
-        )
-        .forEach((input) => {
-          input.disabled = true;
-        });
-      fields.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach((input) => {
-        input.disabled = true;
-      });
-    }
     setSaving(false);
     if (!dialog.open) dialog.showModal();
     return () => disposeEditorContent();

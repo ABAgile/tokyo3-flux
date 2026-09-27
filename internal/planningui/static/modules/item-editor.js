@@ -59,7 +59,7 @@ const DATE_FIELDS = [
   ['due_date', 'Due date'],
 ];
 // The date inputs carry the form values, and chips summarise them.
-function DatesField({ item, draft }) {
+function DatesField({ item, draft, readOnly }) {
   const [inputsID] = useState(() => uid('item-dates'));
   const [editing, setEditing] = useState(false);
   // Date controls stay uncontrolled; this revision refreshes their summary chips.
@@ -101,6 +101,7 @@ function DatesField({ item, draft }) {
         aria-label=${editing ? 'Done editing dates' : 'Edit Dates'}
         aria-expanded=${String(editing)}
         aria-controls=${inputsID}
+        disabled=${readOnly}
         onClick=${toggle}
       >${editing ? 'Done' : 'Edit'}</button>
     </div>
@@ -136,6 +137,7 @@ function DatesField({ item, draft }) {
       <div class="date-field-inputs" id=${inputsID} hidden=${!editing}>
         ${DATE_FIELDS.map(([name, title]) =>
           fieldTemplate(name, title, initial[name], 'date', undefined, {
+            disabled: readOnly,
             onInput: () => setRevision((version) => version + 1),
             onChange: () => setRevision((version) => version + 1),
           }),
@@ -144,8 +146,8 @@ function DatesField({ item, draft }) {
     </div>
   </div>`;
 }
-function datesFieldTemplate(item, draft) {
-  return html`<${DatesField} item=${item} draft=${draft} />`;
+function datesFieldTemplate(item, draft, readOnly) {
+  return html`<${DatesField} item=${item} draft=${draft} readOnly=${readOnly} />`;
 }
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled
@@ -332,6 +334,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
             required
             maxlength="240"
             aria-label="Title"
+            disabled=${readOnly}
             defaultValue=${draft?.title ?? item.title}
         /></label>
         ${markdownEditorTemplate(
@@ -358,6 +361,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           undefined,
           {
             single: true,
+            disabled: readOnly,
             headingAction: assignMe,
             onReady: (controls) => {
               assigneePicker = controls;
@@ -371,6 +375,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           draft?.labels ?? item.labels,
           labelChip,
           'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.',
+          { disabled: readOnly },
         )}
         ${multiSelectTemplate(
           'project_id',
@@ -379,9 +384,9 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           selectedProjects.length ? selectedProjects : [''],
           undefined,
           'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.',
-          { emptyValue: '' },
+          { emptyValue: '', disabled: readOnly },
         )}
-        ${datesFieldTemplate(item, draft)}
+        ${datesFieldTemplate(item, draft, readOnly)}
         ${multiSelectTemplate(
           'sprint_ids',
           'Open sprints',
@@ -391,6 +396,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           draft?.sprint_ids ?? item.sprint_ids,
           undefined,
           'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.',
+          { disabled: readOnly },
         )}
         ${
           closed.length
@@ -402,6 +408,9 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           'Depends on',
           state.board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title]),
           draft?.dependencies ?? item.dependencies,
+          undefined,
+          undefined,
+          { disabled: readOnly },
         )}
         ${
           item.id
@@ -412,7 +421,11 @@ function itemEditorTemplate(item, draft, readOnly, context) {
                 draft?.link_ids ?? itemLinks.map((link) => link.id),
                 undefined,
                 'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.',
-                { footer: paste?.template, onReady: (controls) => paste?.bind(controls) },
+                {
+                  footer: paste?.template,
+                  onReady: (controls) => paste?.bind(controls),
+                  disabled: readOnly,
+                },
               )}${linkActions}`
             : nothing
         }
@@ -423,6 +436,7 @@ function itemEditorTemplate(item, draft, readOnly, context) {
           draft?.column_id ?? item.column_id,
           'text',
           state.board.columns.map((c) => [c.id, c.name]),
+          { disabled: readOnly },
         )}
       </div>
     </div>`;

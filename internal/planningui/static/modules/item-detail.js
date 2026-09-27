@@ -89,7 +89,7 @@ function updateDetailHeader(item) {
 // the title text, the head's due badge, the footer's item actions and the
 // error line are written directly. The fields inside are a Preact template
 // (buildItemEditor).
-function detailFormTemplate(item) {
+function detailFormTemplate(item, readOnly) {
   return html`<form class="item-detail-form">
     <div class="item-detail-head">
       <h2 class="item-detail-title">${item.title}</h2>
@@ -106,14 +106,14 @@ function detailFormTemplate(item) {
     <p class="item-detail-error" role="alert" hidden></p>
     <div class="item-detail-footer">
       <button type="button" class="detail-cancel" onClick=${() => closeDetail()}>Cancel</button>
-      <button type="submit" class="primary" data-write="true">Save changes</button>
+      <button type="submit" class="primary" data-write="true" hidden=${readOnly}>Save changes</button>
     </div>
   </form>`;
 }
 export function openItemDetail(item, draft, origin) {
   if (!state.detailPane) return;
   const readOnly = state.board.role === 'viewer' || item.archived;
-  const form = nodeOf(detailFormTemplate(item));
+  const form = nodeOf(detailFormTemplate(item, readOnly));
   const title = form.querySelector('.item-detail-title');
   const close = form.querySelector('.item-detail-close');
   const fields = form.querySelector('.item-detail-fields');
@@ -124,19 +124,6 @@ export function openItemDetail(item, draft, origin) {
   replaceContent(state.detailPane, form);
   const context = { mode: 'detail', form, footer, origin };
   const refreshEditor = buildItemEditor(fields, item, draft, readOnly, context, title);
-  if (readOnly) {
-    fields
-      .querySelectorAll(
-        'input:not([data-comment-control]),textarea:not([data-comment-control]),select:not([data-comment-control])',
-      )
-      .forEach((input) => {
-        input.disabled = true;
-      });
-    fields.querySelectorAll('[data-multi-edit],[data-multi-remove]').forEach((input) => {
-      input.disabled = true;
-    });
-  }
-  save.hidden = readOnly;
   let revision = state.board.workspace.revision;
   let pending, key;
   state.detailState = {
