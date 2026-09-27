@@ -1,5 +1,6 @@
 // Card attachments: loading, uploads, drops and tiles.
-import { api, apiUpload, requestKey } from './api.js';
+import { api, apiUpload, isAbortError, requestKey } from './api.js';
+import { workspaceSignal } from './workspace-session.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
@@ -16,7 +17,7 @@ import { useAttachmentTooltip } from './tooltip.js';
 export function isFileTransfer(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes('Files');
 }
-function attachmentHref(item, attachment, base = state.root) {
+function attachmentHref(item, attachment, base) {
   return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
 }
 // A board read reports how many attachments a card has, not what they are, so
@@ -45,13 +46,16 @@ function setItemAttachments(itemID, attachments) {
 export function ensureAttachments(itemID) {
   if (!itemID || !state.root || Array.isArray(state.attachmentLists[itemID])) return undefined;
   const root = state.root,
-    generation = state.boardGeneration;
+    generation = state.boardGeneration,
+    signal = workspaceSignal();
   const loadKey = `${root}\u0000${generation}\u0000${itemID}`;
   if (attachmentLoads.has(loadKey)) return attachmentLoads.get(loadKey);
-  const current = () => state.root === root && state.boardGeneration === generation;
+  const current = () => !signal.aborted && state.boardGeneration === generation;
   const pending = (async () => {
     try {
-      const data = await api(`${root}/items/${encodeURIComponent(itemID)}/attachments`);
+      const data = await api(`${root}/items/${encodeURIComponent(itemID)}/attachments`, {
+        signal,
+      });
       if (!current()) return;
       if (!validAttachments(data) || data.some((attachment) => attachment.item_id !== itemID))
         throw new Error('Attachment list is invalid. Refresh to retry.');
@@ -101,13 +105,14 @@ function attachmentRejection(item, file) {
 }
 // Shared upload used by the editor picker, the editor drop zone, and card
 // file drops. Progress is reported as a 0..1 fraction, or undefined when the
-// browser cannot measure the request body.
+// browser cannot measure the request body. `signal` belongs to the workspace
+// session or to a component keyed by it, so an aborted upload is never
+// applied to another workspace.
 async function uploadItemFile(item, file, onProgress, signal) {
-  const currentRoot = state.root;
   const request = uploadRequestKey(item, file);
   const form = new FormData();
   form.append('file', file);
-  const data = await apiUpload(`${currentRoot}/items/${encodeURIComponent(item.id)}/attachments`, {
+  const data = await apiUpload(`${state.root}/items/${encodeURIComponent(item.id)}/attachments`, {
     headers: { 'X-CSRF-Token': state.session.csrf, 'Idempotency-Key': request.key },
     body: form,
     onProgress,
@@ -116,7 +121,7 @@ async function uploadItemFile(item, file, onProgress, signal) {
   if (!validAttachments([data]) || data.item_id !== item.id)
     throw new Error('Attachment response is invalid. Refresh to retry.');
   clearUploadRequestKey(request.signature);
-  if (state.root !== currentRoot) return undefined;
+  if (signal.aborted) return undefined;
   // Without the current list there is nothing to append to, so the list is
   // reloaded rather than invented from one response.
   const list = state.attachmentLists[item.id];
@@ -126,10 +131,12 @@ async function uploadItemFile(item, file, onProgress, signal) {
   return data;
 }
 // Dropping files onto a card uploads them without opening the editor. Progress
-// and failures are reported through the shared status and error surfaces.
+// and failures are reported through the shared status and error surfaces; the
+// uploads belong to the workspace session and stop when it ends.
 async function dropFilesOntoItem(item, files) {
   const selected = Array.from(files || []).filter(Boolean);
   if (!selected.length || state.uploadBusy || !writable()) return;
+  const signal = workspaceSignal();
   setState({ uploadBusy: true });
   let uploaded = 0;
   try {
@@ -141,20 +148,26 @@ async function dropFilesOntoItem(item, files) {
       }
       notice(`Uploading ${file.name} to “${item.title}”…`);
       try {
-        await uploadItemFile(item, file, (fraction) => {
-          if (fraction !== undefined)
-            notice(`Uploading ${file.name} to “${item.title}” · ${Math.round(fraction * 100)}%`);
-        });
+        await uploadItemFile(
+          item,
+          file,
+          (fraction) => {
+            if (fraction !== undefined && !signal.aborted)
+              notice(`Uploading ${file.name} to “${item.title}” · ${Math.round(fraction * 100)}%`);
+          },
+          signal,
+        );
       } catch (error) {
-        notice(error.message, true);
+        if (!isAbortError(error)) notice(error.message, true);
         break;
       }
+      if (signal.aborted) break;
       uploaded++;
     }
   } finally {
     setState({ uploadBusy: false });
   }
-  if (uploaded)
+  if (uploaded && !signal.aborted)
     notice(`${uploaded} attachment${uploaded === 1 ? '' : 's'} uploaded to “${item.title}”.`);
 }
 // Cards and list rows accept file drops. Planning drags are unaffected because
@@ -200,10 +213,11 @@ export function attachmentPaperclipTemplate() {
   return html`<span class="attachment-paperclip" aria-hidden="true">📎</span>`;
 }
 // `extraClass` adds a placement class, for example on a card's attachment list.
+// `base` is the workspace root the attachment belongs to.
 export function AttachmentTileLink({
   item,
   attachment,
-  base = state.root,
+  base,
   metadata = attachmentSize(attachment.size),
   extraClass = '',
 }) {
@@ -299,8 +313,7 @@ function attachmentsReducer(current, action) {
 // The component owns upload progress and drop state; the list itself is shared
 // store data. The file input's value remains native form state. Keyed by
 // workspace root and item, so a switch remounts it and aborts its writes.
-function ItemAttachments({ item, readOnly }) {
-  const [currentRoot] = useState(() => state.root);
+function ItemAttachments({ root, item, readOnly }) {
   const [inputID] = useState(() => `attachment-file-${requestKey()}`);
   const [local, dispatch] = useReducer(attachmentsReducer, {
     status: '',
@@ -325,12 +338,12 @@ function ItemAttachments({ item, readOnly }) {
     await writes.run(async (signal) => {
       setStatus(`Removing ${attachment.name}…`);
       try {
-        await api(attachmentHref(item, attachment, currentRoot), {
+        await api(attachmentHref(item, attachment, root), {
           method: 'DELETE',
           headers: { 'X-CSRF-Token': state.session.csrf },
           signal,
         });
-        if (signal.aborted || state.root !== currentRoot) return;
+        if (signal.aborted) return;
         const next = (state.attachmentLists[item.id] || []).filter(
           (value) => value.id !== attachment.id,
         );
@@ -374,7 +387,7 @@ function ItemAttachments({ item, readOnly }) {
             },
             signal,
           );
-          if (signal.aborted || state.root !== currentRoot) break;
+          if (signal.aborted) break;
           setStatus('Attachment uploaded.');
           uploaded++;
         } catch (error) {
@@ -434,7 +447,7 @@ function ItemAttachments({ item, readOnly }) {
         <${AttachmentTileLink}
           item=${item}
           attachment=${attachment}
-          base=${currentRoot}
+          base=${root}
           metadata=${`${attachmentSize(attachment.size)} · ${memberName(lookups, attachment.uploader)}`}
         />
         ${
@@ -508,6 +521,13 @@ function ItemAttachments({ item, readOnly }) {
     <div class="attachment-grid">${listTemplate()}</div>
   </section>`;
 }
+function selectRoot(current) {
+  return current.root;
+}
+function WorkspaceItemAttachments({ item, readOnly }) {
+  const root = useStore(selectRoot);
+  return html`<${ItemAttachments} key=${`${root}:${item.id}`} root=${root} item=${item} readOnly=${readOnly} />`;
+}
 export function itemAttachmentsTemplate(item, readOnly) {
-  return html`<${ItemAttachments} key=${`${state.root}:${item.id}`} item=${item} readOnly=${readOnly} />`;
+  return html`<${WorkspaceItemAttachments} item=${item} readOnly=${readOnly} />`;
 }

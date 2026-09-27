@@ -1,5 +1,6 @@
 // Board refresh and merging, the workspace gate, and the background polls.
 import { api, apiRevalidated } from './api.js';
+import { beginWorkspaceSession, withWorkspace, workspaceSignal } from './workspace-session.js';
 import { useEffect } from './vendor-preact.js';
 import { setState, state } from './state.js';
 import {
@@ -63,8 +64,10 @@ function knownScope(scope, board) {
     : 'active';
 }
 // Returns to the workspace gate, discarding everything that belonged to the
-// workspace. An editor that is saving stays until its request settles.
+// workspace and cancelling its work. An editor that is saving stays until its
+// request settles.
 export function enterWorkspaceGate(mode, message) {
+  beginWorkspaceSession();
   clearUndo();
   setState((current) => ({
     detail: undefined,
@@ -84,14 +87,21 @@ export function enterWorkspaceGate(mode, message) {
   persistWorkspaceURL('');
   if (message) notice(message);
 }
-// A refresh supersedes any refresh still in flight.
-let loadGeneration = 0;
-export function nextLoadGeneration() {
-  loadGeneration += 1;
-  return loadGeneration;
+// One board or workspace-list load at a time: a new load aborts the one in
+// flight, and leaving the workspace aborts it too. Only the current load
+// clears the loading flag, so a superseded one never ends its successor's.
+let currentLoad;
+export function beginLoad() {
+  currentLoad?.abort();
+  const controller = new AbortController();
+  currentLoad = controller;
+  setState({ loading: true });
+  return { controller, signal: withWorkspace(controller.signal) };
 }
-export function currentLoad(generation) {
-  return generation === loadGeneration;
+export function finishLoad(load) {
+  if (currentLoad !== load.controller) return;
+  currentLoad = undefined;
+  setState({ loading: false });
 }
 // Observation reads skip an unchanged digest until the fallback interval.
 let observationDigest = '';
@@ -101,11 +111,11 @@ let observationReadAt = 0;
 // change receipt says nothing about workspace access.
 export async function refresh(preloaded) {
   if (state.busy || state.integrationFormOpen || !state.root) return false;
-  const generation = nextLoadGeneration();
-  setState({ loading: true });
+  const load = beginLoad();
+  const { signal } = load;
   try {
-    const memberships = await loadWorkspaces();
-    if (!currentLoad(generation)) return false;
+    const memberships = await loadWorkspaces(signal);
+    if (signal.aborted) return false;
     const selectedID =
       state.board?.workspace?.id ||
       memberships.find((workspace) => workspaceRoot(workspace.id) === state.root)?.id;
@@ -123,8 +133,8 @@ export async function refresh(preloaded) {
     const response =
       preloaded?.board?.workspace?.id === selectedID
         ? { modified: true, etag: preloaded.etag, data: preloaded.board }
-        : await apiRevalidated(`${root}/board`, cached);
-    if (!currentLoad(generation)) return false;
+        : await apiRevalidated(`${root}/board`, cached, { signal });
+    if (signal.aborted) return false;
     setState({ boardETag: response.etag, boardETagRoot: root });
     // The revision belongs in the non-live count, not in the polite status line:
     // repeating it on every poll would re-announce an unchanged board.
@@ -156,24 +166,24 @@ export async function refresh(preloaded) {
       }));
     let pages;
     try {
-      pages = await viewPage(state.view);
+      pages = await viewPage(state.view, signal);
     } catch (error) {
-      if (currentLoad(generation)) {
+      if (!signal.aborted) {
         apply({});
         persistWorkspaceURL(board.workspace.id);
       }
       throw error;
     }
-    if (!currentLoad(generation)) return false;
+    if (signal.aborted) return false;
     apply(pages);
     persistWorkspaceURL(board.workspace.id);
     notice('Up to date.');
     return true;
   } catch (e) {
-    if (currentLoad(generation)) notice(e.message, true);
+    if (!signal.aborted) notice(e.message, true);
     return false;
   } finally {
-    if (currentLoad(generation)) setState({ loading: false });
+    finishLoad(load);
   }
 }
 // A digest that only ever reports "unchanged" is indistinguishable from a
@@ -190,10 +200,11 @@ function pollBlocked() {
 // indexed lookups instead of a full board load every fifteen seconds.
 async function pollObservations() {
   const current = state.board,
-    path = state.root;
+    path = state.root,
+    signal = workspaceSignal();
   try {
-    const revisionState = await api(`${path}/revision`);
-    if (state.board !== current || state.root !== path || pollBlocked()) return;
+    const revisionState = await api(`${path}/revision`, { signal });
+    if (signal.aborted || state.board !== current || pollBlocked()) return;
     if (
       !revisionState ||
       !Number.isSafeInteger(revisionState.revision) ||
@@ -218,8 +229,8 @@ async function pollObservations() {
       Date.now() - observationReadAt < OBSERVATION_FALLBACK_MS
     )
       return;
-    const next = await api(`${path}/board`);
-    if (state.board !== current || state.root !== path || pollBlocked()) return;
+    const next = await api(`${path}/board`, { signal });
+    if (signal.aborted || state.board !== current || pollBlocked()) return;
     if (!next?.workspace || !Array.isArray(next.links))
       throw new Error('Observation response is invalid.');
     if (next.workspace.revision !== current.workspace.revision || next.role !== current.role) {
@@ -248,17 +259,25 @@ async function pollObservations() {
         board: { ...current, links: mergeEntities(current.links, next.links, (link) => link.id) },
       });
   } catch {
-    if (state.board === current && !state.busy && !state.integrationFormOpen && !isEditorOpen())
+    if (
+      !signal.aborted &&
+      state.board === current &&
+      !state.busy &&
+      !state.integrationFormOpen &&
+      !isEditorOpen()
+    )
       notice('Observation cache could not be reloaded. Use Refresh to retry.', true);
   }
 }
 async function pollMembership() {
   const current = state.board,
     selectedID = current.workspace.id,
-    before = workspaceListSignature(state.workspaces);
+    before = workspaceListSignature(state.workspaces),
+    signal = workspaceSignal();
   try {
-    const next = await loadWorkspaces();
+    const next = await loadWorkspaces(signal);
     if (
+      signal.aborted ||
       state.board !== current ||
       state.busy ||
       state.loading ||
@@ -278,7 +297,7 @@ async function pollMembership() {
     if (workspaceListSignature(next) !== before)
       showPlanningChangeNotice('Workspace membership changed · Refresh to review');
   } catch {
-    if (state.board === current && !state.busy && !state.integrationFormOpen)
+    if (!signal.aborted && state.board === current && !state.busy && !state.integrationFormOpen)
       notice('Workspace access could not be reloaded. Use Refresh to retry.', true);
   }
 }

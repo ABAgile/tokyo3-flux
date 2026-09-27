@@ -5,6 +5,7 @@ import { html } from './vdom.js';
 
 import { useStore } from './state.js';
 import { notice } from './notices.js';
+import { isAbortError } from './api.js';
 import { loadArchive } from './page-data.js';
 import { useFocusRestore } from './ui-hooks.js';
 import { Card, useBlockedIDs, useExpandedAttachments, useRowContext } from './view-board.js';
@@ -13,7 +14,7 @@ async function loadOlderArchive() {
   try {
     await loadArchive();
   } catch (error) {
-    notice(error.message, true);
+    if (!isAbortError(error)) notice(error.message, true);
   }
 }
 function selectScope(current) {

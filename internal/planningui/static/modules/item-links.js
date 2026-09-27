@@ -3,7 +3,8 @@ import { uid } from './dom.js';
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useRef, useState } from './vendor-preact.js';
-import { state } from './state.js';
+import { state, useStore } from './state.js';
+import { workspaceSignal } from './workspace-session.js';
 import { gitLabWritable, usePermissions } from './permissions.js';
 import { notice } from './notices.js';
 import { helpPopoverTemplate, MultiSelect } from './multi-select.js';
@@ -71,7 +72,8 @@ function itemLinkIDs(board, itemID) {
   return board.links.filter((value) => value.items.includes(itemID)).map((value) => value.id);
 }
 // Reopens the card in the surface it came from with the draft it had, plus any
-// link the workspace gained for it meanwhile.
+// link the workspace gained for it meanwhile. `root` is the workspace the
+// card was edited in; nothing reopens once another workspace is shown.
 function returnToCard({ item, draft, mode, originFocusKey, previousLinkIDs, root }) {
   if (state.root !== root || !state.board) return;
   const latest = state.board.items.find((value) => value.id === item.id);
@@ -84,10 +86,12 @@ function returnToCard({ item, draft, mode, originFocusKey, previousLinkIDs, root
   reopenItemEditor(latest, returnDraft, mode, originFocusKey);
 }
 // `origin` is { mode, draft, originFocusKey } of the editor the link came from.
+// The write outlives the editor it started in, so it belongs to the workspace
+// session and nothing is reopened after that session ended.
 async function attachItemGitLabLink(item, link, origin) {
   const currentBoard = state.board,
-    currentRoot = state.root;
-  const context = { item, ...origin, root: currentRoot };
+    signal = workspaceSignal();
+  const context = { item, ...origin, root: state.root };
   const previousLinkIDs = itemLinkIDs(currentBoard, item.id);
   if (origin.mode === 'modal') closeEditor();
   try {
@@ -98,7 +102,7 @@ async function attachItemGitLabLink(item, link, origin) {
       link,
     });
   } catch (error) {
-    if (state.root === currentRoot && state.board) {
+    if (!signal.aborted && state.board) {
       const latest = state.board.items.find((value) => value.id === item.id);
       if (latest && origin.draft)
         reopenItemEditor(latest, origin.draft, origin.mode, origin.originFocusKey);
@@ -106,12 +110,12 @@ async function attachItemGitLabLink(item, link, origin) {
     }
     return;
   }
-  returnToCard({ ...context, previousLinkIDs });
+  if (!signal.aborted) returnToCard({ ...context, previousLinkIDs });
 }
 // The paste-an-MR-URL row under the GitLab links picker. `getDraft` reads the
-// enclosing editor's current input, so a reopened card keeps it.
-export function GitLabPaste({ item, readOnly, mode, getDraft, originFocusKey }) {
-  const [currentRoot] = useState(() => state.root);
+// enclosing editor's current input, so a reopened card keeps it. Keyed by
+// workspace root, so a switch remounts it and aborts a pending resolve.
+function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }) {
   const [inputID] = useState(() => uid('gitlab-mr-url'));
   const [status, setStatus] = useState({ text: '', error: false });
   const input = useRef(null);
@@ -129,8 +133,8 @@ export function GitLabPaste({ item, readOnly, mode, getDraft, originFocusKey }) 
     await writes.run(async (signal) => {
       setStatus({ text: 'Resolving GitLab merge request…', error: false });
       try {
-        const projects = await loadGitLabProjects(currentRoot, signal);
-        if (signal.aborted || state.root !== currentRoot || !state.board) return;
+        const projects = await loadGitLabProjects(root, signal);
+        if (signal.aborted || !state.board) return;
         const link = resolveGitLabMRURL(raw, state.board, projects);
         await attachItemGitLabLink(item, link, { mode, draft: getDraft?.(), originFocusKey });
       } catch (error) {
@@ -170,6 +174,13 @@ export function GitLabPaste({ item, readOnly, mode, getDraft, originFocusKey }) 
       role=${status.error ? 'alert' : 'status'}
       aria-live="polite"
     >${status.text}</p>`;
+}
+function selectRoot(current) {
+  return current.root;
+}
+export function GitLabPaste(props) {
+  const root = useStore(selectRoot);
+  return html`<${GitLabPasteRow} key=${root} root=${root} ...${props} />`;
 }
 // Opens the Add link dialog for a card edited in `origin.mode`.
 export function addGitLabLink(item, origin) {

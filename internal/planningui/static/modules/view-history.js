@@ -7,6 +7,7 @@ import { useStore } from './state.js';
 import { notice } from './notices.js';
 import { memberListingInfo } from './people.js';
 import { selectLookups } from './lookups.js';
+import { isAbortError } from './api.js';
 import { loadHistory } from './page-data.js';
 function historyActorLabel(lookups, subject) {
   const { session } = lookups;
@@ -22,7 +23,7 @@ async function loadOlderHistory() {
   try {
     await loadHistory();
   } catch (e) {
-    notice(e.message, true);
+    if (!isAbortError(e)) notice(e.message, true);
   }
 }
 function HistoryRow({ event, label, lookups }) {

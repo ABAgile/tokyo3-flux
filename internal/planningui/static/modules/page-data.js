@@ -1,7 +1,9 @@
 // Paged reads that belong to a workspace: memberships, history, archived work
-// and archived sprints. Each loader writes its page into the store.
+// and archived sprints. Each loader writes its page into the store unless its
+// signal — by default the workspace session's — was aborted meanwhile.
 import { api } from './api.js';
 import { setState, state } from './state.js';
+import { workspaceSignal } from './workspace-session.js';
 
 function validWorkspaceList(data) {
   return (
@@ -29,8 +31,8 @@ export function workspaceListSignature(list) {
 export function workspaceRoot(id) {
   return `/api/v2/workspaces/${encodeURIComponent(id)}`;
 }
-export async function loadWorkspaces() {
-  const next = await api('/api/v2/workspaces');
+export async function loadWorkspaces(signal) {
+  const next = await api('/api/v2/workspaces', { signal });
   if (!validWorkspaceList(next)) throw new Error('Workspace list is invalid. Refresh to retry.');
   setState({ workspaces: next });
   return next;
@@ -38,24 +40,27 @@ export async function loadWorkspaces() {
 
 export const EMPTY_HISTORY = { history: [], historyBefore: 0, historyMore: false };
 // Each page read returns a store patch; `load*` applies it directly.
-async function historyPage(reset = false) {
+async function historyPage(reset, signal) {
   const before = !reset && state.historyBefore ? `?before=${state.historyBefore}` : '';
-  const events = await api(`${state.root}/history${before}`);
+  const events = await api(`${state.root}/history${before}`, { signal });
   return {
     history: reset ? events : [...state.history, ...events],
     historyBefore: events.at(-1)?.id || 0,
     historyMore: events.length === 50,
   };
 }
-export async function loadHistory(reset = false) {
-  setState(await historyPage(reset));
+export async function loadHistory(reset = false, signal = workspaceSignal()) {
+  const page = await historyPage(reset, signal);
+  if (!signal.aborted) setState(page);
 }
 
 const ARCHIVE_PAGE = 50;
 export const EMPTY_ARCHIVE = { archiveItems: [], archiveOffset: 0, archiveMore: false };
-async function archivePage(reset = false) {
+async function archivePage(reset, signal) {
   const offset = reset ? 0 : state.archiveOffset;
-  const page = await api(`${state.root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`);
+  const page = await api(`${state.root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`, {
+    signal,
+  });
   if (!Array.isArray(page)) throw new Error('Archive response is invalid. Refresh to retry.');
   return {
     archiveItems: reset ? page : [...state.archiveItems, ...page],
@@ -63,8 +68,9 @@ async function archivePage(reset = false) {
     archiveMore: page.length === ARCHIVE_PAGE,
   };
 }
-export async function loadArchive(reset = false) {
-  setState(await archivePage(reset));
+export async function loadArchive(reset = false, signal = workspaceSignal()) {
+  const page = await archivePage(reset, signal);
+  if (!signal.aborted) setState(page);
 }
 
 const SPRINT_HISTORY_PAGE = 50;
@@ -93,10 +99,11 @@ function validSprintHistoryPage(page) {
       (Number.isSafeInteger(page.next_offset) && page.next_offset >= 0))
   );
 }
-async function sprintHistoryPage(reset = false) {
+async function sprintHistoryPage(reset, signal) {
   const offset = reset ? 0 : state.sprintHistoryOffset;
   const page = await api(
     `${state.root}/sprints/archive?offset=${offset}&limit=${SPRINT_HISTORY_PAGE}`,
+    { signal },
   );
   if (!validSprintHistoryPage(page))
     throw new Error('Sprint history response is invalid. Refresh to retry.');
@@ -107,14 +114,15 @@ async function sprintHistoryPage(reset = false) {
     sprintHistoryError: '',
   };
 }
-export async function loadSprintHistory(reset = false) {
-  setState(await sprintHistoryPage(reset));
+export async function loadSprintHistory(reset = false, signal = workspaceSignal()) {
+  const page = await sprintHistoryPage(reset, signal);
+  if (!signal.aborted) setState(page);
 }
 // The reset first page of a view's own paged data, for a view change or a
 // board reload that commits it together with the board.
-export async function viewPage(view) {
-  if (view === 'history') return historyPage(true);
-  if (view === 'archive') return archivePage(true);
-  if (view === 'sprints') return sprintHistoryPage(true);
+export async function viewPage(view, signal) {
+  if (view === 'history') return historyPage(true, signal);
+  if (view === 'archive') return archivePage(true, signal);
+  if (view === 'sprints') return sprintHistoryPage(true, signal);
   return {};
 }

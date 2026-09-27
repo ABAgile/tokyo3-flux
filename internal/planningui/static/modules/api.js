@@ -129,10 +129,15 @@ function apiUpload(path, { headers = {}, body, onProgress, signal } = {}) {
     request.send(body);
   });
 }
+// A request cancelled through its AbortSignal: the caller moved on, so the
+// rejection is not a failure to report.
+function isAbortError(error) {
+  return error?.name === 'AbortError';
+}
 function requestKey() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
     byte.toString(16).padStart(2, '0'),
   ).join('');
 }
 
-export { api, apiRevalidated, apiUpload, requestKey };
+export { api, apiRevalidated, apiUpload, isAbortError, requestKey };

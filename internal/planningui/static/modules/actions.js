@@ -1,12 +1,13 @@
 // Named UI actions. Each action validates against the current state and makes
 // one store update for everything it changes; components import them directly.
-import { api, requestKey } from './api.js';
+import { api, isAbortError, requestKey } from './api.js';
+import { beginWorkspaceSession, workspaceSignal } from './workspace-session.js';
 import { setState, state } from './state.js';
 import { notice, clearError, clearUndo, clearPlanningChangeNotice } from './notices.js';
 import { writable } from './permissions.js';
 import { FILTER_NAMES, singleFilterValue } from './filters.js';
 import { quick, runSequence } from './commands.js';
-import { refresh, enterWorkspaceGate, nextLoadGeneration, currentLoad } from './sync.js';
+import { refresh, enterWorkspaceGate, beginLoad, finishLoad } from './sync.js';
 import { closeEditor, isEditorOpen, openDialog } from './dialog-state.js';
 import {
   EMPTY_SPRINT_HISTORY,
@@ -152,7 +153,9 @@ export async function openSharedItem(itemID) {
   if (!state.board || !itemID) return false;
   if (state.detail?.itemID === itemID || (state.editorItemID === itemID && isEditorOpen()))
     return true;
-  const item = await resolveSharedItem(itemID);
+  const signal = workspaceSignal();
+  const item = await resolveSharedItem(itemID, signal);
+  if (signal.aborted) return false;
   if (!item) {
     setSharedItem('');
     notice('Card not found or no longer available.', true);
@@ -181,12 +184,12 @@ export async function navigate(view) {
     ...(view === 'sprints' ? EMPTY_SPRINT_HISTORY : {}),
   });
   if (!['history', 'archive', 'sprints'].includes(view)) return;
-  const root = state.root;
+  const signal = workspaceSignal();
   try {
-    const page = await viewPage(view);
-    if (state.root === root) setState(page);
+    const page = await viewPage(view, signal);
+    if (!signal.aborted) setState(page);
   } catch (e) {
-    if (state.root !== root) return;
+    if (signal.aborted || isAbortError(e)) return;
     if (view === 'sprints') setState({ sprintHistoryError: e.message });
     notice(e.message, true);
   }
@@ -264,6 +267,9 @@ export async function chooseWorkspace(workspaceID) {
   const selectedID = String(workspaceID || '');
   if (!state.workspaces.some((workspace) => workspace.id === selectedID)) return false;
   const urlState = state.pendingPlanningURLState;
+  // Work still running for the previous workspace is cancelled before the
+  // new root is visible to anyone.
+  beginWorkspaceSession();
   clearPlanningChangeNotice();
   clearUndo();
   clearError();
@@ -303,13 +309,12 @@ export async function chooseWorkspace(workspaceID) {
 }
 async function refreshWorkspaceGate() {
   if (interactionBlocked()) return false;
-  const generation = nextLoadGeneration();
-  setState({ loading: true });
+  const load = beginLoad();
   try {
-    const next = await loadWorkspaces();
-    if (!currentLoad(generation)) return false;
+    const next = await loadWorkspaces(load.signal);
+    if (load.signal.aborted) return false;
     if (next.length === 1) {
-      setState({ loading: false });
+      finishLoad(load);
       return await chooseWorkspace(next[0].id);
     }
     setState({ workspaceGate: next.length ? 'select' : 'create' });
@@ -321,10 +326,10 @@ async function refreshWorkspaceGate() {
     );
     return true;
   } catch (e) {
-    if (currentLoad(generation)) notice(e.message, true);
+    if (!load.signal.aborted) notice(e.message, true);
     return false;
   } finally {
-    if (currentLoad(generation)) setState({ loading: false });
+    finishLoad(load);
   }
 }
 // Back/Forward restores the whole planning URL, including which card is open.
@@ -408,6 +413,7 @@ export async function createWorkspace(value) {
       throw new Error('Workspace created, but its board could not be opened. Refresh to retry.');
     setState(EMPTY_CREATE);
   } catch (error) {
+    beginWorkspaceSession();
     setState({
       workspaceGate: 'create',
       root: undefined,

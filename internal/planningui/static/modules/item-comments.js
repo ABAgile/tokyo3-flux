@@ -101,8 +101,7 @@ async function commentPage(root, itemID, before, signal) {
 // The component owns comment paging, status and the controlled composer. It is
 // keyed by workspace root and item, so a switch remounts it and every pending
 // read or write is aborted rather than applied to another context.
-function ItemComments({ item, onDraftChange }) {
-  const [currentRoot] = useState(() => state.root);
+function ItemComments({ root, item, onDraftChange }) {
   const [local, dispatch] = useReducer(commentsReducer, {
     comments: [],
     nextBefore: 0,
@@ -116,19 +115,19 @@ function ItemComments({ item, onDraftChange }) {
   const pending = useRef({ body: '', key: '' });
   const composer = useRef(null);
   const writes = useMutation();
-  const { comment: allowed } = usePermissions();
+  const { comment: allowed, role } = usePermissions();
   const lookups = useStore(selectLookups);
   // The enclosing editor counts an unsent comment as unsaved input.
   useCommittedChange(local.draft, onDraftChange);
-  const writer = state.board.role === 'member' || state.board.role === 'admin';
+  const writer = role === 'member' || role === 'admin';
   // One request per page. Loading older comments appends; a reload after a new
   // comment replaces the list.
   const page = useRequest(
     (signal) => {
       dispatch({ type: 'loading' });
-      return commentPage(currentRoot, item.id, before, signal);
+      return commentPage(root, item.id, before, signal);
     },
-    [currentRoot, item.id, before, reload],
+    [root, item.id, before, reload],
   );
   useEffect(() => {
     if (page.data)
@@ -152,7 +151,7 @@ function ItemComments({ item, onDraftChange }) {
     await writes.run(async (signal) => {
       dispatch({ type: 'status', text: 'Adding comment…' });
       try {
-        await api(`${currentRoot}/items/${encodeURIComponent(item.id)}/comments`, {
+        await api(`${root}/items/${encodeURIComponent(item.id)}/comments`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -212,10 +211,18 @@ function ItemComments({ item, onDraftChange }) {
     }
   </section>`;
 }
-export function itemCommentsTemplate(item, onDraftChange) {
+function selectRoot(current) {
+  return current.root;
+}
+function WorkspaceItemComments({ item, onDraftChange }) {
+  const root = useStore(selectRoot);
   return html`<${ItemComments}
-    key=${`${state.root}:${item.id}`}
+    key=${`${root}:${item.id}`}
+    root=${root}
     item=${item}
     onDraftChange=${onDraftChange}
   />`;
+}
+export function itemCommentsTemplate(item, onDraftChange) {
+  return html`<${WorkspaceItemComments} item=${item} onDraftChange=${onDraftChange} />`;
 }

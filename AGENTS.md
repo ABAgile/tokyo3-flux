@@ -32,10 +32,20 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
 
 - Component-owned reads use `useRequest`; list every identity that restarts the work, especially the workspace root.
   Writes use `useMutation`, which refuses a second submission and aborts on unmount; `api` and `apiUpload` forward `signal`.
-  Key request-owning components by workspace root and record so a switch remounts them.
+  Request-owning components read `root` with `useStore` and are keyed by it and their record, so a switch remounts them and aborts their work; they need no root checks after `await`.
 
   ```js
   const page = useRequest((signal) => api(`${root}/items/${id}/comments`, { signal }), [root, id]);
+  ```
+
+- Work that outlives its component — card-drop uploads, board and page loads, polls, a link attached after the editor closed — takes `workspaceSignal()` from `modules/workspace-session.js`.
+  Every change of workspace root calls `beginWorkspaceSession()`, which aborts all of it; check `signal.aborted` after `await` and treat `isAbortError` rejections as silent.
+  Board and workspace-list loads go through `beginLoad`/`finishLoad` in `sync.js`: a new load aborts the one in flight.
+
+  ```js
+  const signal = workspaceSignal();
+  const page = await viewPage(view, signal);
+  if (!signal.aborted) setState(page);
   ```
 
 - Dialogs are data: `openDialog(type, props)` stores `{ type, props }`, and the App's `DIALOGS` map names the component.
@@ -99,7 +109,7 @@ No module imports `app.js`; `app.js` sets the saved theme, renders `App` once an
 
 | Layer | Modules |
 |---|---|
-| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `dom`, `api`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
+| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `dom`, `api`, `workspace-session`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
 | State | `state`: the store with every shared UI value, as data |
 | Services | `permissions`, `notices`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
 | Actions | `actions`: navigation, presentation, detail, editor, workspace and startup actions; `dialog`: `Modal`, `FormDialog`, `CommandDialog` and the dialog host; `drag` |

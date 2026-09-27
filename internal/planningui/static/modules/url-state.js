@@ -154,16 +154,15 @@ export async function copyCardLink(item) {
 // A card link resolves against the board first and falls back to the single-card
 // read, which answers for archived cards too. Archive pages are never walked:
 // the card is found by identity regardless of how much history exists.
-export async function resolveSharedItem(itemID) {
+export async function resolveSharedItem(itemID, signal) {
   const local = state.board.items.find((value) => value.id === itemID);
   if (local) return local;
-  const path = state.root;
   let response;
   try {
-    response = await api(`${path}/items/${encodeURIComponent(itemID)}`);
+    response = await api(`${state.root}/items/${encodeURIComponent(itemID)}`, { signal });
   } catch {
     return undefined;
   }
-  if (!state.board || state.root !== path) return undefined;
+  if (signal.aborted || !state.board) return undefined;
   return response?.item?.id === itemID ? response.item : undefined;
 }

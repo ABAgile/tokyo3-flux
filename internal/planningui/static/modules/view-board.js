@@ -230,7 +230,7 @@ function cardLinksTemplate(item, links) {
 }
 // The disclosure's open state belongs to the board, so it survives a card
 // moving between columns; expanding it is what pays for the metadata read.
-function CardAttachments({ item, total, list, open, onToggle }) {
+function CardAttachments({ root, item, total, list, open, onToggle }) {
   const ref = useRef(null);
   const generation = useStore(selectBoardGeneration);
   const count = `${total} attachment${total === 1 ? '' : 's'}`;
@@ -262,6 +262,7 @@ function CardAttachments({ item, total, list, open, onToggle }) {
                 key=${attachment.id}
                 item=${item}
                 attachment=${attachment}
+                base=${root}
                 extraClass=" card-attachment-option"
               />`,
             )
@@ -338,6 +339,7 @@ function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsTogg
     ${
       total
         ? html`<${CardAttachments}
+            root=${context.root}
             item=${item}
             total=${total}
             list=${list}

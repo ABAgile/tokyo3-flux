@@ -6,6 +6,7 @@ import { setState, state, useStore } from './state.js';
 import { writable } from './permissions.js';
 import { quick } from './commands.js';
 import { hideAttachmentTooltip } from './tooltip.js';
+import { workspaceSignal } from './workspace-session.js';
 
 let session;
 let preview;
@@ -50,7 +51,12 @@ export function useDraggable(type, id, canDrag) {
       event.stopPropagation();
       setSource(true);
       hideAttachmentTooltip();
-      session = { type, id, revision: state.board.workspace.revision, root: state.root };
+      session = {
+        type,
+        id,
+        revision: state.board.workspace.revision,
+        workspace: workspaceSignal(),
+      };
       setState({ dragging: true, dropTarget: undefined });
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', id);
@@ -102,7 +108,7 @@ export function useDropZone(key, zones) {
     current.dropTarget?.key === key ? current.dropTarget.mark : '',
   );
   const zoneFor = () =>
-    session && session.root === state.root && writable()
+    session && !session.workspace.aborted && writable()
       ? zones.find((zone) => zone.type === session.type && (zone.enabled?.() ?? true))
       : undefined;
   const after = (event, zone) => {
