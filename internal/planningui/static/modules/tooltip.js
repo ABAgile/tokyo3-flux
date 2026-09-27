@@ -1,10 +1,10 @@
 // Geometry-positioned tooltips. Triggers spread the props a hook returns; the
 // attachment tooltip is one layer rendering `{ text, anchor, target }` from the
-// store, and observation icons position their own CSS tooltip.
+// pointer store, and observation icons position their own CSS tooltip.
 import { html } from './vdom.js';
 import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 import { uid } from './dom.js';
-import { setState, state, useStore } from './state.js';
+import { pointer, setPointer, usePointer } from './pointer-state.js';
 import { useEventListener } from './ui-hooks.js';
 
 function spacing() {
@@ -44,7 +44,7 @@ function useHoverFocus(onChange) {
 }
 
 export function hideAttachmentTooltip() {
-  if (state.attachmentTooltip) setState({ attachmentTooltip: undefined });
+  if (pointer.attachmentTooltip) setPointer({ attachmentTooltip: undefined });
 }
 // The trigger `ref` and the `anchorRef` the tooltip aligns with. Resize and
 // scroll listeners are installed only while this trigger's tooltip is shown.
@@ -52,9 +52,9 @@ export function useAttachmentTooltip(text) {
   const [owner] = useState(() => uid('attachment-tooltip-owner'));
   const ref = useRef(null);
   const anchorRef = useRef(null);
-  const active = useStore((current) => current.attachmentTooltip?.owner === owner);
+  const active = usePointer((current) => current.attachmentTooltip?.owner === owner);
   const hide = () => {
-    if (state.attachmentTooltip?.owner === owner) setState({ attachmentTooltip: undefined });
+    if (pointer.attachmentTooltip?.owner === owner) setPointer({ attachmentTooltip: undefined });
   };
   const show = () => {
     const target = ref.current;
@@ -63,7 +63,7 @@ export function useAttachmentTooltip(text) {
       hide();
       return;
     }
-    setState({
+    setPointer({
       attachmentTooltip: {
         owner,
         text,
@@ -78,7 +78,7 @@ export function useAttachmentTooltip(text) {
   useEventListener(document, 'scroll', show, { active, capture: true });
   useEffect(
     () => () => {
-      if (state.attachmentTooltip?.owner === owner) setState({ attachmentTooltip: undefined });
+      if (pointer.attachmentTooltip?.owner === owner) setPointer({ attachmentTooltip: undefined });
     },
     [],
   );
@@ -90,7 +90,7 @@ function selectAttachmentTooltip(current) {
 // Rendered once at the body and once inside the editor dialog, whose top layer
 // would otherwise cover it.
 export function AttachmentTooltip({ inDialog = false }) {
-  const tooltip = useStore(selectAttachmentTooltip);
+  const tooltip = usePointer(selectAttachmentTooltip);
   const node = useRef();
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const shown = !!tooltip && tooltip.inDialog === inDialog;

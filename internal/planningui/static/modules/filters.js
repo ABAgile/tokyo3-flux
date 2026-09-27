@@ -141,13 +141,13 @@ export function normalizedSearch(value) {
     .trim()
     .toLowerCase();
 }
-// Typing filters once per pause; the debounce effect in the App applies it.
-// `flushSearch` applies the pending query immediately for Enter and blur.
-export function flushSearch() {
-  setState((current) => ({ searchQuery: normalizedSearch(current.searchInput) }));
-}
-export function setSearchInput(value) {
-  setState({ searchInput: String(value) });
+// Commits the search field's text and the query it filters by. The field owns
+// its text while typing and commits once per pause, or at once for Enter and
+// blur, so keystrokes never reach the store.
+/** @param {string} text */
+export function commitSearch(text) {
+  const searchInput = String(text);
+  setState({ searchInput, searchQuery: normalizedSearch(searchInput) });
 }
 function matchesItemFilters(item, filters) {
   return (

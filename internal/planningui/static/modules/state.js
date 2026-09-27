@@ -54,8 +54,6 @@ const initialState = {
   // screen, so the address bar is always a shareable link to the current card.
   sharedItemID: '',
   editorItemID: '',
-  // The attachment tooltip shown by a tile link: { owner, text, anchor, target, inDialog }.
-  attachmentTooltip: undefined,
   // Loaded attachment metadata by item id. A fresh board drops these lists and
   // the next viewer reloads them.
   attachmentLists: {},
@@ -86,9 +84,8 @@ const initialState = {
   searchInput: '',
   noticeText: 'Loading planning data…',
   errorText: '',
-  // A drag is in progress, and the drop zone currently marked: { key, mark }.
+  // A drag is in progress; the marked drop zone is pointer state.
   dragging: false,
-  dropTarget: undefined,
   // One upload at a time per browser, so a card drop and the editor picker
   // cannot race each other onto the same item.
   uploadBusy: false,

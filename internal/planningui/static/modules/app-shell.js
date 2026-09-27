@@ -35,7 +35,7 @@ import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
 import { AddLinkDialog } from './item-links.js';
 import { ArchiveItemDialog, ItemEditorDialog } from './item-editor.js';
 import { LinksDialog } from './gitlab.js';
-import { PlanningFilters, SearchDebounce } from './planning-filters.js';
+import { PlanningFilters } from './planning-filters.js';
 import { ProjectsPage, ProjectDialog } from './view-projects.js';
 import {
   SprintsPage,
@@ -398,6 +398,5 @@ export function App({ dialogs = DIALOGS }) {
     <${EditorDialog} dialogs=${dialogs} />
     <${AttachmentTooltip} />
     <${ShortcutsDialog} />
-    <${SearchDebounce} />
   </${Fragment}>`;
 }

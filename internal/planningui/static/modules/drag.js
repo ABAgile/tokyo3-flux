@@ -1,8 +1,10 @@
 // Drag-and-drop of cards, rows and columns as hooks that return event props.
 // The dragged record and its preview image are transient browser state kept in
-// this module; the store holds only whether a drag is on and the marked target.
+// this module; the planning store holds whether a drag is on, and the pointer
+// store the marked target, which changes on every drag-over.
 import { useState } from './vendor-preact.js';
-import { setState, state, useStore } from './state.js';
+import { setState, state } from './state.js';
+import { pointer, setPointer, usePointer } from './pointer-state.js';
 import { writable } from './permissions.js';
 import { quick } from './commands.js';
 import { hideAttachmentTooltip } from './tooltip.js';
@@ -15,7 +17,8 @@ function endDrag() {
   preview?.remove();
   preview = undefined;
   session = undefined;
-  setState({ dragging: false, dropTarget: undefined });
+  setState({ dragging: false });
+  setPointer({ dropTarget: undefined });
 }
 // Combines event props from several hooks; handlers run in argument order.
 export function mergeEventProps(...list) {
@@ -57,7 +60,8 @@ export function useDraggable(type, id, canDrag) {
         revision: state.board.workspace.revision,
         workspace: workspaceSignal(),
       };
-      setState({ dragging: true, dropTarget: undefined });
+      setState({ dragging: true });
+      setPointer({ dropTarget: undefined });
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', id);
       // The drag image is a detached clone of the source, so the native image
@@ -104,7 +108,7 @@ const DROP_CLASSES = { before: 'drop-before', after: 'drop-after', end: 'drop-en
 // the drop on `axis` ('y', 'x', or 'end' for the whole element) and builds the
 // planning command from the dragged id. `enabled()` can refuse at event time.
 export function useDropZone(key, zones) {
-  const mark = useStore((current) =>
+  const mark = usePointer((current) =>
     current.dropTarget?.key === key ? current.dropTarget.mark : '',
   );
   const zoneFor = () =>
@@ -125,12 +129,12 @@ export function useDropZone(key, zones) {
       event.stopPropagation();
       event.dataTransfer.dropEffect = 'move';
       const next = zone.axis === 'end' ? 'end' : after(event, zone) ? 'after' : 'before';
-      if (state.dropTarget?.key !== key || state.dropTarget.mark !== next)
-        setState({ dropTarget: { key, mark: next } });
+      if (pointer.dropTarget?.key !== key || pointer.dropTarget.mark !== next)
+        setPointer({ dropTarget: { key, mark: next } });
     },
     onDragLeave: (event) => {
-      if (!event.currentTarget.contains(event.relatedTarget) && state.dropTarget?.key === key)
-        setState({ dropTarget: undefined });
+      if (!event.currentTarget.contains(event.relatedTarget) && pointer.dropTarget?.key === key)
+        setPointer({ dropTarget: undefined });
     },
     onDrop: (event) => {
       const zone = zoneFor();

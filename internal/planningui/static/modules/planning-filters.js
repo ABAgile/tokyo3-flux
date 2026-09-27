@@ -1,8 +1,8 @@
 // The shared planning filter bar: scope, add-a-filter selects, search, the
 // Board/List toggle, the visible count and the removable filter chips.
 import { html, shallowEqual } from './vdom.js';
-import { Fragment, useEffect, useReducer } from './vendor-preact.js';
-import { setState, state, useStore } from './state.js';
+import { Fragment, useEffect, useLayoutEffect, useReducer, useState } from './vendor-preact.js';
+import { useStore } from './state.js';
 import { memberName } from './people.js';
 import { labelOptionColors } from './items.js';
 import { selectLookups } from './lookups.js';
@@ -10,10 +10,8 @@ import {
   PlanningFilterChips,
   SEARCH_DEBOUNCE_MS,
   addPlanningFilter,
-  flushSearch,
-  normalizedSearch,
+  commitSearch,
   selectFilteredItems,
-  setSearchInput,
   sprintResults,
 } from './filters.js';
 import { setPresentation, setScope } from './actions.js';
@@ -42,7 +40,6 @@ function selectPlanningFilters(current) {
     presentation: current.presentation,
     scope: current.scope,
     filters: current.filters,
-    searchInput: current.searchInput,
     busy: current.busy || current.loading,
     blocked: current.busy || current.loading || current.integrationFormOpen,
     count: planningCount(current),
@@ -61,10 +58,11 @@ export function PlanningFilters() {
     addPlanningFilter(name, event.currentTarget.value);
     rerender();
   };
+  const search = useSearchField();
   const searchKeyDown = (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
-    flushSearch();
+    search.commit();
   };
   return html`<${Fragment}>
     <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
@@ -85,7 +83,7 @@ export function PlanningFilters() {
           <option value="all">All labels</option><option value="none">No labels</option>
           ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(lookups, label.name)}>${label.name}</option>`)}
         </select></label>
-        <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" ref=${searchInputRef} data-focus-key="filter:search" type="search" autocomplete="off" value=${bar.searchInput} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${(event) => setSearchInput(event.currentTarget.value)} onChange=${flushSearch} onKeydown=${searchKeyDown} /></label>
+        <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" ref=${searchInputRef} data-focus-key="filter:search" type="search" autocomplete="off" value=${search.text} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${(event) => search.setText(event.currentTarget.value)} onChange=${search.commit} onKeydown=${searchKeyDown} /></label>
       </div>
       <div class="filter-bar-end">
         <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation" hidden=${!board || view !== 'board'}>
@@ -101,16 +99,19 @@ export function PlanningFilters() {
 function selectSearchInput(current) {
   return current.searchInput;
 }
-// Typing filters once per pause: the committed query follows the input after
-// a short quiet period, wherever the search field is rendered.
-export function SearchDebounce() {
-  const input = useStore(selectSearchInput);
+// The search field's text is component state, so a keystroke renders only the
+// filter bar. It is committed after a short quiet period, and follows the
+// committed text when an action resets it.
+function useSearchField() {
+  const committed = useStore(selectSearchInput);
+  const [text, setText] = useState(committed);
+  useLayoutEffect(() => {
+    setText((current) => (current === committed ? current : committed));
+  }, [committed]);
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const query = normalizedSearch(input);
-      if (query !== state.searchQuery) setState({ searchQuery: query });
-    }, SEARCH_DEBOUNCE_MS);
+    if (text === committed) return undefined;
+    const timer = setTimeout(() => commitSearch(text), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [input]);
-  return null;
+  }, [text, committed]);
+  return { text, setText, commit: () => commitSearch(text) };
 }

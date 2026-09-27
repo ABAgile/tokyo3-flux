@@ -359,7 +359,6 @@ declare namespace Flux {
     detailError: string;
     sharedItemID: string;
     editorItemID: string;
-    attachmentTooltip: AttachmentTooltip | undefined;
     attachmentLists: Record<string, Attachment[] | undefined>;
     history: HistoryEvent[];
     historyBefore: number;
@@ -386,12 +385,16 @@ declare namespace Flux {
     noticeText: string;
     errorText: string;
     dragging: boolean;
-    dropTarget: { key: string; mark: 'before' | 'after' | 'end' } | undefined;
     uploadBusy: boolean;
     editorDialog: DialogRecord | undefined;
     editorError: string;
     shortcutsOpen: boolean;
     focusRequest: FocusRequest | undefined;
+  }
+  // Event-rate pointer state, in its own store (modules/pointer-state.js).
+  interface PointerState {
+    dropTarget: { key: string; mark: 'before' | 'after' | 'end' } | undefined;
+    attachmentTooltip: AttachmentTooltip | undefined;
   }
   // A store update: a partial state, or a function of the current state that
   // returns one (or nothing, for no change).

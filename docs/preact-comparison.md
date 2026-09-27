@@ -100,6 +100,24 @@ Each cell is the median over three fresh runs of the per-run medians, in millise
 The lookups keep memoized cards skipping exactly as the hand-kept dependency list did: unchanged refreshes and title edits cost the same and insert no elements.
 The initial-render difference at 1000 cards is within the run-to-run spread.
 Every interaction stays at or below 0.3 ms at 1000 cards although each one notifies every store subscriber, so subscriber fan-out is not a bottleneck at this size.
+
+### Store fan-out
+
+A search keystroke, a drag-over mark and a tooltip hover each notified every subscriber of the planning store, which on a 1000-card board means thousands of listeners.
+The search field now keeps its text as component state and commits only the debounced text and query, and drop marks and the attachment tooltip live in a separate pointer store that only drop zones and tooltip triggers subscribe to.
+Browser timers resolve about 0.1 ms, so this table divides each case's total over all samples by the sample count: the mean per event in milliseconds, median of three fresh runs on one remote browser host.
+
+| Revision | Cards | Search key | Drag-over | Tooltip | Attachment list |
+|---|---:|---:|---:|---:|---:|
+| `e90ffa5` | 100 | 0.16 | 0.11 | 0.15 | 0.34 |
+| Pointer store | 100 | 0.13 | 0.08 | 0.14 | 0.39 |
+| `e90ffa5` | 500 | 0.20 | 0.14 | 0.25 | 0.69 |
+| Pointer store | 500 | 0.10 | 0.10 | 0.11 | 0.71 |
+| `e90ffa5` | 1000 | 0.31 | 0.20 | 0.19 | 1.10 |
+| Pointer store | 1000 | 0.14 | 0.13 | 0.14 | 1.11 |
+
+At 1000 cards a keystroke costs about half as much and a drag-over mark about a third less; an attachment list arriving still notifies the planning store and is unchanged.
+The absolute savings are a fraction of a millisecond per event, so this removes fan-out growth with board size rather than a user-visible delay at current sizes.
 Normal application builds require no npm installation.
 
 ## Decision considerations
