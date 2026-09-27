@@ -1,7 +1,6 @@
 // The Members page and member dialogs.
 import { $ } from './dom.js';
 import {
-  renderPage,
   fieldTemplate,
   sectionHeadTemplate,
   helpTextTemplate,
@@ -233,9 +232,4 @@ export function MembersPage() {
         : 'Review workspace members and roles. Only workspace admins can add members, remove members, change roles, or maintain display names.',
     )}
     ${members.length ? maintenanceListTemplate('', rows) : emptyStateTemplate('No workspace members yet.')}`;
-}
-export function renderMembers(content) {
-  const members = state.board.members;
-  $('count').textContent = `${members.length} member${members.length === 1 ? '' : 's'}`;
-  renderPage(content, 'members', html`<${MembersPage} />`);
 }

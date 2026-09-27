@@ -187,6 +187,7 @@ async function run(page) {
 
     const previousGate = state.workspaceGate;
     const previousBoard = state.board;
+    const previousView = state.view;
     renderIsland(host, html`<${App} refresh=${() => {}} />`);
     const legacyBody = host.querySelector('#planning-body');
     check(
@@ -209,19 +210,42 @@ async function run(page) {
     host.querySelector('[name="probe"]').value = 'draft';
     setState({ board: previousBoard, workspaceGate: 'select' });
     await flush();
+    const gateRoot = host.querySelector('#page-root');
     check(
       host.querySelector('#title')?.textContent === 'Choose a workspace' &&
-        host.querySelector('#page-root')?.parentElement === host.querySelector('#content') &&
+        gateRoot?.parentElement === host.querySelector('#content') &&
+        gateRoot.children.length === 1 &&
+        gateRoot.firstElementChild?.dataset.contentView === 'workspace-select' &&
         host.querySelector('#planning-body')?.parentElement ===
           host.querySelector('#planning-frame') &&
         host.querySelector('nav')?.hidden &&
-        !host.querySelector('#page-root')?.hidden &&
+        !gateRoot.hidden &&
         host.querySelector('#planning-frame')?.hidden &&
         host.querySelector('#planning-body') === legacyBody &&
         host.querySelector('#dialog-field-root')?.textContent === 'Reactive dialog content' &&
         host.querySelector('[name="probe"]')?.value === 'draft' &&
         host.querySelector('#editor-title')?.textContent === 'Dialog snapshot',
-      'app shell updates without replacing page or dialog content mounts',
+      'App owns workspace page content without replacing mounts or editor snapshots',
+    );
+    const pageBoard = {
+      role: 'admin',
+      workspace: { id: 'test', revision: 1 },
+      labels: [],
+      items: [],
+      projects: [],
+      members: [],
+      sprints: [],
+      columns: [],
+      links: [],
+    };
+    setState({ board: pageBoard, workspaceGate: '', view: 'labels' });
+    await flush();
+    check(
+      gateRoot.children.length === 1 &&
+        gateRoot.firstElementChild?.classList.contains('page-stack') &&
+        gateRoot.firstElementChild?.dataset.contentView === 'labels' &&
+        gateRoot.textContent.includes('No labels yet.'),
+      'App renders page components directly inside its content mount',
     );
     const dialogNode = host.querySelector('#editor');
     setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
@@ -285,7 +309,7 @@ async function run(page) {
     );
     setState({ undoOffer: undefined, undoText: '' });
     unmountIsland(host);
-    setState({ board: previousBoard, workspaceGate: previousGate });
+    setState({ board: previousBoard, workspaceGate: previousGate, view: previousView });
 
     let refreshes = 0;
     renderIsland(host, html`<${StatusBars} refresh=${() => refreshes++} />`);

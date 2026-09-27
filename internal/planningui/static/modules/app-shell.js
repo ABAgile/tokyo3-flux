@@ -1,10 +1,17 @@
 // Preact owns the application shell; named content hosts keep existing view
 // lifetimes stable while their controllers move into components.
-import { Fragment, html } from './preact.js';
+import { Fragment, html, nothing } from './preact.js';
 import { useStore } from './state.js';
 import { workspaceLabel } from './format.js';
 import { StatusBars } from './notices.js';
 import { EditorDialog } from './dialog.js';
+import { emptyStateTemplate } from './layout.js';
+import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
+import { ProjectsPage } from './view-projects.js';
+import { SprintsPage } from './view-sprints.js';
+import { MembersPage } from './view-members.js';
+import { LabelsPage } from './view-labels.js';
+import { HistoryPage } from './view-history.js';
 
 const VIEWS = [
   ['board', '▦', 'Kanban board'],
@@ -46,6 +53,7 @@ function selectShell(state) {
     editorDialog: state.editorDialog,
     editorSaveText: state.editorSaveText,
     editorError: state.editorError,
+    contentBusy: state.contentBusy,
   };
 }
 function sameShell(left, right) {
@@ -72,10 +80,44 @@ function shellSubtitle({ board, view, workspaceGate }) {
   return SUBTITLES[view] || 'Plan intentionally. Keep work moving.';
 }
 
-// The page frame and dialogs are part of the App tree. Their named content
-// hosts contain smaller Preact roots owned by the existing view controllers.
+function PageContent({
+  board,
+  view,
+  workspaceGate,
+  workspaces,
+  session,
+  onWorkspaceChoose,
+  onWorkspaceCreate,
+  onWorkspaceSubmit,
+  onWorkspaceBack,
+}) {
+  if (!board) {
+    if (workspaceGate === 'select')
+      return html`<section class="panel workspace-gate" data-content-view="workspace-select" aria-label="Choose a workspace">
+        <${WorkspaceSelection} workspaces=${workspaces} choose=${onWorkspaceChoose} create=${onWorkspaceCreate} />
+      </section>`;
+    if (workspaceGate === 'create')
+      return html`<section class="panel workspace-gate" data-content-view="workspace-create" aria-label="Create a workspace">
+        <${WorkspaceCreation} name=${session?.name} hasWorkspaces=${workspaces.length > 0} submit=${onWorkspaceSubmit} back=${onWorkspaceBack} />
+      </section>`;
+    return html`<div data-content-view="workspace-loading">${emptyStateTemplate('Loading workspace access…')}</div>`;
+  }
+  const pages = {
+    projects: ProjectsPage,
+    sprints: SprintsPage,
+    members: MembersPage,
+    labels: LabelsPage,
+    history: HistoryPage,
+  };
+  const Page = pages[view];
+  return Page ? html`<div class="page-stack" data-content-view=${view}><${Page} /></div>` : nothing;
+}
+
+// The App owns both content mounts; view components render directly into them.
 function PlanningArea({
   showPageRoot,
+  pageContent,
+  contentBusy,
   onPresentation,
   onScopeChange,
   onFilterChange,
@@ -107,9 +149,11 @@ function PlanningArea({
             </div>
             <div id="filter-chips" class="filter-chips" hidden role="group" aria-label="Active filters"></div>
           </div>
-          <div id="planning-body" aria-busy="true"></div>
+          <div id="planning-body" aria-busy=${showPageRoot ? undefined : String(contentBusy)}></div>
         </div>
-        <div id="page-root" hidden=${!showPageRoot}></div>
+        <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>
+          ${showPageRoot ? pageContent : nothing}
+        </div>
       </section>
     </>`;
 }
@@ -147,6 +191,7 @@ export function App({
   onUndo,
   onThemeToggle,
   onWorkspaceCreate,
+  onWorkspaceChoose,
   onWorkspaceChange,
   onView,
   onProposals,
@@ -159,6 +204,8 @@ export function App({
   onSearchChange,
   onSearchKeyDown,
   onShortcutClose,
+  onWorkspaceSubmit,
+  onWorkspaceBack,
 }) {
   const shell = useStore(selectShell, sameShell);
   const {
@@ -223,6 +270,18 @@ export function App({
         showPageRoot=${
           !board || ['projects', 'sprints', 'members', 'labels', 'history'].includes(view)
         }
+        contentBusy=${shell.contentBusy}
+        pageContent=${html`<${PageContent}
+          board=${board}
+          view=${view}
+          workspaceGate=${workspaceGate}
+          workspaces=${workspaces}
+          session=${session}
+          onWorkspaceChoose=${onWorkspaceChoose}
+          onWorkspaceCreate=${onWorkspaceCreate}
+          onWorkspaceSubmit=${onWorkspaceSubmit}
+          onWorkspaceBack=${onWorkspaceBack}
+        />`}
         onPresentation=${onPresentation}
         onScopeChange=${onScopeChange}
         onFilterChange=${onFilterChange}

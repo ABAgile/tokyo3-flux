@@ -1,7 +1,6 @@
 // The Labels page and label dialogs.
 import { $ } from './dom.js';
 import {
-  renderPage,
   fieldTemplate,
   sectionHeadTemplate,
   helpTextTemplate,
@@ -95,11 +94,4 @@ export function LabelsPage() {
           )
         : emptyStateTemplate('No labels yet. Create reusable labels for this workspace.')
     }`;
-}
-export function renderLabels(content) {
-  const labels = state.board.labels;
-  $('count').textContent = labels.length
-    ? `${labels.length} label${labels.length === 1 ? '' : 's'}`
-    : '';
-  renderPage(content, 'labels', html`<${LabelsPage} />`);
 }

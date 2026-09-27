@@ -40,11 +40,6 @@ function renderRoot(host, className, contentView, template, tag = 'div') {
   if (root !== current) replaceContent(host, root);
   return root;
 }
-// The default page body: one single-column stack of sections with one gap, so
-// Projects, Sprints, Members, Labels and History space their sections alike.
-function renderPage(host, contentView, template) {
-  return renderRoot(host, 'page-stack', contentView, template);
-}
 // A bordered surface. Variants add their own padding and inner layout.
 function panelTemplate(className, content, tag = 'section') {
   const classes = className ? `panel ${className}` : 'panel';
@@ -281,7 +276,6 @@ function maintenanceRowTemplate({ tag = 'div', className = '', content = [], act
 export {
   contentRoot,
   renderRoot,
-  renderPage,
   panelTemplate,
   sectionHeadTemplate,
   panelHeadTemplate,

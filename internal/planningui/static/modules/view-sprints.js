@@ -3,7 +3,6 @@ import { $, uid } from './dom.js';
 import { api } from './api.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import {
-  renderPage,
   fieldTemplate,
   sectionHeadTemplate,
   panelHeadTemplate,
@@ -266,6 +265,7 @@ function sameSprintPage(left, right) {
 }
 export function SprintsPage() {
   useStore(selectSprintPage, sameSprintPage);
+  useLayoutEffect(() => placeFilters($('sprint-filter-slot')), []);
   return html`${sprintVelocityTemplate()}
       <section class="sprint-planning">
         ${sectionHeadTemplate(
@@ -279,10 +279,6 @@ export function SprintsPage() {
         <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate()}</div>
       </section>
       ${sprintHistoryTemplate()}`;
-}
-export function renderSprintPage(content) {
-  renderPage(content, 'sprint-page', html`<${SprintsPage} />`);
-  placeFilters($('sprint-filter-slot'));
 }
 // #sprint-summary collapses with :empty, so this template has no whitespace
 // between its parts.

@@ -1,10 +1,9 @@
 // The History page.
 import { api } from './api.js';
 import { workspaceHistoryLabel } from './format.js';
-import { renderPage, emptyStateTemplate } from './layout.js';
+import { emptyStateTemplate } from './layout.js';
 import { html, nothing, keyedList } from './preact.js';
 import { state, useStore } from './state.js';
-import { hooks } from './hooks.js';
 import { notice } from './notices.js';
 import { memberListingInfo } from './people.js';
 
@@ -30,7 +29,6 @@ function historyActorLabel(subject) {
 async function loadOlderHistory() {
   try {
     await loadHistory();
-    hooks.renderContent();
   } catch (e) {
     notice(e.message, true);
   }
@@ -82,7 +80,4 @@ export function HistoryPage() {
         ? html`<button type="button" onClick=${loadOlderHistory}>Load older changes</button>`
         : nothing
     }`;
-}
-export function renderHistory(content) {
-  renderPage(content, 'history', html`<${HistoryPage} />`);
 }

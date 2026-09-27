@@ -1,6 +1,6 @@
 import { $ } from './modules/dom.js';
 import { api } from './modules/api.js';
-import { emptyState, renderOptions } from './modules/layout.js';
+import { renderOptions } from './modules/layout.js';
 import { html, nodeOf, nothing, render as renderTemplate } from './modules/preact.js';
 import { state } from './modules/state.js';
 import { hooks } from './modules/hooks.js';
@@ -11,7 +11,7 @@ import { activeSprints, labelOptionColors } from './modules/items.js';
 import { renderControls } from './modules/controls.js';
 import { memberName } from './modules/people.js';
 import { refreshDueDateBadges, scheduleOverdueRefresh } from './modules/due-dates.js';
-import { planningHost, pageHost, setContentBusy } from './modules/mount.js';
+import { planningHost, setContentBusy } from './modules/mount.js';
 import {
   FILTER_NAMES,
   filterValues,
@@ -49,24 +49,20 @@ import { renderProjectSummary, renderBoardContent, setupBoard } from './modules/
 import { renderCardListContent, loadArchive } from './modules/view-archive.js';
 import { renderListPresentationContent } from './modules/view-list.js';
 import {
-  renderSprintPage,
   renderSprintSummary,
   resetSprintHistory,
   loadSprintHistory,
 } from './modules/view-sprints.js';
-import { renderProjects } from './modules/view-projects.js';
-import { renderLabels } from './modules/view-labels.js';
-import { renderMembers } from './modules/view-members.js';
 import { showProposals } from './modules/view-proposals.js';
-import { loadHistory, renderHistory } from './modules/view-history.js';
+import { loadHistory } from './modules/view-history.js';
 import { initShortcuts } from './modules/shortcuts.js';
 import {
   loadWorkspaces,
-  renderWorkspaceSelection,
-  renderWorkspaceCreation,
   renderFirstRunChecklist,
   showFirstRun,
   showWorkspaceCreate,
+  showWorkspaceSelection,
+  createWorkspace,
   chooseWorkspace,
 } from './modules/view-gate.js';
 import { refresh, startPolling } from './modules/sync.js';
@@ -97,27 +93,33 @@ async function runUndo() {
   }
   await runSequence('Undo', commands);
 }
-renderTemplate(
-  html`<${App}
-    refresh=${refresh}
-    onUndo=${runUndo}
-    onThemeToggle=${toggleTheme}
-    onWorkspaceCreate=${showWorkspaceCreate}
-    onWorkspaceChange=${handleWorkspaceChange}
-    onView=${navigateView}
-    onProposals=${() => showProposals()}
-    onSetupBoard=${setupBoard}
-    onNewItem=${() => editItem()}
-    onPresentation=${setPresentation}
-    onScopeChange=${changeScope}
-    onFilterChange=${changeFilter}
-    onSearchInput=${queueSearch}
-    onSearchChange=${handleSearchChange}
-    onSearchKeyDown=${handleSearchKeyDown}
-    onShortcutClose=${closeShortcuts}
-  />`,
-  document.body,
-);
+function renderApp() {
+  renderTemplate(
+    html`<${App}
+      refresh=${refresh}
+      onUndo=${runUndo}
+      onThemeToggle=${toggleTheme}
+      onWorkspaceCreate=${showWorkspaceCreate}
+      onWorkspaceChoose=${chooseWorkspace}
+      onWorkspaceSubmit=${createWorkspace}
+      onWorkspaceBack=${showWorkspaceSelection}
+      onWorkspaceChange=${handleWorkspaceChange}
+      onView=${navigateView}
+      onProposals=${() => showProposals()}
+      onSetupBoard=${setupBoard}
+      onNewItem=${() => editItem()}
+      onPresentation=${setPresentation}
+      onScopeChange=${changeScope}
+      onFilterChange=${changeFilter}
+      onSearchInput=${queueSearch}
+      onSearchChange=${handleSearchChange}
+      onSearchKeyDown=${handleSearchKeyDown}
+      onShortcutClose=${closeShortcuts}
+    />`,
+    document.body,
+  );
+}
+renderApp();
 const theme =
   localStorage.getItem('flux-plan-theme') ||
   (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -156,13 +158,8 @@ function render() {
     clearPlanningChangeNotice();
     $('filter-chips').hidden = true;
     renderTemplate(nothing, $('filter-chips'));
-    if (state.workspaceGate === 'select') {
-      renderWorkspaceSelection(pageHost('workspace-select'));
-    } else if (state.workspaceGate === 'create') {
-      renderWorkspaceCreation(pageHost('workspace-create'));
-    } else {
-      pageHost().append(emptyState('Loading workspace access…'));
-    }
+    placeFilters();
+    renderApp();
     return;
   }
   // The selects choose one value at a time and reset; the chip row below the
@@ -233,24 +230,12 @@ function render() {
   renderFilterChips();
   renderContent();
 }
-// Views that own their layout share one lifecycle: mount `#page-root`, keep the
-// view's Preact root (named by its data-content-view), then render into the host.
-const PAGE_VIEWS = Object.freeze({
-  projects: { build: renderProjects, root: 'projects' },
-  sprints: { build: renderSprintPage, root: 'sprint-page' },
-  members: { build: renderMembers, root: 'members' },
-  labels: { build: renderLabels, root: 'labels' },
-  history: { build: renderHistory, root: 'history' },
-});
-function renderPageRoot(name) {
-  if (!Object.hasOwn(PAGE_VIEWS, name)) return false;
-  const page = PAGE_VIEWS[name];
-  page.build(pageHost(page.root));
-  return true;
-}
 function renderContent() {
   if (!state.board) return;
-  if (renderPageRoot(state.view)) return;
+  if (['projects', 'sprints', 'members', 'labels', 'history'].includes(state.view)) {
+    renderApp();
+    return;
+  }
   const body = planningHost();
   const items = filteredItems();
   $('count').textContent =
@@ -259,6 +244,7 @@ function renderContent() {
       : `${items.length} items · workspace revision ${state.board.workspace.revision}`;
   if (showFirstRun()) {
     renderFirstRunChecklist(body);
+    renderApp();
     return;
   }
   if (state.view === 'board' && state.presentation === 'list')
@@ -285,6 +271,7 @@ function renderContent() {
       >Load older archived work</button>`),
     );
   }
+  renderApp();
 }
 initObservationTooltips();
 initAttachmentTooltips();

@@ -1,7 +1,7 @@
 // The workspace gate, workspace list and creation, and the first-run checklist.
 import { $ } from './dom.js';
 import { html } from './preact.js';
-import { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } from './gate-components.js';
+import { FirstRunChecklist } from './gate-components.js';
 import { api, requestKey } from './api.js';
 import { renderRoot, setStatusText } from './layout.js';
 import { state } from './state.js';
@@ -92,28 +92,6 @@ export async function refreshWorkspaceGate() {
     }
   }
 }
-export function renderWorkspaceSelection(content) {
-  const gate = renderRoot(
-    content,
-    'panel workspace-gate',
-    'workspace-select',
-    html`<${WorkspaceSelection} workspaces=${state.workspaces} choose=${chooseWorkspace} create=${showWorkspaceCreate} />`,
-    'section',
-  );
-  gate.setAttribute('aria-label', 'Choose a workspace');
-}
-export function renderWorkspaceCreation(content) {
-  if (content.firstElementChild?.dataset.contentView === 'workspace-create') return;
-  const gate = renderRoot(
-    content,
-    'panel workspace-gate',
-    'workspace-create',
-    html`<${WorkspaceCreation} name=${state.session?.name} hasWorkspaces=${state.workspaces.length > 0} submit=${createWorkspace} back=${showWorkspaceSelection} />`,
-    'section',
-  );
-  gate.setAttribute('aria-label', 'Create a workspace');
-  gate.querySelector('input').focus();
-}
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
 export function renderFirstRunChecklist(body) {
@@ -158,7 +136,7 @@ export function showFirstRun() {
     !state.searchQuery
   );
 }
-function showWorkspaceSelection() {
+export function showWorkspaceSelection() {
   if (state.busy || state.loading) return;
   state.workspaceGate = 'select';
   hooks.render();
@@ -175,7 +153,7 @@ export function showWorkspaceCreate() {
   state.workspaceGate = 'create';
   hooks.render();
 }
-async function createWorkspace(event) {
+export async function createWorkspace(event) {
   event.preventDefault();
   if (state.workspaceCreating || state.busy || state.loading) return;
   const form = event.currentTarget;

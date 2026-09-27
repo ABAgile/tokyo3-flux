@@ -1,7 +1,6 @@
 // The Projects page and project dialogs.
 import { $ } from './dom.js';
 import {
-  renderPage,
   panelTemplate,
   sectionHeadTemplate,
   fieldTemplate,
@@ -16,7 +15,7 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { html, withKey, nothing, keyedList, useMemo, useRef } from './preact.js';
+import { html, withKey, nothing, keyedList, useEffect, useMemo, useRef } from './preact.js';
 import { state, useStore } from './state.js';
 import { hooks } from './hooks.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -248,19 +247,23 @@ function sameProjectsPage(left, right) {
   return PROJECT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
 }
 export function ProjectsPage() {
-  useStore(selectProjectsPage, sameProjectsPage);
-  const approvedIDs = state.board.integration?.projects || [];
+  const selected = useStore(selectProjectsPage, sameProjectsPage);
+  const board = selected.board;
+  const approvedIDs = board.integration?.projects || [];
+  useEffect(() => {
+    if (
+      !selected.integrationFormOpen &&
+      board.connector_instance &&
+      approvedIDs.length &&
+      !selected.integrationCatalogLoaded &&
+      !selected.integrationCatalogLoading
+    )
+      void loadIntegrationCatalog();
+  }, [
+    board,
+    selected.integrationFormOpen,
+    selected.integrationCatalogLoaded,
+    selected.integrationCatalogLoading,
+  ]);
   return html`${integrationTemplate(approvedIDs)}${projectsTemplate()}`;
-}
-export function renderProjects(content) {
-  const approvedIDs = state.board.integration?.projects || [];
-  if (
-    !state.integrationFormOpen &&
-    state.board.connector_instance &&
-    approvedIDs.length &&
-    !state.integrationCatalogLoaded &&
-    !state.integrationCatalogLoading
-  )
-    void loadIntegrationCatalog();
-  renderPage(content, 'projects', html`<${ProjectsPage} />`);
 }
