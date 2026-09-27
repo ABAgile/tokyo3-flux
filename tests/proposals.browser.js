@@ -56,6 +56,8 @@ async function run(page) {
     await openList();
     await page.getByRole('button', { name: 'Review ' + title, exact: true }).click();
     await page.getByRole('heading', { name: 'Review planning proposal', exact: true }).waitFor();
+    // The dialog opens at once and reads its preview; the document title marks it loaded.
+    await page.locator('dialog#editor .proposal-text').first().waitFor();
   };
   await importDoc(doc);
   b = await board();

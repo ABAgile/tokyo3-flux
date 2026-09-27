@@ -8,16 +8,15 @@ import {
 } from './layout.js';
 import { html } from './vdom.js';
 import { useState } from './vendor-preact.js';
-import { state } from './state.js';
 import { writable, accessButtonTemplate } from './permissions.js';
-import { notice } from './notices.js';
 import { refresh } from './sync.js';
 import { openDialog } from './dialog-state.js';
 import { CommandDialog, FormDialog } from './dialog.js';
 import { useRequest } from './ui-hooks.js';
 
-// The proposal list pages from its own request; opening a proposal reads its
-// preview first, so the review dialog is a snapshot of that exact diff.
+// The proposal list pages from its own request. The review dialog reads its
+// proposal's preview itself, so it shows exactly the diff the server returned
+// and a closed or replaced dialog cancels the read.
 export function ProposalsDialog({ root }) {
   const [before, setBefore] = useState(0);
   const page = useRequest(
@@ -46,7 +45,7 @@ export function ProposalsDialog({ root }) {
         <p class="muted">
           ${`${row.state} · Imported by ${row.imported_by} · workspace revision ${row.revision}`}
         </p>
-        <button type="button" onClick=${() => reviewProposal(row.id)}>${`Review ${row.title}`}</button>
+        <button type="button" onClick=${() => reviewProposal(root, row.id)}>${`Review ${row.title}`}</button>
       </article>`,
     )}
     ${
@@ -92,19 +91,30 @@ export function ProposalImportDialog({ document, id }) {
     ${fieldTemplate('reason', 'Import rationale', '', 'textarea', undefined, { required: true })}
   </${CommandDialog}>`;
 }
-async function reviewProposal(id) {
-  const currentRoot = state.root;
-  try {
-    const preview = await api(`${currentRoot}/proposals/${encodeURIComponent(id)}`);
-    if (state.root !== currentRoot || state.busy) return;
-    const v = preview.proposal;
-    const canAccept = v.state === 'draft' && !!preview.digest && !preview.problem && writable();
-    openDialog('proposal.review', { preview, canAccept });
-  } catch (e) {
-    notice(e.message, true);
-  }
+function reviewProposal(root, id) {
+  openDialog('proposal.review', { root, id });
 }
-export function ProposalReviewDialog({ preview, canAccept }) {
+// Whether the diff can be accepted is decided once, when the preview arrives,
+// so the approval fields stay put while the acceptance itself is saving.
+async function loadProposalReview(root, id, signal) {
+  const preview = await api(`${root}/proposals/${encodeURIComponent(id)}`, { signal });
+  const v = preview.proposal;
+  return {
+    preview,
+    canAccept: v.state === 'draft' && !!preview.digest && !preview.problem && writable(),
+  };
+}
+export function ProposalReviewDialog({ root, id }) {
+  const result = useRequest((signal) => loadProposalReview(root, id, signal), [root, id]);
+  if (!result.data)
+    return html`<${FormDialog} title="Review planning proposal" readOnly=${true}>
+      ${
+        result.error
+          ? errorLineTemplate(result.error.message)
+          : emptyStateTemplate('Loading proposal…')
+      }
+    </${FormDialog}>`;
+  const { preview, canAccept } = result.data;
   const v = preview.proposal;
   return html`<${CommandDialog}
     title="Review planning proposal"
