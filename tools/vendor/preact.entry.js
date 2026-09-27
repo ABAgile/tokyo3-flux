@@ -8,5 +8,6 @@ export {
   useState,
   useReducer,
   useMemo,
+  useErrorBoundary,
 } from 'preact/hooks';
 export { default as htm } from 'htm';
