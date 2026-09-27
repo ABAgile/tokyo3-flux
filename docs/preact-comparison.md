@@ -7,21 +7,21 @@ It reuses the view/template boundaries developed on `lit-html` (`0a968f7`) rathe
 The old DOM reconciler, card signatures and per-section patch routines are removed.
 No Go, CSS, API, authentication or CSP behavior is intentionally changed.
 
-A body-level Preact `App` owns the sidebar, navigation, heading, status and undo bars, page frame and native dialog markup.
-The shared editor dialog renders from an opener configuration and keeps its uncontrolled form snapshot intact across unrelated store updates, including background refreshes.
-Shared planning state and revision-checked commands remain in plain ES modules.
-Rendering factories return VNodes; Preact owns the body root and all dynamic UI subtrees.
-`app.js` calls Preact's `render` directly, while `modules/vdom.js` binds HTM to Preact's `h` and provides keyed-list helpers.
-No second reconciler or rendered-once island API remains.
+A body-level Preact `App` renders once and owns the sidebar, navigation, heading, status and undo bars, page frame and native dialogs.
+Every later change is a store update: components subscribe to the values they render, and named actions in `modules/actions.js` make one `setState` patch each.
+The store holds replaced, never mutated, data only; DOM nodes, timers and request bookkeeping live in component refs, effects or module variables.
+Dialogs are `{ type, props }` records looked up in the App's dialog map, so a dialog is a component with its own submit handler and a snapshot of its opening props.
+`app.js` calls Preact's `render` once, while `modules/vdom.js` binds HTM to Preact's `h` and provides a shallow-props `memo`.
+No second reconciler, manual re-render path or rendered-once island API remains.
 
-Stateful widgets are Preact function components that own interaction state with hooks and acquire outside listeners, subscriptions and observers in effects with cleanup.
-Converted widgets no longer need separate controller-owned roots; component identity, state and lifetime are visible to the renderer.
+Stateful widgets are Preact function components that own interaction state with hooks and reducers, and acquire outside listeners, requests, subscriptions and observers in effects with cleanup.
+Widgets take props instead of exposing imperative handles; component-owned reads use `useRequest` and writes `useMutation`, both aborted on unmount.
 Native form drafts remain uncontrolled unless the application owns their changing value, so unrelated renders do not reset user input.
-Session state and revision-checked command flows remain plain ES modules; they are shared domain behavior rather than renderer-specific component state.
+Revision-checked command flows remain plain ES modules; they are shared domain behavior rather than renderer-specific component state.
 
-Remaining direct DOM work is limited to browser interactions such as native dialog open/close, file input resets, drag/drop feedback, geometry-based tooltip positioning, and focus/scroll/disclosure restoration; stable editor permission snapshots still use targeted control synchronization.
+Remaining direct DOM work is limited to browser interactions: native dialog `showModal`/`close` in one `Modal` effect, file input activation, the detached drag preview image, geometry-based tooltip positioning and one focus-restore effect for keyed controls that are recreated.
 These operations must not become a second renderer for component-owned children.
-A keyed card moving between columns changes its Preact parent and remounts; its logical focus and open attachment disclosure are explicitly restored.
+A keyed card moving between columns changes its Preact parent and remounts; its logical focus is restored and its attachment disclosure is board state.
 Within one parent, keyed nodes retain identity.
 
 ## Validation
@@ -62,9 +62,18 @@ These are synthetic board results, not a general browser benchmark or an end-to-
 Both library renderers inserted zero elements on unchanged refreshes and title-only updates.
 The original renderer inserted six elements on a title update.
 Cold-render ordering varies between runs; treat small differences as noise rather than a framework guarantee.
-The checked-in Preact/HTM runtime is 14,514 bytes, approximately 6.1 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
-The board measurements above predate the hook-component migration and are a historical hybrid-renderer baseline, not a benchmark of the current component implementation.
-Re-run both renderer probes on the same browser host before drawing performance conclusions from the migrated implementation.
+The checked-in Preact/HTM runtime, including `Component`, context and `options`, is 15,306 bytes, approximately 6.4 KB gzip; this lit bundle is 11,903 bytes, approximately 4.8 KB gzip.
+The board measurements above predate the hook-component migration and are a historical hybrid-renderer baseline.
+
+After moving to a single store-driven update path with memoized cards (2026-09-27, same probe, one remote browser host), updates are measured as a board replacement in the store; unchanged entities keep their identity across refreshes:
+
+| Cards | Initial render | Unchanged refresh | One title change |
+|---:|---:|---:|---:|
+| 100 | 10.9 | 0.3 | 0.3 |
+| 500 | 53.0 | 0.7 | 0.8 |
+| 1000 | 112.4 | 1.0 | 1.2 |
+
+Initial renders insert the same element counts as before; compare runs on the same browser host only.
 Normal application builds require no npm installation.
 
 ## Decision considerations

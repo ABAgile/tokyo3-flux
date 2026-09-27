@@ -1,8 +1,7 @@
 // Planning filters, work search and the filter chips.
 import { labelForeground } from './format.js';
 import { html } from './vdom.js';
-import { setState, state } from './state.js';
-import { hooks } from './hooks.js';
+import { setState, state, useStore } from './state.js';
 import {
   activeSprints,
   projectName,
@@ -12,64 +11,60 @@ import {
   scopeItems,
 } from './items.js';
 import { memberName } from './people.js';
-import { setContentBusy } from './mount.js';
 
 // The Projects bar uses the same multi-value filter rules as the planning bar.
 export const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
-export const projectFilters = { assignee: new Set(), label: new Set() };
-// Planning filters hold a set of accepted values each. An empty set means "all",
-// and the exclusive `none` value means "records with no association at all".
-// The toolbar selects add one value at a time; chips below the toolbar are the
-// authoritative, removable view of what is active.
+// Planning filters hold the accepted values of each name in the store. An empty
+// list means "all", and the exclusive `none` value means "records with no
+// association at all". The toolbar selects add one value at a time; chips below
+// the toolbar are the authoritative, removable view of what is active.
 export const FILTER_NAMES = Object.freeze(['project', 'assignee', 'label']);
-const filters = { project: new Set(), assignee: new Set(), label: new Set() };
-// Search is debounced so a long board is filtered once per pause rather than
-// once per keystroke, and each item's searchable text is memoized per revision.
-const SEARCH_DEBOUNCE_MS = 150;
+export const SEARCH_DEBOUNCE_MS = 150;
+// Each item's searchable text is memoized per board generation and revision.
 const searchIndex = new WeakMap();
-// Filter state. An empty set accepts everything; `none` is exclusive and means
-// "no association", so it can never be combined with concrete values. Every
-// filter group — the planning bar and the Projects bar — shares these rules.
-export function filterValues(name, group = filters) {
-  return [...group[name]];
+
+// Pure filter-value rules shared by every filter group. `none` is exclusive and
+// can never be combined with concrete values.
+export function withFilterValue(values, value) {
+  if (!value || value === 'all') return [];
+  if (value === 'none') return ['none'];
+  const next = values.filter((current) => current !== 'none' && current !== String(value));
+  return [...next, String(value)];
 }
-export function addFilterValue(name, value, group = filters) {
-  const set = group[name];
-  if (!value || value === 'all') {
-    set.clear();
-    return;
-  }
-  if (value === 'none') {
-    set.clear();
-    set.add('none');
-    return;
-  }
-  set.delete('none');
-  set.add(String(value));
+function withoutFilterValue(values, value) {
+  return values.filter((current) => current !== String(value));
 }
-function removeFilterValue(name, value, group = filters) {
-  group[name].delete(String(value));
+export function matchesFilter(values, candidates) {
+  if (!values.length) return true;
+  if (values.includes('none')) return candidates.length === 0;
+  return candidates.some((value) => values.includes(value));
 }
-export function setFilterValues(name, values, group = filters) {
-  group[name] = new Set();
-  values.forEach((value) => addFilterValue(name, value, group));
+function emptyFilterGroup(group) {
+  return Object.fromEntries(Object.keys(group).map((name) => [name, []]));
 }
-export function clearFilterGroup(group) {
-  Object.keys(group).forEach((name) => group[name].clear());
+
+export function addPlanningFilter(name, value) {
+  setState((current) => ({
+    filters: { ...current.filters, [name]: withFilterValue(current.filters[name], value) },
+  }));
 }
-export function clearFilters() {
-  clearFilterGroup(filters);
-}
-export function matchesFilter(name, values, group = filters) {
-  const set = group[name];
-  if (!set.size) return true;
-  if (set.has('none')) return values.length === 0;
-  return values.some((value) => set.has(value));
+// Unknown values are dropped whenever a board is loaded, so a renamed or
+// removed project, member or label never leaves a filter nothing can match.
+export function knownFilters(filters, board) {
+  const next = Object.fromEntries(
+    Object.entries(filters).map(([name, values]) => [
+      name,
+      values.filter((value) => knownFilterValue(name, value, board)),
+    ]),
+  );
+  return Object.keys(next).every((name) => next[name].length === filters[name].length)
+    ? filters
+    : next;
 }
 // A single concrete selection still drives the project lens and the server-side
 // burn-down filter, which accept one value. Wider selections fall back to all.
-export function singleFilterValue(name) {
-  const values = filterValues(name);
+export function singleFilterValue(name, filters = state.filters) {
+  const values = filters[name];
   return values.length === 1 && values[0] !== 'none'
     ? values[0]
     : values.length === 1
@@ -83,152 +78,177 @@ function filterOptionText(name, value) {
   if (name === 'assignee') return memberName(value);
   return value;
 }
-// Chips are the removable, authoritative view of any filter group.
-export function filterChipTemplates(group, names, onChange, { clearLabel = 'Clear filters' } = {}) {
-  const disabled = state.busy || state.loading;
+// Chips are the removable, authoritative view of any filter group. `onChange`
+// receives the next group.
+export function FilterChips({ group, names, onChange, disabled, clearLabel = 'Clear filters' }) {
   const chips = [];
   names.forEach((name) => {
-    filterValues(name, group).forEach((value) => {
+    group[name].forEach((value) => {
       const text = filterOptionText(name, value);
       const title = { project: 'Project', assignee: 'Assignee', label: 'Label' }[name];
       const color = name === 'label' && value !== 'none' ? labelInfo(value).color : '';
       const colors = color ? { 'background-color': color, color: labelForeground(color) } : {};
-      chips.push(html`<span class=${`filter-chip filter-chip-${name}`} style=${colors}>
+      chips.push(html`<span key=${`${name}:${value}`} class=${`filter-chip filter-chip-${name}`} style=${colors}>
         <span class="filter-chip-text">${`${title}: ${text}`}</span>
         <button
           type="button"
           class="filter-chip-remove"
           aria-label=${`Remove ${name} filter ${text}`}
           disabled=${disabled}
-          onClick=${() => {
-            removeFilterValue(name, value, group);
-            onChange(name);
-          }}
+          onClick=${() => onChange({ ...group, [name]: withoutFilterValue(group[name], value) })}
         >×</button>
       </span>`);
     });
   });
   if (chips.length > 1)
     chips.push(html`<button
+      key="clear"
       type="button"
       class="filter-chip-clear"
       disabled=${disabled}
-      onClick=${() => {
-        clearFilterGroup(group);
-        onChange(names[0]);
-      }}
+      onClick=${() => onChange(emptyFilterGroup(group))}
     >${clearLabel}</button>`);
   return chips;
 }
-function filterSummaryText(name) {
-  const values = filterValues(name);
+function filterSummaryText(name, filters) {
+  const values = filters[name];
   if (!values.length)
     return { project: 'All projects', assignee: 'All assignees', label: 'All labels' }[name];
   return values.map((value) => filterOptionText(name, value)).join(', ');
 }
-export function knownFilterValue(name, value) {
+export function knownFilterValue(name, value, board = state.board) {
   if (value === 'none') return true;
-  if (name === 'project') return state.board.projects.some((project) => project.id === value);
-  if (name === 'assignee') return state.board.members.some((member) => member.subject === value);
-  return state.board.labels.some((label) => label.name === value);
+  if (name === 'project') return board.projects.some((project) => project.id === value);
+  if (name === 'assignee') return board.members.some((member) => member.subject === value);
+  return board.labels.some((label) => label.name === value);
 }
-// Searchable text is derived once per item revision. `searchIndexGeneration` is
+// Searchable text is derived once per item revision. `boardGeneration` is
 // bumped whenever the board is replaced, so renamed projects or members
 // invalidate the memo without tracking each name individually.
-function itemHaystack(item) {
+function itemHaystack(item, generation) {
   const cached = searchIndex.get(item);
-  if (
-    cached &&
-    cached.generation === state.searchIndexGeneration &&
-    cached.revision === item.revision
-  )
+  if (cached && cached.generation === generation && cached.revision === item.revision)
     return cached.text;
   const text =
     `${item.title} ${item.description} ${item.labels.join(' ')} ${item.assignee} ${memberName(item.assignee)} ${itemProjectIDs(item).map(projectName).join(' ')}`.toLowerCase();
-  searchIndex.set(item, { generation: state.searchIndexGeneration, revision: item.revision, text });
+  searchIndex.set(item, { generation, revision: item.revision, text });
   return text;
 }
-// Typing filters once per pause. `flushSearch` applies the pending query
-// immediately for Enter, blur, and any programmatic reset.
-export function resetSearch() {
-  if (state.searchDebounce) clearTimeout(state.searchDebounce);
-  state.searchDebounce = undefined;
-  setState({ searchInput: '', searchQuery: '' });
+export function normalizedSearch(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
 }
+// Typing filters once per pause; the debounce effect in the App applies it.
+// `flushSearch` applies the pending query immediately for Enter and blur.
 export function flushSearch() {
-  if (state.searchDebounce) clearTimeout(state.searchDebounce);
-  state.searchDebounce = undefined;
-  const next = state.searchInput.trim().toLowerCase();
-  if (next === state.searchQuery) return false;
-  state.searchQuery = next;
-  return true;
+  setState((current) => ({ searchQuery: normalizedSearch(current.searchInput) }));
 }
-export function queueSearch(event) {
-  state.searchInput = event.currentTarget.value;
-  if (state.searchDebounce) clearTimeout(state.searchDebounce);
-  state.searchDebounce = setTimeout(() => {
-    state.searchDebounce = undefined;
-    if (flushSearch() && state.board) hooks.renderContent();
-  }, SEARCH_DEBOUNCE_MS);
+export function setSearchInput(value) {
+  setState({ searchInput: String(value) });
 }
-function matchesItemFilters(item) {
+function matchesItemFilters(item, filters) {
   return (
-    matchesFilter('project', itemProjectIDs(item)) &&
-    matchesFilter('assignee', item.assignee ? [item.assignee] : []) &&
-    matchesFilter('label', item.labels)
+    matchesFilter(filters.project, itemProjectIDs(item)) &&
+    matchesFilter(filters.assignee, item.assignee ? [item.assignee] : []) &&
+    matchesFilter(filters.label, item.labels)
   );
 }
-export function filteredItems() {
-  const query = state.searchQuery;
-  const scope = state.scope;
-  const sprint = state.board.sprints.find((s) => s.id === scope);
-  return (state.view === 'archive' ? state.archiveItems : state.board.items).filter((i) => {
-    if (state.view === 'archive') {
+// Work shown by a planning view (`board` or `archive`), derived from the store.
+function computeFilteredItems(current, view) {
+  const { board, searchQuery: query, scope, filters, boardGeneration } = current;
+  const sprint = board.sprints.find((s) => s.id === scope);
+  const active = view === 'archive' ? [] : activeSprints();
+  const scoped =
+    sprint && view !== 'archive' ? new Set(scopeItems(sprint).map((value) => value.id)) : null;
+  return (view === 'archive' ? current.archiveItems : board.items).filter((i) => {
+    if (view === 'archive') {
       if (!i.archived) return false;
     } else if (i.archived && sprint?.state !== 'closed') return false;
-    if (state.view !== 'archive') {
-      if (scope === 'active' && !activeSprints().some((s) => i.sprint_ids.includes(s.id)))
-        return false;
+    if (view !== 'archive') {
+      if (scope === 'active' && !active.some((s) => i.sprint_ids.includes(s.id))) return false;
       if (scope === 'backlog' && (i.sprint_ids.length || done(i))) return false;
-      if (sprint && !scopeItems(sprint).some((v) => v.id === i.id)) return false;
+      if (scoped && !scoped.has(i.id)) return false;
     }
-    if (!matchesItemFilters(i)) return false;
-    return !query || itemHaystack(i).includes(query);
+    if (!matchesItemFilters(i, filters)) return false;
+    return !query || itemHaystack(i, boardGeneration).includes(query);
   });
 }
-export function planningFilterChipsTemplate(show, includeLabels) {
+const filteredCache = { board: undefined, archive: undefined };
+// Memoized per view on every input it reads, so subscribers compare by identity.
+export function selectFilteredItems(current, view = current.view) {
+  if (!current.board || !['board', 'archive'].includes(view)) return EMPTY;
+  const inputs = [
+    current.board,
+    current.archiveItems,
+    current.searchQuery,
+    current.scope,
+    current.filters,
+    current.boardGeneration,
+  ];
+  const cached = filteredCache[view];
+  if (cached?.inputs.every((value, index) => Object.is(value, inputs[index]))) return cached.items;
+  const items = computeFilteredItems(current, view);
+  filteredCache[view] = { inputs, items };
+  return items;
+}
+const EMPTY = Object.freeze([]);
+export function filteredItems() {
+  return selectFilteredItems(state);
+}
+export function PlanningFilterChips({ show, includeLabels, disabled }) {
+  const filters = useFiltersState();
   const names = FILTER_NAMES.filter((name) => includeLabels || name !== 'label');
-  const chips = show ? filterChipTemplates(filters, names, applyFilterChange) : [];
+  const chips = show
+    ? FilterChips({
+        group: filters,
+        names,
+        disabled,
+        onChange: (next) => setState({ filters: next }),
+      })
+    : [];
   return html`<div id="filter-chips" class="filter-chips" role="group" aria-label="Active filters" hidden=${!chips.length}>
     ${chips}
   </div>`;
 }
-// Project and assignee filters feed the burn-down request, so changing them
-// invalidates any cached chart; label filtering is client-side only.
-export function applyFilterChange(name) {
-  if (name !== 'label') hooks.resetBurndown();
-  hooks.render();
-  if (name !== 'label' && !state.burndownRequests.size) setContentBusy(false);
-  hooks.persistPlanningURL();
+function selectFilters(current) {
+  return current.filters;
 }
-export function selectedFilterText(name) {
-  const values = filterValues(name);
+function selectBoard(current) {
+  return current.board;
+}
+// Chip text resolves names against the board, so chips follow it too.
+function useFiltersState() {
+  useStore(selectBoard);
+  return useStore(selectFilters);
+}
+export function selectedFilterText(name, filters = state.filters) {
+  const values = filters[name];
   return values.length > 1
-    ? `${filterSummaryText(name)} (chart shows all)`
-    : filterSummaryText(name);
+    ? `${filterSummaryText(name, filters)} (chart shows all)`
+    : filterSummaryText(name, filters);
 }
-export function sprintFilterItems(sprint) {
+export function sprintFilterItems(sprint, filters = state.filters) {
   return scopeItems(sprint).filter(
     (item) =>
-      matchesFilter('project', itemProjectIDs(item)) &&
-      matchesFilter('assignee', item.assignee ? [item.assignee] : []),
+      matchesFilter(filters.project, itemProjectIDs(item)) &&
+      matchesFilter(filters.assignee, item.assignee ? [item.assignee] : []),
   );
 }
 // Project and assignee filters select which sprints are listed, not only what
 // their metrics count: a sprint is shown when its scope still holds work that
 // matches every active filter. Sprints are never filtered out while no work
 // filter is active, so an empty sprint stays visible and plannable.
-export function sprintMatchesFilters(sprint) {
-  if (!filters.project.size && !filters.assignee.size) return true;
-  return sprintFilterItems(sprint).length > 0;
+export function sprintMatchesFilters(sprint, filters = state.filters) {
+  if (!filters.project.length && !filters.assignee.length) return true;
+  return sprintFilterItems(sprint, filters).length > 0;
+}
+// The sprints the Sprints page lists: those matching the work filters, then
+// the search query against name and goal.
+export function sprintResults(board, query, filters = state.filters) {
+  const filtered = (board?.sprints || []).filter((sprint) => sprintMatchesFilters(sprint, filters));
+  const matches = filtered.filter(
+    (sprint) => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query),
+  );
+  return { filtered, matches };
 }

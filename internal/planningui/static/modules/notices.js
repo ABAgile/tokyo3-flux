@@ -1,15 +1,7 @@
-// Status line, error bar and the planning-change notice.
+// Status line, error bar, the planning-change notice and the undo offer.
 import { Fragment } from './vendor-preact.js';
-import { html } from './vdom.js';
+import { html, shallowEqual } from './vdom.js';
 import { state, setState, useStore } from './state.js';
-
-function sameStatus(left, right) {
-  const keys = Object.keys(left);
-  return (
-    keys.length === Object.keys(right).length &&
-    keys.every((key) => Object.is(left[key], right[key]))
-  );
-}
 
 export function StatusBars({ refresh }) {
   const {
@@ -30,7 +22,7 @@ export function StatusBars({ refresh }) {
       loading: current.loading,
       integrationFormOpen: current.integrationFormOpen,
     }),
-    sameStatus,
+    shallowEqual,
   );
   return html`<${Fragment}>
     <p id="notice" role="status" aria-live="polite">${noticeText}</p>
@@ -79,4 +71,20 @@ export function showPlanningChangeNotice(text = 'Planning changed elsewhere · R
 }
 export function clearPlanningChangeNotice() {
   if (state.planningChangeNotice) setState({ planningChangeNotice: false });
+}
+// An undo offer expires after UNDO_TTL. The timer is transient browser state,
+// so it stays in this module rather than in the store.
+export const UNDO_TTL = 10000;
+let undoTimer;
+export function clearUndo() {
+  clearTimeout(undoTimer);
+  undoTimer = undefined;
+  setState({ undoOffer: undefined, undoText: '' });
+}
+export function offerUndo(text, commands) {
+  const list = (Array.isArray(commands) ? commands : [commands]).filter(Boolean);
+  clearUndo();
+  if (!list.length) return;
+  setState({ undoOffer: list, undoText: text });
+  undoTimer = setTimeout(clearUndo, UNDO_TTL);
 }

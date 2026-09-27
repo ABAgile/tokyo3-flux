@@ -1,21 +1,23 @@
 // Adding and reconciling GitLab links on a work item.
-import { $, syncDisabled, uid } from './dom.js';
-import { api } from './api.js';
+import { uid } from './dom.js';
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
+import { useRef, useState } from './vendor-preact.js';
 import { state } from './state.js';
-import { hooks } from './hooks.js';
-import { gitLabWritable } from './permissions.js';
+import { gitLabWritable, usePermissions } from './permissions.js';
 import { notice } from './notices.js';
-import { helpPopoverTemplate, multiSelectTemplate } from './multi-select.js';
+import { helpPopoverTemplate, MultiSelect } from './multi-select.js';
 import {
   loadGitLabProjects,
+  loadGitLabMergeRequests,
   approvedGitLabProjectEntries,
-  validGitLabMergeRequestCatalog,
   mergeRequestEntries,
 } from './gitlab-catalog.js';
 import { change } from './commands.js';
-import { closeEditor, openEditor } from './dialog.js';
+import { closeEditor, openDialog } from './dialog-state.js';
+import { CommandDialog } from './dialog.js';
+import { reopenItemEditor } from './actions.js';
+import { useDebouncedValue, useMutation, useRequest } from './ui-hooks.js';
 
 function resolveGitLabMRURL(value, currentBoard, projects) {
   const raw = String(value || '').trim();
@@ -65,23 +67,29 @@ function resolveGitLabMRURL(value, currentBoard, projects) {
     throw new Error('That merge-request project is not in the approved GitLab project catalog.');
   return { project: Number(project.id), kind: 'mr', number: Number(iid) };
 }
-async function attachItemGitLabLink(item, link, context) {
+function itemLinkIDs(board, itemID) {
+  return board.links.filter((value) => value.items.includes(itemID)).map((value) => value.id);
+}
+// Reopens the card in the surface it came from with the draft it had, plus any
+// link the workspace gained for it meanwhile.
+function returnToCard({ item, draft, mode, originFocusKey, previousLinkIDs, root }) {
+  if (state.root !== root || !state.board) return;
+  const latest = state.board.items.find((value) => value.id === item.id);
+  if (!latest) return;
+  const previous = new Set(previousLinkIDs);
+  const added = itemLinkIDs(state.board, item.id).filter((id) => !previous.has(id));
+  const returnDraft = draft
+    ? { ...draft, link_ids: [...new Set([...draft.link_ids, ...added])] }
+    : undefined;
+  reopenItemEditor(latest, returnDraft, mode, originFocusKey);
+}
+// `origin` is { mode, draft, originFocusKey } of the editor the link came from.
+async function attachItemGitLabLink(item, link, origin) {
   const currentBoard = state.board,
     currentRoot = state.root;
-  const form = context?.form || ($('editor').open ? $('editor-form') : undefined);
-  const draft = form ? hooks.itemEditorDraft(form) : undefined;
-  const mode =
-    context?.mode ||
-    ($('editor').open
-      ? 'modal'
-      : state.view === 'board' && state.presentation === 'list'
-        ? 'detail'
-        : 'modal');
-  const origin = context?.origin;
-  const previous = new Set(
-    currentBoard.links.filter((value) => value.items.includes(item.id)).map((value) => value.id),
-  );
-  if (mode === 'modal') closeEditor();
+  const context = { item, ...origin, root: currentRoot };
+  const previousLinkIDs = itemLinkIDs(currentBoard, item.id);
+  if (origin.mode === 'modal') closeEditor();
   try {
     await change({
       revision: currentBoard.workspace.revision,
@@ -92,273 +100,152 @@ async function attachItemGitLabLink(item, link, context) {
   } catch (error) {
     if (state.root === currentRoot && state.board) {
       const latest = state.board.items.find((value) => value.id === item.id);
-      if (latest && draft) hooks.reopenItemEditor(latest, draft, mode, origin);
+      if (latest && origin.draft)
+        reopenItemEditor(latest, origin.draft, origin.mode, origin.originFocusKey);
       notice(error.message, true);
     }
     return;
   }
-  if (state.root !== currentRoot || !state.board) return;
-  const latest = state.board.items.find((value) => value.id === item.id);
-  if (!latest) return;
-  const added = state.board.links
-    .filter((value) => value.items.includes(item.id) && !previous.has(value.id))
-    .map((value) => value.id);
-  hooks.reopenItemEditor(
-    latest,
-    draft ? { ...draft, link_ids: [...new Set([...draft.link_ids, ...added])] } : undefined,
-    mode,
-    origin,
-  );
+  returnToCard({ ...context, previousLinkIDs });
 }
-// The paste-an-MR-URL row under the GitLab links picker. It is rendered as the
-// picker's footer, so it keeps its state here and asks the picker to re-render.
-export function gitLabPaste(item, readOnly, context) {
-  const currentBoard = state.board,
-    currentRoot = state.root;
-  const local = { status: '', error: false, pending: false };
-  const inputID = uid('gitlab-mr-url');
-  let update = () => {};
-  const setStatus = (text, error = false) => {
-    local.status = text || '';
-    local.error = error;
-    update();
-  };
-  async function resolve(input) {
-    if (local.pending || readOnly || !gitLabWritable()) return;
-    const raw = input.value.trim();
+// The paste-an-MR-URL row under the GitLab links picker. `getDraft` reads the
+// enclosing editor's current input, so a reopened card keeps it.
+export function GitLabPaste({ item, readOnly, mode, getDraft, originFocusKey }) {
+  const [currentRoot] = useState(() => state.root);
+  const [inputID] = useState(() => uid('gitlab-mr-url'));
+  const [status, setStatus] = useState({ text: '', error: false });
+  const input = useRef(null);
+  const writes = useMutation();
+  const { gitlab } = usePermissions();
+  async function resolve() {
+    const field = input.current;
+    if (writes.pending || readOnly || !gitLabWritable() || !field) return;
+    const raw = field.value.trim();
     if (!raw) {
-      setStatus('Paste a GitLab merge-request URL first.', true);
-      input.focus();
+      setStatus({ text: 'Paste a GitLab merge-request URL first.', error: true });
+      field.focus();
       return;
     }
-    local.pending = true;
-    setStatus('Resolving GitLab merge request…');
-    try {
-      const projects = await loadGitLabProjects(currentRoot);
-      if (!input.isConnected || state.board !== currentBoard || state.root !== currentRoot) return;
-      const link = resolveGitLabMRURL(raw, currentBoard, projects);
-      await attachItemGitLabLink(item, link, context);
-    } catch (error) {
-      if (input.isConnected) {
-        setStatus(error.message, true);
-        input.focus();
-      }
-    } finally {
-      local.pending = false;
-      if (input.isConnected) update();
-    }
-  }
-  return {
-    bind(picker) {
-      update = picker.update;
-    },
-    template: () => html`<div class="gitlab-paste-row">
-        <input
-          id=${inputID}
-          type="text"
-          inputmode="url"
-          placeholder="Paste GitLab MR URL, then press Enter or click Get"
-          maxlength="2048"
-          aria-label="GitLab MR URL"
-          autocomplete="off"
-          onKeydown=${(event) => {
-            if (event.key !== 'Enter') return;
-            event.preventDefault();
-            resolve(event.currentTarget);
-          }}
-        /><button
-          type="button"
-          class="primary"
-          data-gitlab-write="true"
-          ref=${syncDisabled(readOnly || local.pending || !gitLabWritable())}
-          onClick=${(event) => resolve(event.currentTarget.previousElementSibling)}
-        >Get</button>
-      </div>
-      <p
-        class=${local.error ? 'help error' : 'help'}
-        data-status-class="help"
-        hidden=${!local.status}
-        role=${local.error ? 'alert' : 'status'}
-        aria-live="polite"
-      >${local.status}</p>`,
-  };
-}
-export async function addGitLabLink(item, context) {
-  const currentBoard = state.board,
-    currentRoot = state.root;
-  const form = context?.form || ($('editor').open ? $('editor-form') : undefined);
-  const draft = form ? hooks.itemEditorDraft(form) : undefined;
-  const mode =
-    context?.mode ||
-    ($('editor').open
-      ? 'modal'
-      : state.view === 'board' && state.presentation === 'list'
-        ? 'detail'
-        : 'modal');
-  const origin = context?.origin;
-  if (mode === 'modal') closeEditor();
-  let projects = [],
-    catalogError = '';
-  const returnToCard = () => {
-    if (state.root !== currentRoot || !state.board) return;
-    const latest = state.board.items.find((value) => value.id === item.id);
-    if (!latest) return;
-    const previous = new Set(
-      currentBoard.links.filter((value) => value.items.includes(item.id)).map((value) => value.id),
-    );
-    const added = state.board.links
-      .filter((value) => value.items.includes(item.id) && !previous.has(value.id))
-      .map((value) => value.id);
-    const returnDraft = draft
-      ? { ...draft, link_ids: [...new Set([...draft.link_ids, ...added])] }
-      : undefined;
-    hooks.reopenItemEditor(latest, returnDraft, mode, origin);
-  };
-  try {
-    projects = await loadGitLabProjects(currentRoot);
-  } catch (e) {
-    catalogError = e.message;
-  }
-  if (state.board !== currentBoard || state.root !== currentRoot) return;
-  let projectPicker, mrPicker;
-  let searchTimer;
-  let searchGeneration = 0;
-  const editorForm = () => $('editor-form');
-  const pickerStatus = () =>
-    projectPicker.selected().length
-      ? 'Open the merge-request picker to load results.'
-      : 'Select an approved project first.';
-  const resetMergeRequests = () => {
-    searchGeneration++;
-    if (searchTimer) clearTimeout(searchTimer);
-    mrPicker.filter.value = '';
-    mrPicker.setEntries([], []);
-  };
-  const queueMergeRequestSearch = (query, controls) => {
-    if (searchTimer) clearTimeout(searchTimer);
-    const generation = ++searchGeneration;
-    const project = projectPicker.selected()[0];
-    if (!project) {
-      controls.setEntries([], []);
-      controls.setStatus('Select an approved project first.');
-      return;
-    }
-    controls.setStatus('Searching GitLab…');
-    searchTimer = setTimeout(async () => {
+    await writes.run(async (signal) => {
+      setStatus({ text: 'Resolving GitLab merge request…', error: false });
       try {
-        const params = new URLSearchParams({
-          project,
-          scope: editorForm().elements.scope.value || 'recent',
-          search: query,
-        });
-        const data = await api(`${currentRoot}/gitlab/merge-requests?${params}`);
-        if (
-          generation !== searchGeneration ||
-          state.board !== currentBoard ||
-          state.root !== currentRoot
-        )
-          return;
-        if (!validGitLabMergeRequestCatalog(data))
-          throw new Error('GitLab merge-request results are invalid. Refresh to retry.');
-        const selected = controls.selected();
-        controls.setEntries(mergeRequestEntries(data, selected), selected);
-        controls.setStatus(data.length ? '' : 'No matching merge requests.');
-      } catch (e) {
-        if (
-          generation === searchGeneration &&
-          state.board === currentBoard &&
-          state.root === currentRoot
-        )
-          controls.setStatus(e.message);
+        const projects = await loadGitLabProjects(currentRoot, signal);
+        if (signal.aborted || state.root !== currentRoot || !state.board) return;
+        const link = resolveGitLabMRURL(raw, state.board, projects);
+        await attachItemGitLabLink(item, link, { mode, draft: getDraft?.(), originFocusKey });
+      } catch (error) {
+        if (signal.aborted) return;
+        setStatus({ text: error.message, error: true });
+        input.current?.focus();
       }
-    }, 250);
-  };
-  openEditor(
-    'Add link',
-    () => html`${
-      catalogError
-        ? errorLineTemplate(
-            `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
-          )
-        : null
-    }
-        ${multiSelectTemplate(
-          'project',
-          'Approved GitLab project',
-          approvedGitLabProjectEntries(projects),
-          [],
-          undefined,
-          'Choose one approved project. The project list is provided by the configured GitLab connector and is searchable.',
-          {
-            single: true,
-            onReady: (controls) => {
-              projectPicker = controls;
-            },
-            onChange: () => {
-              if (!mrPicker) return;
-              resetMergeRequests();
-              editorForm().elements.manual_mr_iid.value = '';
-              mrPicker.setStatus(pickerStatus());
-            },
-          },
-        )}
-        ${fieldTemplate(
-          'scope',
-          'Quick scope',
-          'recent',
-          'text',
-          [
-            ['recent', 'Recent merge requests'],
-            ['assigned_to_me', 'Assigned to me'],
-            ['board_members', 'Assigned to board members'],
-          ],
-          {
-            onChange: () => {
-              const wasOpen = mrPicker.isOpen();
-              resetMergeRequests();
-              mrPicker.setStatus(pickerStatus());
-              if (wasOpen) queueMergeRequestSearch('', mrPicker);
-            },
-          },
-        )}
-        ${multiSelectTemplate(
-          'merge_request',
-          'Merge request',
-          [],
-          [],
-          undefined,
-          'After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.',
-          {
-            single: true,
-            onFilter: queueMergeRequestSearch,
-            onOpen: queueMergeRequestSearch,
-            onReady: (controls) => {
-              mrPicker = controls;
-              controls.filter.maxLength = 120;
-            },
-            onChange: (values) => {
-              if (values.length) editorForm().elements.manual_mr_iid.value = '';
-            },
-          },
-        )}
-        ${fieldTemplate('manual_mr_iid', 'MR IID (optional fallback)', '', 'number', undefined, {
-          min: 1,
-          max: Number.MAX_SAFE_INTEGER,
-          step: 1,
-        })}
-        ${
-          !projects.length && !catalogError && !state.board.integration.projects.length
-            ? helpTextTemplate('No approved GitLab projects are available for linking.')
-            : null
-        }`,
-    (data) => {
+    });
+  }
+  return html`<div class="gitlab-paste-row">
+      <input
+        id=${inputID}
+        type="text"
+        inputmode="url"
+        placeholder="Paste GitLab MR URL, then press Enter or click Get"
+        maxlength="2048"
+        aria-label="GitLab MR URL"
+        autocomplete="off"
+        ref=${input}
+        onKeydown=${(event) => {
+          if (event.key !== 'Enter') return;
+          event.preventDefault();
+          void resolve();
+        }}
+      /><button
+        type="button"
+        class="primary"
+        data-gitlab-write="true"
+        disabled=${readOnly || writes.pending || !gitlab}
+        onClick=${() => void resolve()}
+      >Get</button>
+    </div>
+    <p
+      class=${status.error ? 'help error' : 'help'}
+      data-status-class="help"
+      hidden=${!status.text}
+      role=${status.error ? 'alert' : 'status'}
+      aria-live="polite"
+    >${status.text}</p>`;
+}
+// Opens the Add link dialog for a card edited in `origin.mode`.
+export function addGitLabLink(item, origin) {
+  if (origin.mode === 'modal') closeEditor();
+  openDialog('link.add', {
+    item,
+    draft: origin.draft,
+    mode: origin.mode,
+    originFocusKey: origin.originFocusKey,
+    previousLinkIDs: itemLinkIDs(state.board, item.id),
+    root: state.root,
+  });
+}
+// The merge-request picker owns its search: one request per project, quick
+// scope and debounced query once its menu has opened. It is keyed by project and
+// scope, so a change starts a fresh picker and cancels pending results.
+function GitLabLinkPicker({ root, project, scope, value, onChange }) {
+  const [opened, setOpened] = useState(false);
+  const [query, setQuery] = useState('');
+  const search = useDebouncedValue(query, 250);
+  const result = useRequest(
+    (signal) =>
+      opened && project
+        ? loadGitLabMergeRequests(root, { project, scope, search }, signal)
+        : Promise.resolve(undefined),
+    [root, project, scope, search, opened],
+  );
+  const status = !project
+    ? 'Select an approved project first.'
+    : result.loading
+      ? 'Searching GitLab…'
+      : result.error
+        ? result.error.message
+        : result.data
+          ? result.data.length
+            ? ''
+            : 'No matching merge requests.'
+          : 'Open the merge-request picker to load results.';
+  return html`<${MultiSelect}
+    name="merge_request"
+    title="Merge request"
+    entries=${mergeRequestEntries(result.data || [], value)}
+    value=${value}
+    status=${status}
+    single=${true}
+    filterMaxLength=${120}
+    helpText="After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID."
+    onChange=${onChange}
+    onQuery=${setQuery}
+    onOpenChange=${(next) => {
+      if (next) setOpened(true);
+    }}
+  />`;
+}
+export function AddLinkDialog({ item, root }) {
+  const catalog = useRequest((signal) => loadGitLabProjects(root, signal), [root]);
+  const [project, setProject] = useState('');
+  const [scope, setScope] = useState('recent');
+  const [mergeRequest, setMergeRequest] = useState([]);
+  const [manualIID, setManualIID] = useState('');
+  const projects = catalog.data || [];
+  const catalogError = catalog.error?.message || '';
+  return html`<${CommandDialog}
+    title="Add link"
+    titleExtra=${html` ${helpPopoverTemplate(
+      'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
+      'GitLab links',
+    )}`}
+    command=${(data) => {
       const rawProject = String(data.get('project') || '');
       const selectedMR = String(data.get('merge_request') || '');
-      const manualIID = String(data.get('manual_mr_iid') || '');
-      const rawNumber = selectedMR || manualIID;
+      const manual = String(data.get('manual_mr_iid') || '');
+      const rawNumber = selectedMR || manual;
       if (!/^[1-9][0-9]*$/.test(rawProject) || !Number.isSafeInteger(Number(rawProject)))
         throw new Error('Choose an approved GitLab project.');
-      if (selectedMR && manualIID)
+      if (selectedMR && manual)
         throw new Error('Select a merge request or enter its IID manually, not both.');
       if (!/^[1-9][0-9]*$/.test(rawNumber) || !Number.isSafeInteger(Number(rawNumber)))
         throw new Error('Select a merge request or enter a positive MR IID.');
@@ -367,18 +254,77 @@ export async function addGitLabLink(item, context) {
         target: item.id,
         link: { project: Number(rawProject), kind: 'mr', number: Number(rawNumber) },
       };
-    },
-    false,
-    undefined,
-    returnToCard,
-    {
-      titleExtra: html` ${helpPopoverTemplate(
-        'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
-        'GitLab links',
-      )}`,
-    },
-  );
+    }}
+  >
+    ${
+      catalogError
+        ? errorLineTemplate(
+            `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
+          )
+        : null
+    }
+    <${MultiSelect}
+      name="project"
+      title="Approved GitLab project"
+      entries=${approvedGitLabProjectEntries(projects)}
+      single=${true}
+      helpText="Choose one approved project. The project list is provided by the configured GitLab connector and is searchable."
+      onChange=${(values) => {
+        setProject(values[0] || '');
+        setMergeRequest([]);
+        setManualIID('');
+      }}
+    />
+    ${fieldTemplate(
+      'scope',
+      'Quick scope',
+      'recent',
+      'text',
+      [
+        ['recent', 'Recent merge requests'],
+        ['assigned_to_me', 'Assigned to me'],
+        ['board_members', 'Assigned to board members'],
+      ],
+      {
+        onChange: (event) => {
+          setScope(event.currentTarget.value);
+          setMergeRequest([]);
+        },
+      },
+    )}
+    <${GitLabLinkPicker}
+      key=${`${project}\u0000${scope}`}
+      root=${root}
+      project=${project}
+      scope=${scope}
+      value=${mergeRequest}
+      onChange=${(values) => {
+        setMergeRequest(values);
+        if (values.length) setManualIID('');
+      }}
+    />
+    <label
+      >MR IID (optional fallback)<input
+        name="manual_mr_iid"
+        type="number"
+        autocomplete="off"
+        min="1"
+        max=${Number.MAX_SAFE_INTEGER}
+        step="1"
+        value=${manualIID}
+        onInput=${(event) => setManualIID(event.currentTarget.value)}
+    /></label>
+    ${
+      !projects.length &&
+      !catalogError &&
+      !catalog.loading &&
+      !state.board.integration.projects.length
+        ? helpTextTemplate('No approved GitLab projects are available for linking.')
+        : null
+    }
+  </${CommandDialog}>`;
 }
+AddLinkDialog.onClose = returnToCard;
 export async function reconcileItemLinks(itemID, desiredIDs) {
   const desired = new Set(desiredIDs);
   for (const link of state.board.links.filter(

@@ -1,23 +1,12 @@
 // The History page.
-import { api } from './api.js';
 import { workspaceHistoryLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import { html, keyedList } from './vdom.js';
+import { html, shallowEqual } from './vdom.js';
 
 import { state, useStore } from './state.js';
 import { notice } from './notices.js';
 import { memberListingInfo } from './people.js';
-
-export async function loadHistory(reset = false) {
-  const events = await api(
-    state.root +
-      '/history' +
-      (!reset && state.historyBefore ? `?before=${state.historyBefore}` : ''),
-  );
-  state.history = reset ? events : [...state.history, ...events];
-  state.historyBefore = events.at(-1)?.id || 0;
-  state.historyMore = events.length === 50;
-}
+import { loadHistory } from './page-data.js';
 function historyActorLabel(subject) {
   const member = state.board.members.find((candidate) => candidate.subject === subject);
   const name = member
@@ -34,7 +23,7 @@ async function loadOlderHistory() {
     notice(e.message, true);
   }
 }
-function historyRowTemplate(event, label) {
+function HistoryRow({ event, label }) {
   const scope = event.legacy_project_id ? 'legacy project' : 'workspace';
   const meta = `${historyActorLabel(event.actor)} · ${new Date(event.at).toLocaleString()} · ${label} · ${scope} revision ${event.revision}`;
   return html`<article class="history-row">
@@ -52,27 +41,16 @@ function selectHistoryPage(current) {
     session: current.session,
   };
 }
-function sameHistoryPage(left, right) {
-  return (
-    left.board === right.board &&
-    left.history === right.history &&
-    left.historyMore === right.historyMore &&
-    left.session === right.session
-  );
-}
+
 export function HistoryPage() {
-  const { board, history, historyMore } = useStore(selectHistoryPage, sameHistoryPage);
+  const { board, history, historyMore } = useStore(selectHistoryPage, shallowEqual);
   const label = workspaceHistoryLabel(board.workspace);
   return html`<p class="muted">${label}</p>
     ${history.length ? null : emptyStateTemplate('No planning changes yet.')}
     ${
       history.length
         ? html`<div class="history-list">
-            ${keyedList(
-              history,
-              (event) => event.id,
-              (event) => historyRowTemplate(event, label),
-            )}
+            ${history.map((event) => html`<${HistoryRow} key=${event.id} event=${event} label=${label} />`)}
           </div>`
         : null
     }

@@ -3,7 +3,7 @@
 - All page content lives inside `#content`, which has exactly two mounts.
   The persistent planning frame is a `page-stack` carrying the project lens, the sprint summaries, the planning filter slot and the board body, so Board, List and Archive read like every other page.
   `#page-root` holds one page root for every other view, named by `data-content-view`: the standard `page-stack` (Projects, Sprints, Members, Labels, History) or a page-specific composition (the first-run checklist).
-  Only one mount is shown at a time; the frame is hidden rather than rebuilt, so filters and summaries keep their state, and a view that patches its own root in place keeps it across renders.
+  Only one mount is shown at a time; the frame is hidden rather than rebuilt, so filters, summaries and the board keep their component state while another page is shown.
   `aria-busy` belongs to the body being rebuilt, never to the region holding the filters.
   The stack is a single column with one 16px gap, so every page spaces its sections alike.
   Pages are assembled from shared components rather than per-page markup: `section-head` (title with right-aligned actions), `help` guidance text, the `empty` state, the bordered `panel` surface shared by sprint, project-lens, delivery-trend, burn-down, workspace-gate, first-run and maintenance panels, the `metrics` row of value/caption pairs, the filter slot/bar/chips, and the maintenance list/row used by Projects, Members and Labels.

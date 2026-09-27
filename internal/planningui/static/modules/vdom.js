@@ -1,12 +1,30 @@
-// HTM binding and keyed-list helpers built directly on Preact VNodes.
-import { Fragment, h, htm } from './vendor-preact.js';
+// HTM binding and a shallow-props memo built directly on Preact VNodes.
+import { Component, h, htm } from './vendor-preact.js';
 
 export const html = htm.bind(h);
 
-export function withKey(key, children) {
-  return h(Fragment, { key }, children);
+export function shallowEqual(left, right) {
+  if (Object.is(left, right)) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => Object.hasOwn(right, key) && Object.is(left[key], right[key]))
+  );
 }
 
-export function keyedList(values, key, view) {
-  return values.map((value, index) => withKey(key(value, index), view(value, index)));
+// Core Preact has no memo. The class boundary skips a subtree whose props are
+// shallow-equal; the wrapped function component keeps its own hooks and still
+// updates from its store subscriptions.
+export function memo(render, equal = shallowEqual) {
+  class Memo extends Component {
+    shouldComponentUpdate(next) {
+      return !equal(this.props, next);
+    }
+    render(props) {
+      return h(render, props);
+    }
+  }
+  Memo.displayName = `Memo(${render.name || 'component'})`;
+  return Memo;
 }

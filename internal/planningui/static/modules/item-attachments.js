@@ -1,17 +1,16 @@
-// Card attachments: loading, uploads, drops, tiles and the tooltip.
-import { syncDisabled } from './dom.js';
+// Card attachments: loading, uploads, drops and tiles.
 import { api, apiUpload, requestKey } from './api.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import { html, keyedList } from './vdom.js';
-import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { html } from './vdom.js';
+import { useEffect, useReducer, useRef, useState } from './vendor-preact.js';
 
 import { setState, state, useStore } from './state.js';
-import { hooks } from './hooks.js';
-import { writable } from './permissions.js';
+import { usePermissions, writable } from './permissions.js';
 import { notice } from './notices.js';
-import { renderControls } from './controls.js';
 import { memberName } from './people.js';
+import { useDismiss, useMutation } from './ui-hooks.js';
+import { useAttachmentTooltip } from './tooltip.js';
 
 export function isFileTransfer(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes('Files');
@@ -20,52 +19,49 @@ function attachmentHref(item, attachment, base = state.root) {
   return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
 }
 // A board read reports how many attachments a card has, not what they are, so
-// metadata is fetched per card the first time it is actually shown. An item
-// whose list has been loaded keeps it on the board item itself; merging a
-// fresh board drops that field and the next viewer reloads it.
-const attachmentLoads = new Map(),
-  attachmentListeners = new Set();
-export function attachmentsLoaded(item) {
-  return Array.isArray(item?.attachments);
+// metadata is fetched per card the first time it is actually shown. Loaded
+// lists live in the store by item id; a fresh board drops them and the next
+// viewer reloads them.
+const attachmentLoads = new Map();
+export function useAttachmentList(itemID) {
+  return useStore((current) => current.attachmentLists[itemID]);
 }
-export function attachmentCount(item) {
-  return attachmentsLoaded(item)
-    ? item.attachments.length
+export function selectBoardGeneration(current) {
+  return current.boardGeneration;
+}
+export function attachmentCount(item, list) {
+  return Array.isArray(list)
+    ? list.length
     : Number.isSafeInteger(item?.attachment_count) && item.attachment_count > 0
       ? item.attachment_count
       : 0;
 }
-function setItemAttachments(item, attachments) {
-  const target = state.board?.items.find((value) => value.id === item.id) || item;
-  target.attachments = attachments;
-  target.attachment_count = attachments.length;
-  if (target !== item) {
-    item.attachments = attachments;
-    item.attachment_count = attachments.length;
-  }
-  attachmentListeners.forEach((listener) => listener(item.id));
+function setItemAttachments(itemID, attachments) {
+  setState((current) => ({
+    attachmentLists: { ...current.attachmentLists, [itemID]: attachments },
+  }));
 }
-export function ensureAttachments(item) {
-  if (!item || !state.root || attachmentsLoaded(item)) return attachmentLoads.get(item?.id);
-  if (attachmentLoads.has(item.id)) return attachmentLoads.get(item.id);
-  const currentBoard = state.board,
-    currentRoot = state.root,
-    id = item.id;
+export function ensureAttachments(itemID) {
+  if (!itemID || !state.root || Array.isArray(state.attachmentLists[itemID])) return undefined;
+  const root = state.root,
+    generation = state.boardGeneration;
+  const loadKey = `${root}\u0000${generation}\u0000${itemID}`;
+  if (attachmentLoads.has(loadKey)) return attachmentLoads.get(loadKey);
+  const current = () => state.root === root && state.boardGeneration === generation;
   const pending = (async () => {
     try {
-      const data = await api(`${currentRoot}/items/${encodeURIComponent(id)}/attachments`);
-      if (state.board !== currentBoard || state.root !== currentRoot) return;
-      if (!validAttachments(data) || data.some((attachment) => attachment.item_id !== id))
+      const data = await api(`${root}/items/${encodeURIComponent(itemID)}/attachments`);
+      if (!current()) return;
+      if (!validAttachments(data) || data.some((attachment) => attachment.item_id !== itemID))
         throw new Error('Attachment list is invalid. Refresh to retry.');
-      setItemAttachments(item, data);
-      hooks.renderContent();
+      setItemAttachments(itemID, data);
     } catch (error) {
-      if (state.board === currentBoard && state.root === currentRoot) notice(error.message, true);
+      if (current()) notice(error.message, true);
     } finally {
-      attachmentLoads.delete(id);
+      attachmentLoads.delete(loadKey);
     }
   })();
-  attachmentLoads.set(id, pending);
+  attachmentLoads.set(loadKey, pending);
   return pending;
 }
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024,
@@ -89,7 +85,7 @@ function clearUploadRequestKey(signature) {
   uploadRequestKeys.delete(signature);
 }
 function attachmentRejection(item, file) {
-  if (attachmentCount(item) >= MAX_ITEM_ATTACHMENTS)
+  if (attachmentCount(item, state.attachmentLists[item.id]) >= MAX_ITEM_ATTACHMENTS)
     return `This card already has the maximum of ${MAX_ITEM_ATTACHMENTS} attachments.`;
   if (
     !file ||
@@ -105,7 +101,7 @@ function attachmentRejection(item, file) {
 // Shared upload used by the editor picker, the editor drop zone, and card
 // file drops. Progress is reported as a 0..1 fraction, or undefined when the
 // browser cannot measure the request body.
-async function uploadItemFile(item, file, onProgress) {
+async function uploadItemFile(item, file, onProgress, signal) {
   const currentRoot = state.root;
   const request = uploadRequestKey(item, file);
   const form = new FormData();
@@ -114,19 +110,18 @@ async function uploadItemFile(item, file, onProgress) {
     headers: { 'X-CSRF-Token': state.session.csrf, 'Idempotency-Key': request.key },
     body: form,
     onProgress,
+    signal,
   });
   if (!validAttachments([data]) || data.item_id !== item.id)
     throw new Error('Attachment response is invalid. Refresh to retry.');
   clearUploadRequestKey(request.signature);
   if (state.root !== currentRoot) return undefined;
-  // Without the current list there is nothing to append to, so the count is
-  // advanced and the list reloaded rather than invented from one response.
-  if (attachmentsLoaded(item))
-    setItemAttachments(item, [...item.attachments.filter((value) => value.id !== data.id), data]);
-  else {
-    item.attachment_count = attachmentCount(item) + 1;
-    void ensureAttachments(item);
-  }
+  // Without the current list there is nothing to append to, so the list is
+  // reloaded rather than invented from one response.
+  const list = state.attachmentLists[item.id];
+  if (Array.isArray(list))
+    setItemAttachments(item.id, [...list.filter((value) => value.id !== data.id), data]);
+  else void ensureAttachments(item.id);
   return data;
 }
 // Dropping files onto a card uploads them without opening the editor. Progress
@@ -134,8 +129,7 @@ async function uploadItemFile(item, file, onProgress) {
 async function dropFilesOntoItem(item, files) {
   const selected = Array.from(files || []).filter(Boolean);
   if (!selected.length || state.uploadBusy || !writable()) return;
-  state.uploadBusy = true;
-  renderControls();
+  setState({ uploadBusy: true });
   let uploaded = 0;
   try {
     for (const file of selected) {
@@ -157,204 +151,111 @@ async function dropFilesOntoItem(item, files) {
       uploaded++;
     }
   } finally {
-    state.uploadBusy = false;
-    renderControls();
+    setState({ uploadBusy: false });
   }
-  if (uploaded) {
+  if (uploaded)
     notice(`${uploaded} attachment${uploaded === 1 ? '' : 's'} uploaded to “${item.title}”.`);
-    hooks.renderContent();
-  }
 }
 // Cards and list rows accept file drops. Planning drags are unaffected because
-// only transfers that carry files are intercepted.
-export function itemFileDropZone(node, item) {
-  // The element can outlive the board payload that created it. Resolve the
-  // current record at event time so permissions, names and counts stay fresh.
-  const currentItem = () => state.board?.items.find((value) => value.id === item.id) || item;
-  const clear = () => node.classList.remove('attachment-drop-active');
+// only transfers that carry files are intercepted. The current record is
+// resolved by id at event time, so permissions, names and counts stay fresh.
+export function useItemFileDrop(itemID) {
+  const [active, setActive] = useState(false);
+  const currentItem = () =>
+    state.board?.items.find((value) => value.id === itemID) ||
+    state.archiveItems.find((value) => value.id === itemID);
   const show = (event) => {
     if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (writable() && !state.uploadBusy && !currentItem().archived) {
-      event.dataTransfer.dropEffect = 'copy';
-      node.classList.add('attachment-drop-active');
-    } else {
-      event.dataTransfer.dropEffect = 'none';
-      clear();
-    }
+    const item = currentItem();
+    const allowed = writable() && !state.uploadBusy && item && !item.archived;
+    event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+    setActive(!!allowed);
   };
-  node.addEventListener('dragenter', show);
-  node.addEventListener('dragover', show);
-  node.addEventListener('dragleave', (event) => {
-    if (!(event.relatedTarget instanceof Node) || !node.contains(event.relatedTarget)) clear();
-  });
-  node.addEventListener('drop', (event) => {
-    if (!isFileTransfer(event.dataTransfer)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    clear();
-    const current = currentItem();
-    if (writable() && !state.uploadBusy && !current.archived)
-      void dropFilesOntoItem(current, event.dataTransfer.files);
-  });
+  const props = {
+    onDragEnter: show,
+    onDragOver: show,
+    onDragLeave: (event) => {
+      if (
+        !(event.relatedTarget instanceof Node) ||
+        !event.currentTarget.contains(event.relatedTarget)
+      )
+        setActive(false);
+    },
+    onDrop: (event) => {
+      if (!isFileTransfer(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setActive(false);
+      const item = currentItem();
+      if (writable() && !state.uploadBusy && item && !item.archived)
+        void dropFilesOntoItem(item, event.dataTransfer.files);
+    },
+  };
+  return { props, className: active ? 'attachment-drop-active' : '' };
 }
 export function attachmentPaperclipTemplate() {
   return html`<span class="attachment-paperclip" aria-hidden="true">📎</span>`;
 }
-function AttachmentTileLink({ item, attachment, base, metadata, extraClass }) {
-  const link = useRef();
-  const described = useStore(
-    (current) =>
-      !!current.attachmentTooltipTarget && current.attachmentTooltipTarget === link.current,
-  );
-  useEffect(
-    () => () => {
-      if (state.attachmentTooltipTarget === link.current) hideAttachmentTooltip(link.current);
-    },
-    [],
-  );
+// `extraClass` adds a placement class, for example on a card's attachment list.
+export function AttachmentTileLink({
+  item,
+  attachment,
+  base = state.root,
+  metadata = attachmentSize(attachment.size),
+  extraClass = '',
+}) {
+  const description = attachmentTypeDescription(attachment);
+  const tooltip = useAttachmentTooltip(description);
   return html`<a
     class="attachment-link attachment-tile-link${extraClass}"
     href=${attachmentHref(item, attachment, base)}
     aria-label=${attachment.name}
-    aria-describedby=${described ? 'attachment-tooltip' : null}
+    aria-describedby=${tooltip.active ? 'attachment-tooltip' : null}
     download=""
-    data-attachment-tooltip=${attachmentTypeDescription(attachment)}
+    data-attachment-tooltip=${description}
     data-attachment-id=${String(attachment.id)}
-    ref=${link}
+    ref=${tooltip.ref}
+    ...${tooltip.props}
   >
-    <span class="attachment-file-mark" aria-hidden="true">${attachmentKind(attachment)}</span>
+    <span class="attachment-file-mark" aria-hidden="true" ref=${tooltip.anchorRef}>${attachmentKind(attachment)}</span>
     <span class="attachment-tile-copy">
       <span class="attachment-name">${attachment.name}</span>
       <span class="attachment-meta">${metadata}</span>
     </span>
   </a>`;
 }
-// `extraClass` adds a placement class, for example on a card's attachment list.
-export function attachmentTileLinkTemplate(
-  item,
-  attachment,
-  base = state.root,
-  metadata = attachmentSize(attachment.size),
-  extraClass = '',
-) {
-  return html`<${AttachmentTileLink}
-    item=${item}
-    attachment=${attachment}
-    base=${base}
-    metadata=${metadata}
-    extraClass=${extraClass}
-  />`;
-}
-function attachmentLinkTarget(target) {
-  return target instanceof Element ? target.closest('.attachment-tile-link') : undefined;
-}
-function attachmentTooltipAnchor(target, source) {
-  const mark =
-    (source instanceof Element ? source.closest('.attachment-file-mark') : undefined) ||
-    target.querySelector('.attachment-file-mark');
-  return mark && target.contains(mark) ? mark : target;
-}
-export function hideAttachmentTooltip(target) {
-  if (target && target !== state.attachmentTooltipTarget) return;
-  setState({
-    attachmentTooltipTarget: undefined,
-    attachmentTooltipSource: undefined,
-    attachmentTooltipText: '',
-  });
-}
-function showAttachmentTooltip(target, source) {
-  if (!target?.dataset.attachmentTooltip) {
-    hideAttachmentTooltip();
-    return;
-  }
-  if (state.attachmentTooltipTarget && state.attachmentTooltipTarget !== target)
-    hideAttachmentTooltip();
-  setState({
-    attachmentTooltipTarget: target,
-    attachmentTooltipSource: source,
-    attachmentTooltipText: target.dataset.attachmentTooltip,
-  });
-}
-function repositionAttachmentTooltip() {
-  const target = state.attachmentTooltipTarget;
-  const dialog = target?.closest('dialog');
-  if (!target?.isConnected || (dialog && !dialog.open) || !target.dataset.attachmentTooltip) {
-    hideAttachmentTooltip();
-    return;
-  }
-  setState({
-    attachmentTooltipText: target.dataset.attachmentTooltip,
-    attachmentTooltipGeometry: state.attachmentTooltipGeometry + 1,
-  });
-}
-export function AttachmentTooltip({ inDialog = false }) {
-  const target = useStore((current) => current.attachmentTooltipTarget);
-  const source = useStore((current) => current.attachmentTooltipSource);
-  const text = useStore((current) => current.attachmentTooltipText);
-  useStore((current) => current.attachmentTooltipGeometry);
-  const tooltip = useRef();
-  const [position, setPosition] = useState({ left: 0, top: 0 });
-  const targetInDialog = target?.closest('dialog')?.id === 'editor';
-  useLayoutEffect(() => {
-    if (!target || !tooltip.current || targetInDialog !== inDialog) return;
-    if (!target.isConnected) {
-      hideAttachmentTooltip(target);
-      return;
-    }
-    const rootStyle = getComputedStyle(document.documentElement);
-    const gap = Number.parseFloat(rootStyle.getPropertyValue('--s1')) || 4;
-    const edge = Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16;
-    const targetBox = target.getBoundingClientRect();
-    const anchor = attachmentTooltipAnchor(target, source).getBoundingClientRect();
-    const size = tooltip.current.getBoundingClientRect();
-    const maxLeft = Math.max(edge, innerWidth - size.width - edge);
-    const left = Math.round(Math.min(Math.max(edge, anchor.left), maxLeft));
-    const top = Math.round(
-      Math.min(
-        Math.max(edge, targetBox.bottom + gap),
-        Math.max(edge, innerHeight - size.height - edge),
-      ),
-    );
-    setPosition((current) =>
-      current.left === left && current.top === top ? current : { left, top },
-    );
-  });
-  if (!target || targetInDialog !== inDialog) return null;
-  return html`<span
-    id="attachment-tooltip"
-    class="attachment-tooltip"
-    role="tooltip"
-    ref=${tooltip}
-    style=${{ left: `${position.left}px`, top: `${position.top}px` }}
-  >${text}</span>`;
-}
-function attachmentTileTemplate(item, attachment, base, metadata, onRemove) {
-  return html`<div class="attachment-tile" data-attachment-id=${String(attachment.id)}>
-    ${attachmentTileLinkTemplate(item, attachment, base, metadata)}
-    ${
-      onRemove
-        ? html`<details class="attachment-actions" data-state-key=${`attachment:${attachment.id}:actions`}>
-            <summary
-              class="attachment-actions-toggle"
-              aria-label=${`Attachment actions for ${attachment.name}`}
-              title="Attachment actions"
-            >⋯</summary>
-            <div class="attachment-actions-menu" role="menu">
-              <button
-                type="button"
-                class="attachment-remove"
-                role="menuitem"
-                data-write="true"
-                ref=${syncDisabled(!writable() || state.integrationFormOpen)}
-                onClick=${onRemove}
-              >Remove attachment</button>
-            </div>
-          </details>`
-        : null
-    }
-  </div>`;
+// The actions menu is a native disclosure whose open state the component owns,
+// so an outside pointer closes it.
+function AttachmentActions({ attachment, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const { writeDisabled } = usePermissions();
+  useDismiss(ref, open, () => setOpen(false), { closeOnEscape: false });
+  return html`<details
+    class="attachment-actions"
+    data-state-key=${`attachment:${attachment.id}:actions`}
+    open=${open}
+    ref=${ref}
+    onToggle=${(event) => setOpen(event.currentTarget.open)}
+  >
+    <summary
+      class="attachment-actions-toggle"
+      aria-label=${`Attachment actions for ${attachment.name}`}
+      title="Attachment actions"
+    >⋯</summary>
+    <div class="attachment-actions-menu" role="menu">
+      <button
+        type="button"
+        class="attachment-remove"
+        role="menuitem"
+        data-write="true"
+        disabled=${writeDisabled}
+        onClick=${onRemove}
+      >Remove attachment</button>
+    </div>
+  </details>`;
 }
 function validAttachments(data) {
   return (
@@ -380,199 +281,169 @@ function validAttachments(data) {
     )
   );
 }
-// The component owns loading, upload progress and drop state. The file input's
-// value remains native form state, and drag listeners are scoped to its lifetime.
+function attachmentsReducer(current, action) {
+  switch (action.type) {
+    case 'status':
+      return { ...current, status: action.text || '', error: !!action.error };
+    case 'progress':
+      return { ...current, progress: action.progress, progressShown: action.shown ?? true };
+    case 'dropping':
+      return current.dropping === action.dropping
+        ? current
+        : { ...current, dropping: action.dropping };
+    default:
+      return current;
+  }
+}
+// The component owns upload progress and drop state; the list itself is shared
+// store data. The file input's value remains native form state. Keyed by
+// workspace root and item, so a switch remounts it and aborts its writes.
 function ItemAttachments({ item, readOnly }) {
   const [currentRoot] = useState(() => state.root);
   const [inputID] = useState(() => `attachment-file-${requestKey()}`);
-  const [local, setLocal] = useState({
-    busy: false,
+  const [local, dispatch] = useReducer(attachmentsReducer, {
     status: '',
     error: false,
     progress: undefined,
     progressShown: false,
     dropping: false,
   });
-  // Ref updates synchronously so repeated native events cannot race a state commit.
-  const localRef = useRef(local);
-  localRef.current = local;
-  const section = useRef();
-  const itemRef = useRef(item);
-  itemRef.current = item;
-  const active = useRef(false);
-  const updateLocal = (next) => {
-    const value = typeof next === 'function' ? next(localRef.current) : next;
-    localRef.current = value;
-    setLocal(value);
-  };
-  const setStatus = (text, error = false) =>
-    updateLocal({ ...localRef.current, status: text || '', error });
-  const fileInput = () => section.current?.querySelector('.attachment-file-input');
-  const addButton = () => section.current?.querySelector('.attachment-add');
+  const writes = useMutation();
+  const list = useAttachmentList(item.id);
+  const generation = useStore(selectBoardGeneration);
+  const { writeDisabled } = usePermissions();
+  const fileInput = useRef(null);
+  const addButton = useRef(null);
+  const setStatus = (text, error = false) => dispatch({ type: 'status', text, error });
+  useEffect(() => {
+    if (!Array.isArray(list)) void ensureAttachments(item.id);
+  }, [item.id, list, generation]);
   async function removeAttachment(attachment) {
-    if (localRef.current.busy || !writable()) return;
-    const currentItem = itemRef.current;
-    updateLocal({
-      ...localRef.current,
-      busy: true,
-      status: `Removing ${attachment.name}…`,
-      error: false,
-    });
-    try {
-      await api(attachmentHref(currentItem, attachment, currentRoot), {
-        method: 'DELETE',
-        headers: { 'X-CSRF-Token': state.session.csrf },
-      });
-      if (state.root !== currentRoot || !active.current) return;
-      setItemAttachments(
-        currentItem,
-        (currentItem.attachments || []).filter((value) => value.id !== attachment.id),
-      );
-      hooks.renderContent();
-      setStatus(currentItem.attachments.length ? 'Attachment removed.' : 'No attachments yet.');
-    } catch (error) {
-      if (active.current) setStatus(error.message, true);
-    } finally {
-      if (active.current) {
-        updateLocal({ ...localRef.current, busy: false });
-        renderControls();
-      }
-    }
-  }
-  async function uploadFile(file) {
-    addButton()?.focus();
-    if (localRef.current.busy || state.uploadBusy || !writable()) return false;
-    const currentItem = itemRef.current;
-    const rejection = attachmentRejection(currentItem, file);
-    if (rejection) {
-      setStatus(rejection, true);
-      return false;
-    }
-    updateLocal({
-      ...localRef.current,
-      busy: true,
-      progress: 0,
-      progressShown: true,
-      status: `Uploading ${file.name}…`,
-      error: false,
-    });
-    state.uploadBusy = true;
-    let uploaded = false;
-    try {
-      await uploadItemFile(currentItem, file, (fraction) => {
-        if (!active.current) return;
-        updateLocal({ ...localRef.current, progress: fraction });
-        if (fraction !== undefined)
-          setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`);
-      });
-      if (state.root !== currentRoot || !active.current) return false;
-      hooks.renderContent();
-      setStatus('Attachment uploaded.');
-      uploaded = true;
-    } catch (error) {
-      if (active.current) setStatus(error.message, true);
-    } finally {
-      state.uploadBusy = false;
-      if (active.current) {
-        updateLocal({
-          ...localRef.current,
-          busy: false,
-          progress: 0,
-          progressShown: false,
+    if (!writable()) return;
+    await writes.run(async (signal) => {
+      setStatus(`Removing ${attachment.name}…`);
+      try {
+        await api(attachmentHref(item, attachment, currentRoot), {
+          method: 'DELETE',
+          headers: { 'X-CSRF-Token': state.session.csrf },
+          signal,
         });
-        renderControls();
-        const add = addButton();
-        if (add && !add.disabled) add.focus();
+        if (signal.aborted || state.root !== currentRoot) return;
+        const next = (state.attachmentLists[item.id] || []).filter(
+          (value) => value.id !== attachment.id,
+        );
+        setItemAttachments(item.id, next);
+        setStatus(next.length ? 'Attachment removed.' : 'No attachments yet.');
+      } catch (error) {
+        if (!signal.aborted) setStatus(error.message, true);
       }
-    }
-    return uploaded;
+    });
   }
   async function uploadFiles(files) {
-    if (localRef.current.busy || state.uploadBusy || !writable()) return;
+    if (writes.pending || state.uploadBusy || !writable()) return;
     const selected = Array.from(files || []).filter(Boolean);
-    const input = fileInput();
-    if (input) input.value = '';
+    if (fileInput.current) fileInput.current.value = '';
     if (!selected.length) {
       setStatus('Choose a file first.', true);
-      addButton()?.focus();
+      addButton.current?.focus();
       return;
     }
-    let uploaded = 0;
-    for (const file of selected) {
-      if (!(await uploadFile(file))) break;
-      uploaded++;
-    }
-    if (uploaded > 1 && active.current) setStatus(`${uploaded} attachments uploaded.`);
+    await writes.run(async (signal) => {
+      let uploaded = 0;
+      for (const file of selected) {
+        addButton.current?.focus();
+        const rejection = attachmentRejection(item, file);
+        if (rejection) {
+          setStatus(rejection, true);
+          break;
+        }
+        dispatch({ type: 'progress', progress: 0 });
+        setStatus(`Uploading ${file.name}…`);
+        setState({ uploadBusy: true });
+        try {
+          await uploadItemFile(
+            item,
+            file,
+            (fraction) => {
+              if (signal.aborted) return;
+              dispatch({ type: 'progress', progress: fraction });
+              if (fraction !== undefined)
+                setStatus(`Uploading ${file.name} · ${Math.round(fraction * 100)}%`);
+            },
+            signal,
+          );
+          if (signal.aborted || state.root !== currentRoot) break;
+          setStatus('Attachment uploaded.');
+          uploaded++;
+        } catch (error) {
+          if (!signal.aborted) setStatus(error.message, true);
+          break;
+        } finally {
+          setState({ uploadBusy: false });
+          if (!signal.aborted) dispatch({ type: 'progress', progress: 0, shown: false });
+        }
+      }
+      if (uploaded > 1 && !signal.aborted) setStatus(`${uploaded} attachments uploaded.`);
+    });
+    // The add button is re-enabled once the write settles; focus returns to it.
+    setTimeout(() => {
+      const add = addButton.current;
+      if (add && !add.disabled) add.focus();
+    }, 0);
   }
-  const clearDrop = () => {
-    section.current?.classList.remove('attachment-drop-active');
-    updateLocal({ ...localRef.current, dropping: false });
-  };
+  const dropAllowed = () => writable() && !writes.pending && !state.uploadBusy;
   const showDrop = (event) => {
     if (!isFileTransfer(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
-    if (writable() && !localRef.current.busy && !state.uploadBusy) {
-      event.dataTransfer.dropEffect = 'copy';
-      section.current?.classList.add('attachment-drop-active');
-      updateLocal({ ...localRef.current, dropping: true });
-    } else {
-      event.dataTransfer.dropEffect = 'none';
-      clearDrop();
-    }
+    const allowed = dropAllowed();
+    event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+    dispatch({ type: 'dropping', dropping: allowed });
   };
-  useLayoutEffect(() => {
-    active.current = true;
-    const onAttachmentsLoaded = (id) => {
-      if (id === item.id) updateLocal({ ...localRef.current });
-    };
-    attachmentListeners.add(onAttachmentsLoaded);
-    const node = section.current;
-    const onDragLeave = (event) => {
-      if (!(event.relatedTarget instanceof Node) || !node.contains(event.relatedTarget))
-        clearDrop();
-    };
-    const onDrop = (event) => {
-      if (!isFileTransfer(event.dataTransfer)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      clearDrop();
-      if (writable() && !localRef.current.busy && !state.uploadBusy)
-        void uploadFiles(event.dataTransfer.files);
-    };
-    if (!readOnly) {
-      node.addEventListener('dragenter', showDrop);
-      node.addEventListener('dragover', showDrop);
-      node.addEventListener('dragleave', onDragLeave);
-      node.addEventListener('drop', onDrop);
-    }
-    return () => {
-      active.current = false;
-      attachmentListeners.delete(onAttachmentsLoaded);
-      node.classList.remove('attachment-drop-active');
-      node.removeEventListener('dragenter', showDrop);
-      node.removeEventListener('dragover', showDrop);
-      node.removeEventListener('dragleave', onDragLeave);
-      node.removeEventListener('drop', onDrop);
-    };
-  }, [item.id, readOnly]);
-  useEffect(() => {
-    if (!attachmentsLoaded(itemRef.current)) void ensureAttachments(itemRef.current);
-  }, [item]);
+  const dropProps = readOnly
+    ? {}
+    : {
+        onDragEnter: showDrop,
+        onDragOver: showDrop,
+        onDragLeave: (event) => {
+          if (
+            !(event.relatedTarget instanceof Node) ||
+            !event.currentTarget.contains(event.relatedTarget)
+          )
+            dispatch({ type: 'dropping', dropping: false });
+        },
+        onDrop: (event) => {
+          if (!isFileTransfer(event.dataTransfer)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          dispatch({ type: 'dropping', dropping: false });
+          if (dropAllowed()) void uploadFiles(event.dataTransfer.files);
+        },
+      };
   const listTemplate = () => {
-    if (!attachmentsLoaded(item)) return emptyStateTemplate('Loading attachments…');
-    if (!item.attachments.length) return emptyStateTemplate('No attachments yet.');
-    return keyedList(
-      item.attachments,
-      (attachment) => attachment.id,
-      (attachment) =>
-        attachmentTileTemplate(
-          item,
-          attachment,
-          currentRoot,
-          `${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`,
-          readOnly ? undefined : () => removeAttachment(attachment),
-        ),
+    if (!Array.isArray(list)) return emptyStateTemplate('Loading attachments…');
+    if (!list.length) return emptyStateTemplate('No attachments yet.');
+    return list.map(
+      (attachment) => html`<div
+        key=${attachment.id}
+        class="attachment-tile"
+        data-attachment-id=${String(attachment.id)}
+      >
+        <${AttachmentTileLink}
+          item=${item}
+          attachment=${attachment}
+          base=${currentRoot}
+          metadata=${`${attachmentSize(attachment.size)} · ${memberName(attachment.uploader)}`}
+        />
+        ${
+          readOnly
+            ? null
+            : html`<${AttachmentActions}
+                attachment=${attachment}
+                onRemove=${() => removeAttachment(attachment)}
+              />`
+        }
+      </div>`,
     );
   };
   const uploadTemplate = () => html`<div class="attachment-upload">
@@ -582,8 +453,9 @@ function ItemAttachments({ item, readOnly }) {
       data-write="true"
       aria-controls=${inputID}
       title="Choose a file to attach"
-      ref=${syncDisabled(local.busy || !writable() || state.integrationFormOpen)}
-      onClick=${() => fileInput()?.click()}
+      disabled=${writes.pending || writeDisabled}
+      ref=${addButton}
+      onClick=${() => fileInput.current?.click()}
     >Add attachment</button>
     <span class="attachment-drop-hint" hidden=${!local.dropping}>Drop files here</span>
     <progress
@@ -599,6 +471,7 @@ function ItemAttachments({ item, readOnly }) {
       id=${inputID}
       tabindex="-1"
       aria-label="Attachment file"
+      ref=${fileInput}
       onChange=${(event) => {
         const input = event.currentTarget;
         void uploadFiles(input.files ? [input.files[0]] : []);
@@ -606,16 +479,20 @@ function ItemAttachments({ item, readOnly }) {
       onCancel=${(event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (active.current) addButton()?.focus();
+        addButton.current?.focus();
       }}
     />
   </div>`;
-  return html`<section class="item-attachments" aria-label="Attachments" ref=${section}>
+  return html`<section
+    class=${`item-attachments${local.dropping ? ' attachment-drop-active' : ''}`}
+    aria-label="Attachments"
+    ...${dropProps}
+  >
     <div class="section-head">
       <div class="attachment-heading">
         ${attachmentPaperclipTemplate()}
         <h3>Attachments</h3>
-        <span class="attachment-count" aria-hidden="true">${String(attachmentCount(item))}</span>
+        <span class="attachment-count" aria-hidden="true">${String(attachmentCount(item, list))}</span>
       </div>
       ${readOnly ? null : uploadTemplate()}
     </div>
@@ -630,40 +507,5 @@ function ItemAttachments({ item, readOnly }) {
   </section>`;
 }
 export function itemAttachmentsTemplate(item, readOnly) {
-  return html`<${ItemAttachments} key=${item.id} item=${item} readOnly=${readOnly} />`;
-}
-// Registers the attachment tooltip listeners; app.js calls this once at startup.
-export function initAttachmentTooltips() {
-  document.addEventListener('pointerover', (e) => {
-    const target = attachmentLinkTarget(e.target);
-    if (target && !(e.relatedTarget instanceof Node && target.contains(e.relatedTarget)))
-      showAttachmentTooltip(target, e.target);
-  });
-  document.addEventListener('pointerout', (e) => {
-    const target = attachmentLinkTarget(e.target);
-    if (
-      !target ||
-      (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) ||
-      target.matches(':hover') ||
-      target.contains(document.activeElement)
-    )
-      return;
-    hideAttachmentTooltip(target);
-  });
-  document.addEventListener('focusin', (e) => {
-    const target = attachmentLinkTarget(e.target);
-    if (target) showAttachmentTooltip(target, e.target);
-  });
-  document.addEventListener('focusout', (e) => {
-    const target = attachmentLinkTarget(e.target);
-    if (
-      !target ||
-      (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) ||
-      target.matches(':hover')
-    )
-      return;
-    hideAttachmentTooltip(target);
-  });
-  window.addEventListener('resize', repositionAttachmentTooltip);
-  document.addEventListener('scroll', repositionAttachmentTooltip, true);
+  return html`<${ItemAttachments} key=${`${state.root}:${item.id}`} item=${item} readOnly=${readOnly} />`;
 }

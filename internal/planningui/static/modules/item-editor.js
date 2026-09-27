@@ -1,5 +1,5 @@
-// The work-item editor form, its modal and the archive dialog.
-import { $, syncDisabled, uid } from './dom.js';
+// The work-item editor fields, its modal dialog and the archive dialog.
+import { uid } from './dom.js';
 import { itemPayloadFromForm } from './item-command.js';
 import { labelForeground } from './format.js';
 import { markdownEditorTemplate } from './markdown.js';
@@ -7,22 +7,29 @@ import { fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 import { state, useStore } from './state.js';
-import { hooks } from './hooks.js';
-import { writable, gitLabWritable } from './permissions.js';
+import { usePermissions, writable } from './permissions.js';
 import { itemProjectIDs, labelInfo, blocked } from './items.js';
 import { memberName } from './people.js';
-import { helpPopoverTemplate, multiSelectTemplate } from './multi-select.js';
-import { EditorDueBadge, itemDateStatus, dueDateBadgeTemplate } from './due-dates.js';
-import { singleFilterValue } from './filters.js';
-import { UNDO_TTL, offerUndo, quick } from './commands.js';
+import { helpPopoverTemplate, MultiSelect } from './multi-select.js';
+import {
+  EditorDueBadge,
+  itemDateStatus,
+  dueDateBadgeTemplate,
+  selectDueDateNow,
+} from './due-dates.js';
+import { UNDO_TTL, offerUndo } from './notices.js';
+import { quick } from './commands.js';
 import { itemAttachmentsTemplate } from './item-attachments.js';
-import { closeEditor, openEditor, setEditorSaveText } from './dialog.js';
+import { closeEditor, openDialog } from './dialog-state.js';
+import { CommandDialog } from './dialog.js';
 import { linkDisplayName, cardObservationIconTemplate, showLinks } from './gitlab.js';
 import { itemCommentsTemplate } from './item-comments.js';
-import { setSharedItem, copyCardLink, openSharedItem } from './url-state.js';
-import { gitLabPaste, addGitLabLink, reconcileItemLinks } from './item-links.js';
+import { copyCardLink } from './url-state.js';
+import { closeDetail, openSharedItem } from './actions.js';
+import { useCommittedChange } from './ui-hooks.js';
+import { GitLabPaste, addGitLabLink, reconcileItemLinks } from './item-links.js';
 
-export function itemEditorDraft(form = $('editor-form')) {
+export function itemEditorDraft(form) {
   const data = new FormData(form);
   return {
     title: String(data.get('title') || ''),
@@ -44,40 +51,40 @@ const DATE_FIELDS = [
   ['end_date', 'End date'],
   ['due_date', 'Due date'],
 ];
-// The date inputs carry the form values, and chips summarise them.
-function DatesField({ item, draft, readOnly }) {
+// The date inputs are controlled by the field, and chips summarise them.
+// Committed changes are reported through `onChange`.
+function DatesField({ item, draft, readOnly, onChange }) {
   const [inputsID] = useState(() => uid('item-dates'));
   const [editing, setEditing] = useState(false);
-  // Date controls stay uncontrolled; this revision refreshes their summary chips.
-  const [, setRevision] = useState(0);
-  const group = useRef();
-  const wasEditing = useRef(false);
-  const initial = Object.fromEntries(
-    DATE_FIELDS.map(([name]) => [name, String(draft?.[name] ?? item[name] ?? '')]),
+  const [values, setValues] = useState(() =>
+    Object.fromEntries(
+      DATE_FIELDS.map(([name]) => [name, String(draft?.[name] ?? item[name] ?? '')]),
+    ),
   );
-  const input = (name) => group.current?.querySelector(`[name="${name}"]`);
-  const value = (name) => input(name)?.value ?? initial[name];
+  const inputs = useRef({});
+  const edit = useRef(null);
+  const wasEditing = useRef(false);
+  useCommittedChange(values, onChange);
+  const setValue = (name, value) => setValues((current) => ({ ...current, [name]: value }));
   const clear = (name, title) => html`<button
     type="button"
     class="multi-select-remove"
     aria-label=${`Clear ${title.toLowerCase()}`}
     onClick=${() => {
-      const target = input(name);
-      target.value = '';
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-      target.focus();
+      setValue(name, '');
+      inputs.current[name]?.focus();
     }}
   >×</button>`;
   const toggle = () => setEditing((previous) => !previous);
   useLayoutEffect(() => {
-    if (!wasEditing.current && editing) input('start_date')?.focus();
+    if (!wasEditing.current && editing) inputs.current.start_date?.focus();
     wasEditing.current = editing;
   }, [editing]);
-  const [start, end, due] = DATE_FIELDS.map(([name]) => value(name));
+  const { start_date: start, end_date: end, due_date: due } = values;
   const part = (name, title, text) => html`<span class="date-range-part"
     ><span>${text || '-'}</span>${editing && text ? clear(name, title) : null}</span
   >`;
-  return html`<div class="multi-select-field date-field" ref=${group}>
+  return html`<div class="multi-select-field date-field">
     <div class="multi-select-header">
       <span class="multi-select-heading"><span class="multi-select-label">Dates</span></span>
       <button
@@ -88,6 +95,7 @@ function DatesField({ item, draft, readOnly }) {
         aria-expanded=${String(editing)}
         aria-controls=${inputsID}
         disabled=${readOnly}
+        ref=${edit}
         onClick=${toggle}
       >${editing ? 'Done' : 'Edit'}</button>
     </div>
@@ -101,7 +109,7 @@ function DatesField({ item, draft, readOnly }) {
         event.stopPropagation();
         if (!editing) return;
         toggle();
-        group.current.querySelector('[data-multi-edit]').focus();
+        edit.current?.focus();
       }}
     >
       <div class="multi-select-values date-field-values">
@@ -121,22 +129,26 @@ function DatesField({ item, draft, readOnly }) {
         }
       </div>
       <div class="date-field-inputs" id=${inputsID} hidden=${!editing}>
-        ${DATE_FIELDS.map(([name, title]) =>
-          fieldTemplate(name, title, initial[name], 'date', undefined, {
-            disabled: readOnly,
-            onInput: () => setRevision((version) => version + 1),
-            onChange: () => setRevision((version) => version + 1),
-          }),
+        ${DATE_FIELDS.map(
+          ([name, title]) => html`<label key=${name}
+            >${title}<input
+              name=${name}
+              type="date"
+              autocomplete="off"
+              disabled=${readOnly}
+              value=${values[name]}
+              ref=${(node) => {
+                inputs.current[name] = node;
+              }}
+              onInput=${(event) => setValue(name, event.currentTarget.value)}
+          /></label>`,
         )}
       </div>
     </div>
   </div>`;
 }
-function datesFieldTemplate(item, draft, readOnly) {
-  return html`<${DatesField} item=${item} draft=${draft} readOnly=${readOnly} />`;
-}
-function ItemTitleField({ item, draft, readOnly, dueBadgeID }) {
-  const now = useStore((current) => current.dueDateNow);
+function ItemTitleField({ item, draft, readOnly, dueBadgeID, inputRef }) {
+  const now = useStore(selectDueDateNow);
   return html`<label
     ><span class="item-title-label">Title</span><input
       name="title"
@@ -148,13 +160,14 @@ function ItemTitleField({ item, draft, readOnly, dueBadgeID }) {
       aria-describedby=${dueBadgeID && itemDateStatus(item, now)?.overdue ? dueBadgeID : undefined}
       disabled=${readOnly}
       defaultValue=${draft?.title ?? item.title}
+      ref=${inputRef}
   /></label>`;
 }
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled
 // as cached provider observations, never as authoritative planning state.
 function ItemStatus({ item }) {
-  const now = useStore((current) => current.dueDateNow);
+  const now = useStore(selectDueDateNow);
   const column = state.board.columns.find((value) => value.id === item.column_id);
   const category =
     { todo: 'To do', doing: 'In progress', done: 'Done' }[column?.category] || 'Uncategorised';
@@ -203,7 +216,7 @@ function ItemStatus({ item }) {
           }
         >${item.archived ? 'Archived' : 'Live'}</span>
         ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : null}
-        ${due && !due.overdue ? dueDateBadgeTemplate(item) : null}
+        ${due && !due.overdue ? dueDateBadgeTemplate(item, now) : null}
         <span class="badge"
           >${
             openSprints.length
@@ -235,7 +248,7 @@ function ItemStatus({ item }) {
             )}
               <div class="item-status-links">
                 ${links.map(
-                  (link) => html`<div class="item-status-link">
+                  (link) => html`<div key=${link.id} class="item-status-link">
                     ${cardObservationIconTemplate(link, `status:${item.id}:${link.id}`)}
                     <span>${linkDisplayName(link)}</span>
                   </div>`,
@@ -248,37 +261,48 @@ function ItemStatus({ item }) {
 }
 // Restoring from a shared view keeps the same card URL: the link a reader was
 // given must keep resolving after the card returns to the board.
-async function restoreSharedItem(item, context) {
+async function restoreSharedItem(item, mode) {
   if (!writable()) return;
   await quick({ kind: 'item.restore', target: item.id });
   if (!state.board) return;
-  if (context?.mode === 'modal') closeEditor();
-  else hooks.closeDetail({ force: true, focus: false });
+  if (mode === 'modal') closeEditor();
+  else closeDetail({ force: true, focus: false });
   await openSharedItem(item.id);
 }
-export function itemEditorTemplate(item, draft, readOnly, context, dueBadgeID) {
-  const selfSubject = state.board.members.find(
+// The editor fields shared by the modal and the List detail pane. `mode` is
+// 'modal' or 'detail'; `getDraft()` reads the enclosing form's input, and
+// `onChange` hears committed widget changes for draft tracking.
+export function ItemEditorFields({
+  item,
+  draft,
+  readOnly,
+  mode,
+  dueBadgeID,
+  titleRef,
+  getDraft,
+  originFocusKey,
+  onChange,
+}) {
+  const board = state.board;
+  const { gitlab } = usePermissions();
+  const selfSubject = board.members.find(
     (member) => member.subject === state.session?.subject,
   )?.subject;
-  let assigneePicker;
   const assignMe =
     !readOnly && selfSubject
-      ? () =>
+      ? ({ select }) =>
           html`<button
             type="button"
             class="multi-select-edit"
             aria-label="Assign me"
-            onClick=${() => assigneePicker.select(selfSubject)}
+            onClick=${() => select(selfSubject)}
           >Assign me</button>`
       : undefined;
   const selectedProjects = draft?.project_ids ?? itemProjectIDs(item);
-  const closed = state.board.closed_scope
+  const closed = board.closed_scope
     .filter((s) => s.item_id === item.id)
-    .map(
-      (scope) => state.board.sprints.find((s) => s.id === scope.sprint_id)?.name || scope.sprint_id,
-    );
-  const itemLinks = item.id ? state.board.links.filter((link) => link.items.includes(item.id)) : [];
-  const paste = item.id && !readOnly ? gitLabPaste(item, readOnly, context) : undefined;
+    .map((scope) => board.sprints.find((s) => s.id === scope.sprint_id)?.name || scope.sprint_id);
+  const itemLinks = item.id ? board.links.filter((link) => link.items.includes(item.id)) : [];
   const labelChip = (value) => {
     const label = labelInfo(value);
     return {
@@ -286,30 +310,25 @@ export function itemEditorTemplate(item, draft, readOnly, context, dueBadgeID) {
       style: { backgroundColor: label.color, color: labelForeground(label.color) },
     };
   };
+  const origin = () => ({ mode, draft: getDraft?.(), originFocusKey });
   const linkActions = !readOnly
     ? html`<div class="actions">
         <button
           type="button"
           data-gitlab-write="true"
-          ref=${syncDisabled(!gitLabWritable())}
-          onClick=${() => addGitLabLink(item, context)}
+          disabled=${!gitlab}
+          onClick=${() => addGitLabLink(item, origin())}
         >Add link</button>
       </div>`
     : itemLinks.length
       ? html`<div class="actions">
-          <button
-            type="button"
-            onClick=${() => {
-              if (context.mode === 'modal') $('editor').close();
-              showLinks(item);
-            }}
-          >View observations</button>
+          <button type="button" onClick=${() => showLinks(item)}>View observations</button>
         </div>`
       : null;
   return html`${item.id ? html`<${ItemStatus} item=${item} />` : null}
     <div class="item-editor-layout">
       <div class="item-editor-primary">
-        <${ItemTitleField} item=${item} draft=${draft} readOnly=${readOnly} dueBadgeID=${dueBadgeID} />
+        <${ItemTitleField} item=${item} draft=${draft} readOnly=${readOnly} dueBadgeID=${dueBadgeID} inputRef=${titleRef} />
         ${markdownEditorTemplate(
           'description',
           'Description',
@@ -319,87 +338,80 @@ export function itemEditorTemplate(item, draft, readOnly, context, dueBadgeID) {
           true,
         )}
         ${item.id ? itemAttachmentsTemplate(item, readOnly) : null}
-        ${item.id ? itemCommentsTemplate(item) : null}
+        ${item.id ? itemCommentsTemplate(item, onChange) : null}
       </div>
       <div class="item-editor-controls">
-        ${multiSelectTemplate(
-          'assignee',
-          'Assignee',
-          [
-            ['', 'Unassigned'],
-            ...state.board.members.map((m) => [m.subject, memberName(m.subject)]),
-          ],
-          [draft?.assignee ?? item.assignee],
-          undefined,
-          undefined,
-          {
-            single: true,
-            disabled: readOnly,
-            headingAction: assignMe,
-            onReady: (controls) => {
-              assigneePicker = controls;
-            },
-          },
-        )}
-        ${multiSelectTemplate(
-          'labels',
-          'Labels',
-          state.board.labels.map((label) => [label.name, label.name]),
-          draft?.labels ?? item.labels,
-          labelChip,
-          'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.',
-          { disabled: readOnly },
-        )}
-        ${multiSelectTemplate(
-          'project_id',
-          'Project',
-          [['', 'No project'], ...state.board.projects.map((p) => [p.id, p.name])],
-          selectedProjects.length ? selectedProjects : [''],
-          undefined,
-          'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.',
-          { emptyValue: '', disabled: readOnly },
-        )}
-        ${datesFieldTemplate(item, draft, readOnly)}
-        ${multiSelectTemplate(
-          'sprint_ids',
-          'Open sprints',
-          state.board.sprints
-            .filter((s) => s.state !== 'closed')
-            .map((s) => [s.id, `${s.name} (${s.state})`]),
-          draft?.sprint_ids ?? item.sprint_ids,
-          undefined,
-          'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.',
-          { disabled: readOnly },
-        )}
-        ${
-          closed.length
-            ? helpTextTemplate(`Closed sprint history (read-only): ${closed.join(', ')}`)
-            : null
-        }
-        ${multiSelectTemplate(
-          'dependencies',
-          'Depends on',
-          state.board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title]),
-          draft?.dependencies ?? item.dependencies,
-          undefined,
-          undefined,
-          { disabled: readOnly },
-        )}
+        <${MultiSelect}
+          name="assignee"
+          title="Assignee"
+          entries=${[['', 'Unassigned'], ...board.members.map((m) => [m.subject, memberName(m.subject)])]}
+          defaultValue=${[draft?.assignee ?? item.assignee]}
+          single=${true}
+          disabled=${readOnly}
+          headingAction=${assignMe}
+          onChange=${onChange}
+        />
+        <${MultiSelect}
+          name="labels"
+          title="Labels"
+          entries=${board.labels.map((label) => [label.name, label.name])}
+          defaultValue=${draft?.labels ?? item.labels}
+          decorate=${labelChip}
+          helpText="Use Edit to add labels and × to remove them. Manage available labels from the Labels view."
+          disabled=${readOnly}
+          onChange=${onChange}
+        />
+        <${MultiSelect}
+          name="project_id"
+          title="Project"
+          entries=${[['', 'No project'], ...board.projects.map((p) => [p.id, p.name])]}
+          defaultValue=${selectedProjects.length ? selectedProjects : ['']}
+          helpText="Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified."
+          emptyValue=""
+          disabled=${readOnly}
+          onChange=${onChange}
+        />
+        <${DatesField} item=${item} draft=${draft} readOnly=${readOnly} onChange=${onChange} />
+        <${MultiSelect}
+          name="sprint_ids"
+          title="Open sprints"
+          entries=${board.sprints.filter((s) => s.state !== 'closed').map((s) => [s.id, `${s.name} (${s.state})`])}
+          defaultValue=${draft?.sprint_ids ?? item.sprint_ids}
+          helpText="Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards."
+          disabled=${readOnly}
+          onChange=${onChange}
+        />
+        ${closed.length ? helpTextTemplate(`Closed sprint history (read-only): ${closed.join(', ')}`) : null}
+        <${MultiSelect}
+          name="dependencies"
+          title="Depends on"
+          entries=${board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title])}
+          defaultValue=${draft?.dependencies ?? item.dependencies}
+          disabled=${readOnly}
+          onChange=${onChange}
+        />
         ${
           item.id
-            ? html`${multiSelectTemplate(
-                'link_ids',
-                'GitLab links',
-                state.board.links.map((link) => [link.id, linkDisplayName(link)]),
-                draft?.link_ids ?? itemLinks.map((link) => link.id),
-                undefined,
-                'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.',
-                {
-                  footer: paste?.template,
-                  onReady: (controls) => paste?.bind(controls),
-                  disabled: readOnly,
-                },
-              )}${linkActions}`
+            ? html`<${MultiSelect}
+                name="link_ids"
+                title="GitLab links"
+                entries=${board.links.map((link) => [link.id, linkDisplayName(link)])}
+                defaultValue=${draft?.link_ids ?? itemLinks.map((link) => link.id)}
+                helpText="Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed."
+                footer=${
+                  readOnly
+                    ? null
+                    : html`<${GitLabPaste}
+                        item=${item}
+                        readOnly=${readOnly}
+                        mode=${mode}
+                        getDraft=${getDraft}
+                        originFocusKey=${originFocusKey}
+                      />`
+                }
+                disabled=${readOnly}
+                onChange=${onChange}
+              />${linkActions}`
             : null
         }
         <hr class="item-editor-divider" />
@@ -408,7 +420,7 @@ export function itemEditorTemplate(item, draft, readOnly, context, dueBadgeID) {
           'Move to',
           draft?.column_id ?? item.column_id,
           'text',
-          state.board.columns.map((c) => [c.id, c.name]),
+          board.columns.map((c) => [c.id, c.name]),
           { disabled: readOnly },
         )}
       </div>
@@ -450,98 +462,78 @@ export function itemEditorTitleExtrasTemplate(item, revision = item.revision) {
   return html` ${helpPopoverTemplate(`Card ID: ${item.id}\nRevision: ${revision}`, 'Work item details')} <${CopyCardLinkButton} item=${item} />`;
 }
 // Archive and restore sit before Cancel in either editor surface.
-export function itemEditorFooterActionsTemplate(item, readOnly, context) {
+export function ItemFooterActions({ item, readOnly, mode }) {
+  const { role, writeDisabled } = usePermissions();
   if (item.id && !item.archived && !readOnly)
     return html`<button
       type="button"
       class="danger archive-footer"
       data-item-footer="true"
       data-write="true"
-      disabled=${!writable() || state.integrationFormOpen}
-      onClick=${() => archiveItem(item, context)}
+      disabled=${writeDisabled}
+      onClick=${() => openDialog('item.archive', { item, mode })}
     >Archive item</button>`;
-  if (item.id && item.archived && state.board.role !== 'viewer')
+  if (item.id && item.archived && role !== 'viewer')
     return html`<button
       type="button"
       data-item-footer="true"
       data-write="true"
-      disabled=${!writable() || state.integrationFormOpen}
-      onClick=${() => void restoreSharedItem(item, context)}
+      disabled=${writeDisabled}
+      onClick=${() => void restoreSharedItem(item, mode)}
     >Restore item</button>`;
   return null;
 }
-export function reopenItemEditor(item, draft, mode, origin) {
-  if (mode === 'detail') hooks.openItemDetail(item, draft, origin);
-  else editItemModal(item, draft);
-}
-export function editItemModal(item, draft) {
-  const existing = !!item;
-  const readOnly = state.board.role === 'viewer' || item?.archived;
-  let desiredLinkIDs;
-  const project = singleFilterValue('project');
-  const projectIDs = ['all', 'none'].includes(project) ? [] : [project];
-  item ||= {
-    title: '',
-    description: '',
-    start_date: '',
-    end_date: '',
-    due_date: '',
-    column_id: state.board.columns[0].id,
-    project_id: projectIDs[0] || '',
-    project_ids: projectIDs,
-    sprint_ids: [],
-    assignee: '',
-    labels: [],
-    dependencies: [],
-  };
-  const context = { mode: 'modal', form: $('editor-form') };
-  const dueBadgeID = uid('item-title-overdue');
-  state.editorItemID = existing ? item.id : '';
-  if (existing) setSharedItem(item.id);
-  openEditor(
-    existing ? 'Work item' : 'Create work item',
-    () => itemEditorTemplate(item, draft, readOnly, context, dueBadgeID),
-    (data) => {
-      if (existing) desiredLinkIDs = data.getAll('link_ids');
+// The modal editor for a new or existing card, opened with the card snapshot
+// and any draft carried over from another surface.
+export function ItemEditorDialog({ item, draft, readOnly }) {
+  const existing = !!item.id;
+  const [dueBadgeID] = useState(() => uid('item-title-overdue'));
+  const form = useRef(null);
+  const desiredLinkIDs = useRef([]);
+  const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
+  return html`<${CommandDialog}
+    title=${existing ? 'Work item' : 'Create work item'}
+    className="item-editor-form"
+    formRef=${form}
+    readOnly=${readOnly}
+    titleExtra=${existing ? itemEditorTitleExtrasTemplate(item) : null}
+    titleBadge=${html`<${EditorDueBadge} item=${item} id=${dueBadgeID} />`}
+    footerAction=${html`<${ItemFooterActions} item=${item} readOnly=${readOnly} mode="modal" />`}
+    command=${(data) => {
+      if (existing) desiredLinkIDs.current = data.getAll('link_ids');
       return {
         kind: existing ? 'item.update' : 'item.create',
         target: item.id || '',
         item: itemPayloadFromForm(data, item),
       };
-    },
-    readOnly,
-    existing ? () => reconcileItemLinks(item.id, desiredLinkIDs || []) : undefined,
-    undefined,
-    {
-      titleExtra: item.id ? itemEditorTitleExtrasTemplate(item) : null,
-      titleBadge: html`<${EditorDueBadge} item=${item} id=${dueBadgeID} />`,
-      footerAction: itemEditorFooterActionsTemplate(item, readOnly, context),
-    },
-  );
+    }}
+    afterSave=${existing ? () => reconcileItemLinks(item.id, desiredLinkIDs.current) : undefined}
+  ><${ItemEditorFields}
+    item=${item}
+    draft=${draft}
+    readOnly=${readOnly}
+    mode="modal"
+    dueBadgeID=${dueBadgeID}
+    getDraft=${getDraft}
+  /></${CommandDialog}>`;
 }
-export function editItem(item, draft) {
-  if (item && state.view === 'board' && state.presentation === 'list')
-    return hooks.selectItem(item.id);
-  return editItemModal(item, draft);
-}
-function archiveItem(item, context) {
-  if (context?.mode === 'modal') closeEditor();
-  openEditor(
-    'Archive work item',
-    () => html`<p>${`Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`}</p>
-      ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
-        maxLength: 4000,
-      })}`,
-    (data) => ({ kind: 'item.archive', target: item.id, reason: data.get('reason') }),
-    false,
-    () => {
+export function ArchiveItemDialog({ item, mode }) {
+  return html`<${CommandDialog}
+    title="Archive work item"
+    saveText="Archive item"
+    command=${(data) => ({ kind: 'item.archive', target: item.id, reason: data.get('reason') })}
+    afterSave=${() => {
       offerUndo(`Archived “${item.title}” · undo is available for ${UNDO_TTL / 1000} seconds`, {
         kind: 'item.restore',
         target: item.id,
         restore_sprint_ids: [...(item.sprint_ids || [])],
       });
-      if (context?.mode === 'detail') hooks.closeDetail({ force: true, focus: true });
-    },
-  );
-  setEditorSaveText('Archive item');
+      if (mode === 'detail') closeDetail({ force: true, focus: true });
+    }}
+  >
+    <p>${`Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`}</p>
+    ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
+      maxLength: 4000,
+    })}
+  </${CommandDialog}>`;
 }

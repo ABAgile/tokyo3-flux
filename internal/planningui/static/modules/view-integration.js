@@ -1,11 +1,11 @@
 // The GitLab integration form on the Projects page.
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { setState, state } from './state.js';
-import { hooks } from './hooks.js';
+import { useEffect, useRef } from './vendor-preact.js';
+import { setState, state, useStore } from './state.js';
 import { notice } from './notices.js';
-import { multiSelectTemplate } from './multi-select.js';
-import { integrationProjectEntries, loadGitLabProjects } from './gitlab-catalog.js';
+import { MultiSelect } from './multi-select.js';
+import { integrationProjectEntries } from './gitlab-catalog.js';
 import { change } from './commands.js';
 
 export function editIntegration() {
@@ -16,54 +16,7 @@ export function editIntegration() {
     integrationConsent: false,
     integrationSubmitting: false,
     integrationFormError: '',
-    integrationCatalog: [],
   });
-  state.integrationCatalogLoaded = false;
-  state.integrationCatalogError = '';
-  state.integrationCatalogLoading = false;
-  state.integrationCatalogRequest++;
-  if (state.board.connector_instance) void loadIntegrationCatalog();
-  else hooks.render();
-}
-export async function loadIntegrationCatalog() {
-  if (!state.board || state.integrationCatalogLoading || state.view !== 'projects') return;
-  const currentBoard = state.board,
-    currentRoot = state.root,
-    request = ++state.integrationCatalogRequest;
-  state.integrationCatalogLoading = true;
-  state.integrationCatalogError = '';
-  if (state.integrationFormOpen) {
-    hooks.render();
-    notice('Loading available GitLab projects…');
-  }
-  try {
-    const catalog = await loadGitLabProjects(currentRoot);
-    if (
-      request !== state.integrationCatalogRequest ||
-      state.board !== currentBoard ||
-      state.root !== currentRoot
-    )
-      return;
-    state.integrationCatalog = catalog;
-    state.integrationCatalogLoaded = true;
-  } catch (error) {
-    if (
-      request !== state.integrationCatalogRequest ||
-      state.board !== currentBoard ||
-      state.root !== currentRoot
-    )
-      return;
-    state.integrationCatalogError = error.message;
-    state.integrationCatalogLoaded = true;
-  } finally {
-    // biome-ignore lint/correctness/noUnsafeFinally: a superseded request must not render; try/catch never rethrow.
-    if (request !== state.integrationCatalogRequest) return;
-    state.integrationCatalogLoading = false;
-    if (state.board === currentBoard && state.root === currentRoot && state.view === 'projects') {
-      if (state.integrationFormOpen) notice('');
-      hooks.render();
-    }
-  }
 }
 function cancelIntegration() {
   setState({
@@ -72,17 +25,12 @@ function cancelIntegration() {
     integrationConsent: false,
     integrationSubmitting: false,
     integrationFormError: '',
-    integrationCatalogError: '',
-    integrationCatalogLoading: false,
-    integrationCatalogRequest: state.integrationCatalogRequest + 1,
   });
-  hooks.render();
 }
-async function submitIntegration(event, readOnly) {
+async function submitIntegration(event, readOnly, loading) {
   event.preventDefault();
   const form = event.currentTarget;
-  if (readOnly || state.busy || state.integrationCatalogLoading || state.integrationSubmitting)
-    return;
+  if (readOnly || state.busy || loading || state.integrationSubmitting) return;
   const parts = new FormData(form).getAll('projects');
   try {
     if (parts.length > 100) throw new Error('Select at most 100 GitLab projects.');
@@ -96,14 +44,7 @@ async function submitIntegration(event, readOnly) {
       kind: 'integration.save',
       integration: { instance: state.board.connector_instance, projects: parts.map(Number) },
     });
-    setState({
-      integrationCatalogError: '',
-      integrationCatalogLoading: false,
-      integrationCatalogRequest: state.integrationCatalogRequest + 1,
-      integrationDraft: undefined,
-      integrationConsent: false,
-    });
-    hooks.render();
+    setState({ integrationDraft: undefined, integrationConsent: false });
   } catch (submitError) {
     setState({
       integrationFormOpen: true,
@@ -113,44 +54,51 @@ async function submitIntegration(event, readOnly) {
     setState({ integrationSubmitting: false });
   }
 }
-// The form is rendered when it opens or its catalog changes (the Projects page
-// keys it on those inputs). While it is shown, the error line and the
-// disabled state of its buttons during a save belong to submitIntegration.
-export function integrationFormTemplate() {
-  const currentBoard = state.board;
-  const readOnly = currentBoard.role !== 'admin';
-  const loading = state.integrationCatalogLoading;
-  const selected = state.integrationDraft ?? currentBoard.integration.projects.map(String);
+function selectIntegrationForm(current) {
+  return current.integrationSubmitting + '\u0000' + current.integrationFormError;
+}
+// The form's selections and consent live in the store, so a failed save
+// reopens it intact. The catalog is owned by the Projects page request.
+export function IntegrationForm({ board, catalog, loading, error, onRetry }) {
+  useStore(selectIntegrationForm);
+  const readOnly = board.role !== 'admin';
+  const selected = state.integrationDraft ?? board.integration.projects.map(String);
   const disabled = readOnly || loading || state.integrationSubmitting;
-  const catalogNote = state.integrationCatalogError
+  // The status line announces the catalog load and clears only its own text.
+  const announced = useRef(false);
+  useEffect(() => {
+    if (loading) {
+      announced.current = true;
+      notice('Loading available GitLab projects…');
+    } else if (announced.current) {
+      announced.current = false;
+      notice('');
+    }
+  }, [loading]);
+  const catalogNote = error
     ? html`${errorLineTemplate(
-        `Could not load the GitLab project list. ${state.integrationCatalogError} Existing approvals remain available so they are not removed accidentally.`,
-      )}<button type="button" disabled=${disabled} onClick=${loadIntegrationCatalog}
+        `Could not load the GitLab project list. ${error} Existing approvals remain available so they are not removed accidentally.`,
+      )}<button type="button" disabled=${disabled} onClick=${onRetry}
           >Retry loading projects</button
         >`
-    : currentBoard.connector_instance && !loading && !state.integrationCatalog.length
+    : board.connector_instance && !loading && !catalog.length
       ? helpTextTemplate('No GitLab projects are visible to the configured read connector.')
       : null;
   return html`<form
     class="inline-maintenance-form"
-    onSubmit=${(event) => submitIntegration(event, readOnly)}
+    onSubmit=${(event) => submitIntegration(event, readOnly, loading)}
   >
-    ${helpTextTemplate(
-      `Operator-configured instance: ${currentBoard.connector_instance || 'Not configured'}`,
-    )}
-    ${helpTextTemplate(`Existing approval: ${currentBoard.integration.instance || 'None'}`)}
-    ${multiSelectTemplate(
-      'projects',
-      'Approved GitLab projects',
-      integrationProjectEntries(state.integrationCatalog, selected),
-      selected,
-      undefined,
-      'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.',
-      {
-        disabled,
-        onChange: (values) => setState({ integrationDraft: values }),
-      },
-    )}
+    ${helpTextTemplate(`Operator-configured instance: ${board.connector_instance || 'Not configured'}`)}
+    ${helpTextTemplate(`Existing approval: ${board.integration.instance || 'None'}`)}
+    <${MultiSelect}
+      name="projects"
+      title="Approved GitLab projects"
+      entries=${integrationProjectEntries(catalog, selected)}
+      defaultValue=${selected}
+      helpText="Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader."
+      disabled=${disabled}
+      onChange=${(values) => setState({ integrationDraft: values })}
+    />
     ${loading ? helpTextTemplate('Loading available GitLab projects…') : null}
     ${catalogNote}
     ${helpTextTemplate(
@@ -171,7 +119,7 @@ export function integrationFormTemplate() {
       },
     )}
     ${
-      currentBoard.connector_instance
+      board.connector_instance
         ? null
         : helpTextTemplate(
             'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN. Planning works without a connector.',

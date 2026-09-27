@@ -171,9 +171,8 @@ async function run(page) {
       !refresh.disabled &&
       editor &&
       !editor.open &&
-      form &&
-      !form.classList.contains('item-editor-form') &&
-      !form.querySelector('#fields')?.childElementCount
+      // A closed dialog renders no dialog content at all.
+      !form
     );
   });
   // Rename applies to existing assignments; archive then delete also updates archived work.

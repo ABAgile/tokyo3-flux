@@ -5,42 +5,53 @@
 async function run(page) {
   await page.waitForFunction(() => document.querySelector('.board .card'));
   const result = await page.evaluate(async () => {
-    const { state } = await import('/modules/state.js');
-    const { hooks } = await import('/modules/hooks.js');
+    const { state, setState } = await import('/modules/state.js');
     const original = state.board;
     const originalView = state.view;
+    const originalLists = state.attachmentLists;
     const body = document.getElementById('planning-body');
     const check = (ok, message) => {
       if (!ok) throw new Error(message);
     };
+    // Store updates render on the next microtask; native toggle events are tasks.
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
     const renderedID = body.querySelector('.card')?.dataset.item;
     const item = original.items.find((value) => value.id === renderedID);
     const columns = original.columns;
     check(item && columns.length > 1, 'fixture needs an active item and two columns');
-    const draft = {
-      ...item,
-      column_id: columns[0].id,
-      attachments: [
-        { id: 123, item_id: item.id, name: 'fixture.txt', size: 12, content_type: 'text/plain' },
-      ],
-    };
+    const draft = { ...item, column_id: columns[0].id, attachment_count: 1 };
     try {
-      state.board = { ...original, items: [draft] };
-      hooks.render();
+      setState({
+        board: { ...original, items: [draft] },
+        attachmentLists: {
+          [item.id]: [
+            {
+              id: 123,
+              item_id: item.id,
+              name: 'fixture.txt',
+              size: 12,
+              content_type: 'text/plain',
+            },
+          ],
+        },
+      });
+      await flush();
       let card = body.querySelector('.card');
       const title = card.querySelector('.card-title');
       const attachments = card.querySelector('.card-attachments');
       attachments.open = true;
       title.focus();
-      hooks.render();
+      await flush();
+      setState({ board: { ...state.board } });
+      await flush();
       check(body.querySelector('.card') === card, 'unchanged refresh retains card identity');
       check(
         document.activeElement === title && attachments.open,
         'refresh preserves focus and disclosure',
       );
       const moved = { ...draft, title: 'Current title', column_id: columns[1].id };
-      state.board = { ...state.board, items: [moved] };
-      hooks.render();
+      setState({ board: { ...state.board, items: [moved] } });
+      await flush();
       card = body.querySelector('.card');
       check(
         card.closest('.column').dataset.column === columns[1].id,
@@ -59,19 +70,18 @@ async function run(page) {
         'retained render uses current data',
       );
       const boardRoot = body.firstElementChild;
-      state.view = 'projects';
-      hooks.render();
+      setState({ view: 'projects' });
+      await flush();
       check(
         document.getElementById('planning-frame').hidden && body.firstElementChild === boardRoot,
         'the inactive planning frame retains its App-owned content',
       );
-      state.view = 'board';
-      hooks.render();
+      setState({ view: 'board' });
+      await flush();
       check(body.firstElementChild === boardRoot, 'returning to the board retains its root');
     } finally {
-      state.board = original;
-      state.view = originalView;
-      hooks.render();
+      setState({ board: original, view: originalView, attachmentLists: originalLists });
+      await flush();
     }
     return 'keyed refresh identity, cross-column focus/disclosure, current props and persistent App-owned planning content';
   });
@@ -81,10 +91,9 @@ async function run(page) {
   const detailTitle = pane.getByLabel('Title', { exact: true });
   await detailTitle.fill('Draft survives a board update');
   await page.evaluate(async () => {
-    const { state } = await import('/modules/state.js');
-    const { hooks } = await import('/modules/hooks.js');
-    state.board = { ...state.board };
-    hooks.render();
+    const { state, setState } = await import('/modules/state.js');
+    setState({ board: { ...state.board } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
   if ((await detailTitle.inputValue()) !== 'Draft survives a board update')
     throw new Error('Board update reset the detail editor draft');
@@ -99,7 +108,7 @@ async function run(page) {
   await help.click();
   const revision = await page.evaluate(async () => {
     const { state } = await import('/modules/state.js');
-    return state.detailState.item.revision;
+    return state.detail.item.revision;
   });
   if (
     !(await pane.locator('.item-detail-title .help-popover-content').textContent()).includes(

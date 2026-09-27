@@ -43,10 +43,10 @@ async function api(path, init = {}) {
 // Conditional read. Planning responses are no-store, so the browser never
 // revalidates on its own; the caller keeps the last ETag and passes it back,
 // and an unchanged resource answers with an empty 304.
-async function apiRevalidated(path, etag = '') {
+async function apiRevalidated(path, etag = '', { signal } = {}) {
   const headers = { Accept: 'application/json' };
   if (etag) headers['If-None-Match'] = etag;
-  const r = await fetch(path, { redirect: 'manual', headers });
+  const r = await fetch(path, { redirect: 'manual', headers, signal });
   if (isRedirectResponse(r) || r.status === 401) sessionExpired();
   if (r.status === 304)
     return { modified: false, etag: r.headers.get('ETag') || etag, data: undefined };
@@ -62,9 +62,17 @@ async function apiRevalidated(path, etag = '') {
 // Multipart upload with progress. `fetch` cannot report request progress, so
 // attachment uploads use XMLHttpRequest and report bytes sent to the caller.
 // Response and error normalization matches `api` so call sites are identical.
-function apiUpload(path, { headers = {}, body, onProgress } = {}) {
+// An aborted `signal` cancels the request and rejects with an AbortError.
+function apiUpload(path, { headers = {}, body, onProgress, signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Upload cancelled.', 'AbortError'));
+      return;
+    }
     const request = new XMLHttpRequest();
+    const abort = () => request.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    request.addEventListener('loadend', () => signal?.removeEventListener('abort', abort));
     request.open('POST', path);
     request.responseType = 'text';
     request.setRequestHeader('Accept', 'application/json');
@@ -76,7 +84,13 @@ function apiUpload(path, { headers = {}, body, onProgress } = {}) {
     request.addEventListener('error', () =>
       reject(new Error('Planning service unavailable. Refresh to retry.')),
     );
-    request.addEventListener('abort', () => reject(new Error('Upload cancelled.')));
+    request.addEventListener('abort', () =>
+      reject(
+        signal?.aborted
+          ? new DOMException('Upload cancelled.', 'AbortError')
+          : new Error('Upload cancelled.'),
+      ),
+    );
     request.addEventListener('timeout', () =>
       reject(new Error('Upload timed out. Refresh to retry.')),
     );

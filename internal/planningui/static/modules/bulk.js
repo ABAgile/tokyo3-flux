@@ -2,14 +2,15 @@
 import { labelForeground } from './format.js';
 import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { state } from './state.js';
-import { hooks } from './hooks.js';
+import { setState, state } from './state.js';
 import { accessButtonTemplate } from './permissions.js';
-import { notice } from './notices.js';
+import { notice, UNDO_TTL, offerUndo } from './notices.js';
 import { findItem } from './items.js';
 import { memberName } from './people.js';
-import { UNDO_TTL, offerUndo, runSequence } from './commands.js';
-import { openFormDialog } from './dialog.js';
+import { runSequence } from './commands.js';
+import { closeEditor, openDialog } from './dialog-state.js';
+import { FormDialog } from './dialog.js';
+import { clearBulk, selectAllBulk } from './actions.js';
 
 function bulkTargets() {
   return [...state.bulkSelection].map(findItem).filter((item) => item && !item.archived);
@@ -29,169 +30,171 @@ async function runBulk(label, plan, undoFor) {
   }
   const commands = targets.map(plan).filter(Boolean);
   const undo = undoFor?.(targets);
-  state.bulkSelection.clear();
+  setState({ bulkSelection: new Set() });
   const ok = await runSequence(label, commands);
   if (ok && commands.length && undo)
     offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
 }
-function openBulkDialog(title, saveText, build, plan, label, undoFor, hideSave = false) {
-  openFormDialog(
-    title,
-    saveText,
-    build,
-    async (data, { close, setError }) => {
+// A bulk dialog plans one command per selected item from its form; the plan
+// is validated before the dialog closes and the sequence runs.
+function BulkDialog({ title, saveText, plan, label, undoFor, hideSave = false, children }) {
+  return html`<${FormDialog}
+    title=${title}
+    saveText=${saveText}
+    hideSave=${hideSave}
+    onSubmit=${async (data) => {
       if (state.busy) return;
-      let apply;
-      try {
-        apply = plan(data);
-      } catch (error) {
-        setError(error.message);
-        return;
-      }
-      close();
+      const apply = plan(data);
+      closeEditor();
       await runBulk(label, apply, undoFor);
-    },
-    { hideSave },
-  );
+    }}
+  >${children}</${FormDialog}>`;
 }
-function bulkAssign() {
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Assign selected work',
-    'Assign items',
-    () => html`${helpTextTemplate(
-      `Set one assignee on ${count} selected work item${count === 1 ? '' : 's'}. Existing assignees are replaced.`,
-    )}
-      ${fieldTemplate('assignee', 'Assignee', '', 'text', [
-        ['', 'Unassigned'],
-        ...state.board.members.map((member) => [member.subject, memberName(member.subject)]),
-      ])}`,
-    (data) => {
+function count(n) {
+  return `${n} selected work item${n === 1 ? '' : 's'}`;
+}
+export function BulkAssignDialog({ selected, members }) {
+  return html`<${BulkDialog}
+    title="Assign selected work"
+    saveText="Assign items"
+    label="Assign"
+    plan=${(data) => {
       const assignee = String(data.get('assignee') || '');
       return (item) =>
         item.assignee === assignee ? undefined : bulkItemUpdate(item, { assignee });
-    },
-    'Assign',
-  );
+    }}
+  >
+    ${helpTextTemplate(`Set one assignee on ${count(selected)}. Existing assignees are replaced.`)}
+    ${fieldTemplate('assignee', 'Assignee', '', 'text', [
+      ['', 'Unassigned'],
+      ...members.map((member) => [member.subject, memberName(member.subject)]),
+    ])}
+  </${BulkDialog}>`;
 }
-function bulkSprint() {
-  const open = state.board.sprints.filter((sprint) => sprint.state !== 'closed');
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Add selected work to a sprint',
-    'Add to sprint',
-    () => {
-      if (!open.length)
-        return emptyStateTemplate('No open sprint is available. Plan a sprint first.');
-      return html`${helpTextTemplate(
-        `Add ${count} selected work item${count === 1 ? '' : 's'} to one open sprint. Existing sprint memberships are kept.`,
-      )}
-      ${fieldTemplate(
-        'sprint',
-        'Open sprint',
-        open[0].id,
-        'text',
-        open.map((sprint) => [sprint.id, `${sprint.name} (${sprint.state})`]),
-      )}`;
-    },
-    (data) => {
+export function BulkSprintDialog({ selected, sprints }) {
+  return html`<${BulkDialog}
+    title="Add selected work to a sprint"
+    saveText="Add to sprint"
+    label="Add to sprint"
+    hideSave=${!sprints.length}
+    plan=${(data) => {
       const sprint = String(data.get('sprint') || '');
-      if (!open.some((value) => value.id === sprint)) throw new Error('Choose an open sprint.');
+      if (!sprints.some((value) => value.id === sprint)) throw new Error('Choose an open sprint.');
       return (item) =>
         item.sprint_ids.includes(sprint)
           ? undefined
           : bulkItemUpdate(item, { sprint_ids: [...item.sprint_ids, sprint] });
-    },
-    'Add to sprint',
-    undefined,
-    !open.length,
-  );
+    }}
+  >
+    ${
+      sprints.length
+        ? html`${helpTextTemplate(
+            `Add ${count(selected)} to one open sprint. Existing sprint memberships are kept.`,
+          )}
+          ${fieldTemplate(
+            'sprint',
+            'Open sprint',
+            sprints[0].id,
+            'text',
+            sprints.map((sprint) => [sprint.id, `${sprint.name} (${sprint.state})`]),
+          )}`
+        : emptyStateTemplate('No open sprint is available. Plan a sprint first.')
+    }
+  </${BulkDialog}>`;
 }
-function bulkLabel() {
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Add a label to selected work',
-    'Add label',
-    () => {
-      if (!state.board.labels.length)
-        return emptyStateTemplate('No workspace label exists yet. Create one in the Labels view.');
-      return html`${helpTextTemplate(
-        `Add one workspace label to ${count} selected work item${count === 1 ? '' : 's'}. Existing labels are kept.`,
-      )}
-      <label
-        >Label<select name="label">
-          ${state.board.labels.map((label, index) => {
-            const colors = {
-              'background-color': label.color,
-              color: labelForeground(label.color),
-            };
-            return html`<option value=${label.name} selected=${index === 0} style=${colors}
-              >${label.name}</option
-            >`;
-          })}
-        </select></label
-      >`;
-    },
-    (data) => {
+export function BulkLabelDialog({ selected, labels }) {
+  return html`<${BulkDialog}
+    title="Add a label to selected work"
+    saveText="Add label"
+    label="Add label"
+    hideSave=${!labels.length}
+    plan=${(data) => {
       const label = String(data.get('label') || '');
-      if (!state.board.labels.some((value) => value.name === label))
+      if (!labels.some((value) => value.name === label))
         throw new Error('Choose a workspace label.');
       return (item) =>
         item.labels.includes(label)
           ? undefined
           : bulkItemUpdate(item, { labels: [...item.labels, label] });
-    },
-    'Add label',
-    undefined,
-    !state.board.labels.length,
-  );
+    }}
+  >
+    ${
+      labels.length
+        ? html`${helpTextTemplate(
+            `Add one workspace label to ${count(selected)}. Existing labels are kept.`,
+          )}
+          <label
+            >Label<select name="label">
+              ${labels.map((label, index) => {
+                const colors = {
+                  'background-color': label.color,
+                  color: labelForeground(label.color),
+                };
+                return html`<option key=${label.name} value=${label.name} selected=${index === 0} style=${colors}
+                  >${label.name}</option
+                >`;
+              })}
+            </select></label
+          >`
+        : emptyStateTemplate('No workspace label exists yet. Create one in the Labels view.')
+    }
+  </${BulkDialog}>`;
 }
-function bulkArchive() {
-  const count = bulkTargets().length;
-  openBulkDialog(
-    'Archive selected work',
-    'Archive items',
-    () => html`<p>${`Archive ${count} selected work item${count === 1 ? '' : 's'} and remove them from all open sprints? History is retained and each item can be restored.`}</p>
-      ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
-        maxLength: 4000,
-      })}`,
-    (data) => {
+export function BulkArchiveDialog({ selected }) {
+  return html`<${BulkDialog}
+    title="Archive selected work"
+    saveText="Archive items"
+    label="Archive"
+    plan=${(data) => {
       const reason = String(data.get('reason') || '');
       return (item) => ({ kind: 'item.archive', target: item.id, reason });
-    },
-    'Archive',
-    (targets) => ({
+    }}
+    undoFor=${(targets) => ({
       text: `Archived ${targets.length} work item${targets.length === 1 ? '' : 's'}`,
       commands: targets.map((item) => ({
         kind: 'item.restore',
         target: item.id,
         restore_sprint_ids: [...(item.sprint_ids || [])],
       })),
-    }),
-  );
+    })}
+  >
+    <p>${`Archive ${count(selected)} and remove them from all open sprints? History is retained and each item can be restored.`}</p>
+    ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
+      maxLength: 4000,
+    })}
+  </${BulkDialog}>`;
+}
+function bulkAssign() {
+  openDialog('bulk.assign', { selected: bulkTargets().length, members: state.board.members });
+}
+function bulkSprint() {
+  openDialog('bulk.sprint', {
+    selected: bulkTargets().length,
+    sprints: state.board.sprints.filter((sprint) => sprint.state !== 'closed'),
+  });
+}
+function bulkLabel() {
+  openDialog('bulk.label', { selected: bulkTargets().length, labels: state.board.labels });
+}
+function bulkArchive() {
+  openDialog('bulk.archive', { selected: bulkTargets().length });
 }
 function bulkSelectableIDs(items) {
   return items.filter((item) => !item.archived).map((item) => item.id);
 }
-export function pruneBulkSelection(items) {
+// The selection keeps only shown, selectable cards.
+export function prunedBulkSelection(selection, items) {
   const selectable = new Set(bulkSelectableIDs(items));
-  state.bulkSelection.forEach((id) => {
-    if (!selectable.has(id)) state.bulkSelection.delete(id);
-  });
+  const next = new Set([...selection].filter((id) => selectable.has(id)));
+  return next.size === selection.size ? selection : next;
 }
-export function bulkBarTemplate(items) {
+export function BulkBar({ items, selection, role }) {
   const ids = bulkSelectableIDs(items);
-  const show = state.bulkSelection.size > 0 && state.board.role !== 'viewer';
+  const show = selection.size > 0 && role !== 'viewer';
   const action = (text, fn, className) =>
     accessButtonTemplate(text, fn, { className, tracked: false });
-  const selectAll = () => {
-    for (const id of ids) state.bulkSelection.add(id);
-    hooks.renderContent();
-  };
-  const clear = () => {
-    state.bulkSelection.clear();
-    hooks.renderContent();
-  };
+  const selectAll = () => selectAllBulk(ids);
+  const clear = clearBulk;
   return html`<div
     class="bulk-bar"
     data-bulk-bar="true"
@@ -202,13 +205,13 @@ export function bulkBarTemplate(items) {
     ${
       show
         ? html`<span class="bulk-count"
-              >${`${state.bulkSelection.size} of ${ids.length} shown selected`}</span
+              >${`${selection.size} of ${ids.length} shown selected`}</span
             >
             <div class="actions bulk-actions">
               ${action('Assign…', bulkAssign)}${action('Add to sprint…', bulkSprint)}
               ${action('Add label…', bulkLabel)}${action('Archive…', bulkArchive, 'danger')}
               ${
-                state.bulkSelection.size < ids.length
+                selection.size < ids.length
                   ? html`<button type="button" onClick=${selectAll}
                       >${`Select all ${ids.length} shown`}</button
                     >`

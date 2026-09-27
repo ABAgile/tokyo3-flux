@@ -9,25 +9,12 @@ import {
   metricListTemplate,
 } from './layout.js';
 import { html } from './vdom.js';
-import { state } from './state.js';
-import { hooks } from './hooks.js';
-import { setContentBusy } from './mount.js';
+import { useEffect } from './vendor-preact.js';
+import { setState, state, subscribe, useStore } from './state.js';
 import { singleFilterValue, selectedFilterText } from './filters.js';
+import { useRequest, waitUntil } from './ui-hooks.js';
+import { usePermissions } from './permissions.js';
 
-export function resetBurndown() {
-  state.burndownGeneration++;
-  state.burndownData.clear();
-  state.burndownRequests.clear();
-  state.burndownErrors.clear();
-}
-export function currentBurndownKey(sprintID) {
-  return [
-    state.board?.workspace.revision || 0,
-    sprintID,
-    singleFilterValue('project'),
-    singleFilterValue('assignee'),
-  ].join('|');
-}
 function burndownSegments(points, key, x, y) {
   const segments = [];
   let segment = [];
@@ -143,20 +130,16 @@ function latestBurndownPoint(points, key) {
 function firstBurndownPoint(points, key) {
   return points.find((point) => Number.isFinite(point[key]));
 }
-function burndownBody(sprint, context) {
-  const key = currentBurndownKey(sprint.id);
-  const data = state.burndownData.get(key);
-  const error = state.burndownErrors.get(key);
+function burndownBody(result, context, busy) {
+  const { data, error, loading } = result;
   if (error)
-    return html`${context()}${errorLineTemplate(error)}<button
+    return html`${context()}${errorLineTemplate(error.message)}<button
         type="button"
-        disabled=${state.busy || state.loading}
-        onClick=${() => requestBurndown(sprint.id, true)}
+        disabled=${busy}
+        onClick=${result.reload}
       >Retry burn down</button>`;
-  if (!data) {
-    requestBurndown(sprint.id);
+  if (!data || loading)
     return html`${context()}${emptyStateTemplate('Loading native planning history…')}`;
-  }
   if (!data.history_available) return html`${context()}${emptyStateTemplate(data.warning)}`;
   if (!data.points.some((point) => Number.isFinite(point.remaining)))
     return html`${context()}${emptyStateTemplate(
@@ -183,11 +166,47 @@ function burndownBody(sprint, context) {
     </div>
     ${burndownTable(data)}`;
 }
-export function burndownTemplate(sprint) {
+async function loadBurndown(root, sprintID, project, assignee, revision, signal) {
+  // Reads wait for a board refresh to settle, so they are checked against the
+  // revision the refresh produces.
+  await waitUntil(subscribe, () => !state.loading, signal);
+  const query = new URLSearchParams({ sprint: sprintID, project, assignee });
+  const next = await api(`${root}/burndown?${query}`, { signal });
+  if (!next || !Array.isArray(next.points) || !next.sprint)
+    throw new Error('Burn-down data is invalid. Refresh to retry.');
+  if (next.revision !== revision)
+    throw new Error('Planning changed while loading. Refresh to review.');
+  return next;
+}
+function selectBurndownInputs(current) {
+  return [
+    current.root,
+    current.board?.workspace.revision || 0,
+    singleFilterValue('project', current.filters),
+    singleFilterValue('assignee', current.filters),
+  ].join('\u0000');
+}
+// The chart reads the server's native planning history for the sprint and the
+// single project and assignee filter. Each revision or filter change is a new
+// request; while any chart loads, the content body is busy.
+function BurndownPanel({ sprint }) {
+  const inputs = useStore(selectBurndownInputs);
+  const filters = useStore((current) => current.filters);
+  const { busy } = usePermissions();
+  const [root, revision, project, assignee] = inputs.split('\u0000');
+  const result = useRequest(
+    (signal) => loadBurndown(root, sprint.id, project, assignee, Number(revision), signal),
+    [inputs, sprint.id],
+  );
+  useEffect(() => {
+    if (!result.loading) return undefined;
+    setState((current) => ({ burndownPending: current.burndownPending + 1 }));
+    return () => setState((current) => ({ burndownPending: current.burndownPending - 1 }));
+  }, [result.loading]);
   const headingID = `burndown-heading-${sprint.id}`;
   const filterCondition = html`<div class="burndown-filter-condition">
-    <p class="muted">${`Project: ${selectedFilterText('project')}`}</p>
-    <p class="muted">${`Assignee: ${selectedFilterText('assignee')}`}</p>
+    <p class="muted">${`Project: ${selectedFilterText('project', filters)}`}</p>
+    <p class="muted">${`Assignee: ${selectedFilterText('assignee', filters)}`}</p>
   </div>`;
   const context = (...extra) => html`<div class="burndown-context">
     ${panelHeadTemplate('Remaining work', {
@@ -200,60 +219,8 @@ export function burndownTemplate(sprint) {
     class="panel burndown-panel"
     id=${`burndown-${sprint.id}`}
     aria-labelledby=${headingID}
-  >${burndownBody(sprint, context)}</section>`;
+  >${burndownBody(result, context, busy)}</section>`;
 }
-async function requestBurndown(sprintID, force = false) {
-  if (!state.board || !state.burndownExpanded.has(sprintID) || state.loading) return;
-  const key = currentBurndownKey(sprintID);
-  if (state.burndownRequests.has(key)) return;
-  if (!force && (state.burndownData.has(key) || state.burndownErrors.has(key))) return;
-  if (force) {
-    state.burndownData.delete(key);
-    state.burndownErrors.delete(key);
-  }
-  const generation = state.burndownGeneration;
-  const currentBoard = state.board,
-    currentRoot = state.root;
-  const token = {};
-  state.burndownRequests.set(key, token);
-  setContentBusy(true);
-  try {
-    const query = new URLSearchParams({
-      sprint: sprintID,
-      project: singleFilterValue('project'),
-      assignee: singleFilterValue('assignee'),
-    });
-    const next = await api(currentRoot + '/burndown?' + query);
-    if (
-      generation !== state.burndownGeneration ||
-      state.board !== currentBoard ||
-      state.root !== currentRoot
-    )
-      return;
-    if (!next || !Array.isArray(next.points) || !next.sprint)
-      throw new Error('Burn-down data is invalid. Refresh to retry.');
-    if (next.revision !== currentBoard.workspace.revision)
-      throw new Error('Planning changed while loading. Refresh to review.');
-    state.burndownData.set(key, next);
-    state.burndownErrors.delete(key);
-  } catch (e) {
-    if (
-      generation !== state.burndownGeneration ||
-      state.board !== currentBoard ||
-      state.root !== currentRoot
-    )
-      return;
-    state.burndownErrors.set(key, e.message);
-  } finally {
-    if (state.burndownRequests.get(key) === token) state.burndownRequests.delete(key);
-    if (
-      generation !== state.burndownGeneration ||
-      state.board !== currentBoard ||
-      state.root !== currentRoot
-    )
-      // biome-ignore lint/correctness/noUnsafeFinally: a stale response must not render; try/catch never rethrow.
-      return;
-    if (!state.burndownRequests.size) setContentBusy(false);
-    if (state.view === 'board' || state.view === 'sprints') hooks.render();
-  }
+export function burndownTemplate(sprint) {
+  return html`<${BurndownPanel} key=${sprint.id} sprint=${sprint} />`;
 }

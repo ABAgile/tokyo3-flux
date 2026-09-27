@@ -2,31 +2,18 @@
 import { html } from './vdom.js';
 import { useLayoutEffect, useRef } from './vendor-preact.js';
 import { setState, useStore } from './state.js';
+import { useFocusRestore } from './ui-hooks.js';
 
 export function WorkspaceSelection({ workspaces, choose, create }) {
   const root = useRef();
-  const focusKey = useRef('');
-  useLayoutEffect(() => {
-    if (focusKey.current && document.activeElement === document.body)
-      root.current
-        ?.querySelector(`[data-workspace-choice="${CSS.escape(focusKey.current)}"]`)
-        ?.focus({ preventScroll: true });
-  });
-  const rememberFocus = (event) => {
-    focusKey.current =
-      event.target.closest('[data-workspace-choice]')?.dataset.workspaceChoice || '';
-  };
-  const clearOutsideFocus = (event) => {
-    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
-      focusKey.current = '';
-  };
+  const { onFocusCapture, onBlurCapture } = useFocusRestore(root, 'workspaces');
   return html`
     <p class="help">Select the workspace you want to open. You can switch workspaces from the sidebar after entering one.</p>
-    <div class="workspace-choice-list" role="list" ref=${root} onFocusCapture=${rememberFocus} onBlurCapture=${clearOutsideFocus}>
+    <div class="workspace-choice-list" role="list" ref=${root} onFocusCapture=${onFocusCapture} onBlurCapture=${onBlurCapture}>
       ${workspaces.map(
         (workspace) => html`
         <button key=${workspace.id} type="button" class="workspace-choice"
-          data-workspace-choice=${workspace.id} aria-label=${`Open ${workspace.name}`}
+          data-workspace-choice=${workspace.id} data-focus-key=${`workspace:${workspace.id}`} aria-label=${`Open ${workspace.name}`}
           onClick=${() => choose(workspace.id)}>
           <span class="workspace-choice-copy"><strong>${workspace.name}</strong><small class="muted">${`${workspace.role} access`}</small></span>
           <span class="workspace-choice-action">Open →</span>

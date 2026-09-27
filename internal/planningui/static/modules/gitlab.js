@@ -1,13 +1,14 @@
 // GitLab links and cached observations on cards, rows and the observations dialog.
-import { $ } from './dom.js';
 import { requestKey } from './api.js';
 import { helpTextTemplate, emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useRef, useState } from './vendor-preact.js';
+import { useEffect, useState } from './vendor-preact.js';
 import { state, useStore } from './state.js';
 import { writable } from './permissions.js';
 import { change } from './commands.js';
-import { openEditor, setEditorError } from './dialog.js';
+import { openDialog, setEditorError } from './dialog-state.js';
+import { FormDialog } from './dialog.js';
+import { useObservationTooltip } from './tooltip.js';
 
 export function linkDisplayName(link, includeTitle = true) {
   const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
@@ -121,33 +122,6 @@ function observationTooltip(link) {
   parts.push(observationTiming(link));
   return `${linkLabel(link)} · ${parts.join(' · ')}`;
 }
-function observationIconTarget(target) {
-  return target instanceof Element ? target.closest('.card-observation-icon') : undefined;
-}
-function positionObservationTooltip(target) {
-  const tooltipStyle = getComputedStyle(target, '::after');
-  const width = Number.parseFloat(tooltipStyle.width) || 320;
-  const height = Number.parseFloat(tooltipStyle.height) || 0;
-  const rootStyle = getComputedStyle(document.documentElement);
-  const gap = Number.parseFloat(rootStyle.getPropertyValue('--s1')) || 4;
-  const edge = Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16;
-  const targetBox = target.getBoundingClientRect();
-  const maxLeft = Math.max(edge, innerWidth - width - edge);
-  const left = Math.min(Math.max(edge, targetBox.left), maxLeft);
-  const below = targetBox.bottom + gap;
-  const top =
-    below + height <= innerHeight - edge ? below : Math.max(edge, targetBox.top - gap - height);
-  target.style.setProperty('--observation-tooltip-left', `${Math.round(left)}px`);
-  target.style.setProperty('--observation-tooltip-top', `${Math.round(top)}px`);
-}
-export function repositionObservationTooltip() {
-  const target = state.observationTooltipTarget;
-  if (!target?.isConnected || (!target.matches(':hover') && document.activeElement !== target)) {
-    state.observationTooltipTarget = undefined;
-    return;
-  }
-  positionObservationTooltip(target);
-}
 function observationIconState(link) {
   if (link.refresh_pending || link.outcome === 'refreshing')
     return { symbol: '↻', status: 'pending', stale: true };
@@ -170,9 +144,10 @@ function observationIconState(link) {
   if (state === 'opened') return { symbol: '●', status: 'open', stale: observationIsStale(link) };
   return { symbol: '?', status: 'unknown', stale: observationIsStale(link) };
 }
-export function cardObservationIconTemplate(link, focusKey) {
+function ObservationIcon({ link, focusKey }) {
   const icon = observationIconState(link);
-  const tooltip = observationTooltip(link);
+  const text = observationTooltip(link);
+  const tooltip = useObservationTooltip();
   return html`<span
     class="card-observation-icon"
     data-link-id=${link.id}
@@ -180,38 +155,17 @@ export function cardObservationIconTemplate(link, focusKey) {
     data-status=${icon.status}
     data-stale=${String(icon.stale)}
     data-focus-key=${focusKey || `link:${link.id}:observation`}
-    data-tooltip=${tooltip}
+    data-tooltip=${text}
     role="img"
-    aria-label=${`Card observation: ${tooltip}`}
+    aria-label=${`Card observation: ${text}`}
     tabindex="0"
+    ref=${tooltip.ref}
+    style=${tooltip.style}
+    ...${tooltip.props}
   >${icon.symbol}</span>`;
 }
-export function linkIdentitySignature(link) {
-  return JSON.stringify({
-    id: link.id,
-    project: link.project,
-    kind: link.kind,
-    number: link.number,
-    items: [...(link.items || [])].sort(),
-  });
-}
-function observationSignature(link) {
-  return JSON.stringify({
-    observation: link.observation || null,
-    last_success: link.last_success || null,
-    last_attempt: link.last_attempt || null,
-    outcome: link.outcome || '',
-    next_refresh: link.next_refresh || null,
-    refresh_pending: !!link.refresh_pending,
-  });
-}
-export function observationsChanged(previousLinks, nextLinks) {
-  const previous = new Map(previousLinks.map((link) => [link.id, link]));
-  return nextLinks.some(
-    (link) =>
-      previous.has(link.id) &&
-      observationSignature(previous.get(link.id)) !== observationSignature(link),
-  );
+export function cardObservationIconTemplate(link, focusKey) {
+  return html`<${ObservationIcon} key=${`observation:${link.id}`} link=${link} focusKey=${focusKey} />`;
 }
 function observationTiming(link) {
   const timestamp = (value) => {
@@ -241,8 +195,8 @@ async function refreshObservation(item, link, key) {
       { kind: 'link.refresh', target: link.id, revision: state.board.workspace.revision },
       key,
     );
-    $('editor').close();
-    showLinks(state.board.items.find((i) => i.id === item.id));
+    const latest = state.board?.items.find((i) => i.id === item.id);
+    if (latest) showLinks(latest);
   } catch (e) {
     setEditorError(
       `${e.message} Refresh the board to see current status; cooldowns prevent duplicate requests.`,
@@ -254,8 +208,7 @@ function LinkObservation({ item, link }) {
   const busy = useStore((current) => current.busy);
   const loading = useStore((current) => current.loading);
   const [now, setNow] = useState(Date.now());
-  const request = useRef();
-  if (!request.current) request.current = requestKey();
+  const [request] = useState(requestKey);
   useEffect(() => {
     if (!link.next_refresh) return;
     const timer = setInterval(() => setNow(Date.now()), 10000);
@@ -303,78 +256,41 @@ function LinkObservation({ item, link }) {
         type="button"
         data-refresh-link=${link.id}
         disabled=${disabled}
-        onClick=${() => refreshObservation(item, link, request.current)}
+        onClick=${() => refreshObservation(item, link, request)}
       >Refresh observation</button>
     </div>
   </article>`;
 }
+// The observations dialog is a snapshot of the card's links when it opened;
+// refresh controls follow the live board and busy state.
 export function showLinks(item) {
-  const ready =
-    state.board.connector_instance &&
-    state.board.connector_instance === state.board.integration.instance;
-  const links = state.board.links.filter((l) => l.items.includes(item.id));
-  openEditor(
-    'Linked GitLab observations',
-    () => html`${helpTextTemplate(
-      `${item.title} · ${state.board.integration.instance || 'No approved integration'}`,
-    )}
-      ${helpTextTemplate(
-        `Engineering observations only. Refresh does not move cards or change sprint scope. ${state.board.refresh_seconds ? `Background refresh: about every ${state.board.refresh_seconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
-      )}
-      ${
-        links.length
-          ? null
-          : emptyStateTemplate('Unlinked. Add an approved MR; never infer links from card titles.')
-      }
-      ${links.map((link) => html`<${LinkObservation} item=${item} link=${link} />`)}
-      ${
-        ready
-          ? null
-          : helpTextTemplate(
-              'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
-            )
-      }`,
-    () => ({}),
-    true,
-  );
+  const board = state.board;
+  openDialog('links.show', {
+    item,
+    links: board.links.filter((l) => l.items.includes(item.id)),
+    instance: board.integration.instance,
+    refreshSeconds: board.refresh_seconds,
+    ready: !!board.connector_instance && board.connector_instance === board.integration.instance,
+  });
 }
-// Registers the observation tooltip listeners; app.js calls this once at startup.
-export function initObservationTooltips() {
-  document.addEventListener('pointerover', (e) => {
-    const target = observationIconTarget(e.target);
-    if (target && !(e.relatedTarget instanceof Node && target.contains(e.relatedTarget))) {
-      state.observationTooltipTarget = target;
-      positionObservationTooltip(target);
+export function LinksDialog({ item, links, instance, refreshSeconds, ready }) {
+  return html`<${FormDialog} title="Linked GitLab observations" readOnly=${true}>
+    ${helpTextTemplate(`${item.title} · ${instance || 'No approved integration'}`)}
+    ${helpTextTemplate(
+      `Engineering observations only. Refresh does not move cards or change sprint scope. ${refreshSeconds ? `Background refresh: about every ${refreshSeconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
+    )}
+    ${
+      links.length
+        ? null
+        : emptyStateTemplate('Unlinked. Add an approved MR; never infer links from card titles.')
     }
-  });
-  document.addEventListener('pointerout', (e) => {
-    const target = observationIconTarget(e.target);
-    if (
-      !target ||
-      (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) ||
-      target.matches(':hover') ||
-      target.contains(document.activeElement)
-    )
-      return;
-    if (state.observationTooltipTarget === target) state.observationTooltipTarget = undefined;
-  });
-  document.addEventListener('focusin', (e) => {
-    const target = observationIconTarget(e.target);
-    if (target) {
-      state.observationTooltipTarget = target;
-      positionObservationTooltip(target);
+    ${links.map((link) => html`<${LinkObservation} key=${link.id} item=${item} link=${link} />`)}
+    ${
+      ready
+        ? null
+        : helpTextTemplate(
+            'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
+          )
     }
-  });
-  document.addEventListener('focusout', (e) => {
-    const target = observationIconTarget(e.target);
-    if (
-      !target ||
-      (e.relatedTarget instanceof Node && target.contains(e.relatedTarget)) ||
-      target.matches(':hover')
-    )
-      return;
-    if (state.observationTooltipTarget === target) state.observationTooltipTarget = undefined;
-  });
-  window.addEventListener('resize', repositionObservationTooltip);
-  document.addEventListener('scroll', repositionObservationTooltip, true);
+  </${FormDialog}>`;
 }

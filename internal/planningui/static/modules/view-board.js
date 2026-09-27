@@ -1,5 +1,4 @@
 // The Kanban board: project lens, columns, cards and board setup.
-import { $ } from './dom.js';
 import { columnWIPLabel } from './format.js';
 import {
   fieldTemplate,
@@ -7,12 +6,12 @@ import {
   emptyStateTemplate,
   metricListTemplate,
 } from './layout.js';
-import { attach, classNames } from './dom.js';
-import { html, keyedList } from './vdom.js';
-import { useLayoutEffect, useRef } from './vendor-preact.js';
+import { classNames } from './dom.js';
+import { html, memo } from './vdom.js';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from './vendor-preact.js';
 
-import { state } from './state.js';
-import { writable, accessButtonTemplate } from './permissions.js';
+import { state, useStore } from './state.js';
+import { usePermissions, accessButtonTemplate } from './permissions.js';
 import {
   itemProjectIDs,
   projectBadgesTemplate,
@@ -22,21 +21,24 @@ import {
   findItem,
 } from './items.js';
 import { participantStackTemplate } from './people.js';
-import { itemDateStatus, dueDateBadgeTemplate } from './due-dates.js';
-import { singleFilterValue, filteredItems } from './filters.js';
+import { itemDateStatus, dueDateBadgeTemplate, selectDueDateNow } from './due-dates.js';
+import { filteredItems } from './filters.js';
 import { quick } from './commands.js';
 import {
-  attachmentsLoaded,
   attachmentCount,
   ensureAttachments,
-  itemFileDropZone,
+  useAttachmentList,
+  useItemFileDrop,
   attachmentPaperclipTemplate,
-  attachmentTileLinkTemplate,
+  AttachmentTileLink,
+  selectBoardGeneration,
 } from './item-attachments.js';
-import { openEditor } from './dialog.js';
-import { attachDrag, dropZone } from './drag.js';
+import { closeEditor, openDialog } from './dialog-state.js';
+import { CommandDialog, FormDialog } from './dialog.js';
+import { mergeEventProps, useDraggable, useDropZone } from './drag.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
-import { editItem } from './item-editor.js';
+import { editItem } from './actions.js';
+import { useDismiss, useFocusRestore } from './ui-hooks.js';
 
 export function ProjectSummary({ board, view, projectID }) {
   const project = board?.projects?.find((value) => value.id === projectID);
@@ -58,7 +60,7 @@ export function ProjectSummary({ board, view, projectID }) {
   const unscheduled = items.filter((item) => !done(item) && !item.sprint_ids.length).length;
   const coverage = active.map((sprint) => {
     const count = items.filter((item) => item.sprint_ids.includes(sprint.id)).length;
-    return html`<span class="badge">${`${sprint.name} · ${count}`}</span>`;
+    return html`<span key=${sprint.id} class="badge">${`${sprint.name} · ${count}`}</span>`;
   });
   return html`<section
     id="project-summary"
@@ -94,10 +96,114 @@ export function ProjectSummary({ board, view, projectID }) {
     }
   </section>`;
 }
-// Cards and columns are Preact templates: every render describes the whole board
-// and Preact updates only what changed, so focus, hover, open <details> and
-// scroll survive refreshes without per-section patch code. Drag, drop and file
-// drops are imperative and wired once per element through attach().
+
+// Everything a card or list row renders besides its own item. It changes only
+// with the board data it reads, the due-date clock or permissions, so a
+// memoized row skips rendering when its item and flags are unchanged.
+function selectBoard(current) {
+  return current.board;
+}
+function selectArchiveItems(current) {
+  return current.archiveItems;
+}
+export function useRowContext() {
+  const board = useStore(selectBoard);
+  const now = useStore(selectDueDateNow);
+  const { write, writeDisabled, busy, role } = usePermissions();
+  const session = useStore((current) => current.session);
+  const root = useStore((current) => current.root);
+  const { links, sprints, labels, members, projects, participants, columns } = board;
+  return useMemo(() => {
+    const linksByItem = new Map();
+    for (const link of links)
+      for (const id of link.items) {
+        if (!linksByItem.has(id)) linksByItem.set(id, []);
+        linksByItem.get(id).push(link);
+      }
+    return {
+      linksByItem,
+      sprintName: (id) => sprints.find((s) => s.id === id)?.name || id,
+      canWrite: write,
+      writeDisabled,
+      busy,
+      role,
+      now,
+      root,
+      // Identity for the remaining board data templates read.
+      data: [labels, members, projects, participants, columns, session],
+    };
+  }, [
+    links,
+    sprints,
+    labels,
+    members,
+    projects,
+    participants,
+    columns,
+    session,
+    write,
+    writeDisabled,
+    busy,
+    role,
+    now,
+    root,
+  ]);
+}
+const NO_LINKS = Object.freeze([]);
+// Blocked flags depend on other cards, so they are computed per list.
+export function useBlockedIDs(items) {
+  const board = useStore(selectBoard);
+  const archiveItems = useStore(selectArchiveItems);
+  return useMemo(
+    () => new Set(items.filter(blocked).map((item) => item.id)),
+    [items, board.items, board.columns, archiveItems],
+  );
+}
+// Board cards and List rows are both drop targets for a card: before or after
+// the target within its column.
+export function cardDropZones(itemID) {
+  return [
+    {
+      type: 'card',
+      enabled: () => !findItem(itemID)?.archived,
+      command: (dragged, after) => {
+        const current = findItem(itemID);
+        if (!current) return undefined;
+        const peers = filteredItems().filter((value) => value.column_id === current.column_id);
+        const index = peers.findIndex((value) => value.id === current.id);
+        return {
+          kind: 'item.move',
+          target: dragged,
+          destination: current.column_id,
+          before: after ? peers[index + 1]?.id || '' : current.id,
+        };
+      },
+    },
+  ];
+}
+// A column or List section accepts a card at its end and a list before or after it.
+export function columnDropZones(columnID) {
+  return [
+    {
+      type: 'card',
+      axis: 'end',
+      command: (dragged) => ({ kind: 'item.move', target: dragged, destination: columnID }),
+    },
+    {
+      type: 'list',
+      axis: 'x',
+      command: (dragged, after) => {
+        const index = state.board.columns.findIndex((value) => value.id === columnID);
+        return {
+          kind: 'column.rank',
+          target: dragged,
+          before: after ? state.board.columns[index + 1]?.id || '' : columnID,
+        };
+      },
+    },
+  ];
+}
+
 function openCardFromClick(event, item) {
   if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
     return;
@@ -107,22 +213,6 @@ function openCardFromKey(event, item) {
   if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
   event.preventDefault();
   editItem(item);
-}
-function attachCard(node, id) {
-  attachDrag(node, 'card', id);
-  itemFileDropZone(node, findItem(id));
-  dropZone(node, 'card', (dragged, after) => {
-    const current = findItem(id);
-    if (!current) return undefined;
-    const peers = filteredItems().filter((value) => value.column_id === current.column_id);
-    const index = peers.findIndex((value) => value.id === current.id);
-    return {
-      kind: 'item.move',
-      target: dragged,
-      destination: current.column_id,
-      before: after ? peers[index + 1]?.id || '' : current.id,
-    };
-  });
 }
 function cardLinksTemplate(item, links) {
   return html`<div class="card-links-section" role="group" aria-label="GitLab links">
@@ -138,37 +228,36 @@ function cardLinksTemplate(item, links) {
       >View observations</button>
     </div>
     <div class="card-links" aria-label="GitLab links">
-      ${keyedList(
-        links,
-        (link) => link.id,
-        (link) =>
-          html`${
+      ${links.map(
+        (link) => html`<${Fragment} key=${link.id}
+          >${
             link.kind === 'mr'
               ? cardObservationIconTemplate(link, `item:${item.id}:observation:${link.id}`)
               : null
-          }${cardLinkTemplate(link, `item:${item.id}:link:${link.id}`)}`,
+          }${cardLinkTemplate(link, `item:${item.id}:link:${link.id}`)}</${Fragment}
+        >`,
       )}
     </div>
   </div>`;
 }
-function restoreAttachmentDisclosure(node, id, expanded) {
-  if (expanded.has(id)) node.open = true;
-}
-function cardAttachmentsTemplate(item, total, expanded) {
+// The disclosure's open state belongs to the board, so it survives a card
+// moving between columns; expanding it is what pays for the metadata read.
+function CardAttachments({ item, total, list, open, onToggle }) {
+  const ref = useRef(null);
+  const generation = useStore(selectBoardGeneration);
   const count = `${total} attachment${total === 1 ? '' : 's'}`;
-  // The <details> open state belongs to the user; the template never binds it.
-  // Expanding the summary is what pays for the metadata read.
+  useDismiss(ref, open, () => onToggle(item.id, false), { closeOnEscape: false });
+  useEffect(() => {
+    if (open && !Array.isArray(list)) void ensureAttachments(item.id);
+  }, [open, list, generation, item.id]);
   return html`<details
     class="card-attachments"
     data-state-key=${`item:${item.id}:attachments`}
     aria-label=${count}
-    ref=${expanded ? attach(restoreAttachmentDisclosure, item.id, expanded) : undefined}
+    open=${open}
+    ref=${ref}
     onToggle=${(event) => {
-      if (expanded) {
-        if (event.currentTarget.open) expanded.add(item.id);
-        else expanded.delete(item.id);
-      }
-      if (event.currentTarget.open) void ensureAttachments(findItem(item.id) || item);
+      if (event.currentTarget.open !== open) onToggle(item.id, event.currentTarget.open);
     }}
   >
     <summary class="card-attachments-head">
@@ -179,40 +268,47 @@ function cardAttachmentsTemplate(item, total, expanded) {
     </summary>
     <div class="card-attachment-list">
       ${
-        attachmentsLoaded(item)
-          ? keyedList(
-              item.attachments,
-              (attachment) => attachment.id,
-              (attachment) =>
-                attachmentTileLinkTemplate(
-                  item,
-                  attachment,
-                  undefined,
-                  undefined,
-                  ' card-attachment-option',
-                ),
+        Array.isArray(list)
+          ? list.map(
+              (attachment) => html`<${AttachmentTileLink}
+                key=${attachment.id}
+                item=${item}
+                attachment=${attachment}
+                extraClass=" card-attachment-option"
+              />`,
             )
           : emptyStateTemplate('Loading attachments…')
       }
     </div>
   </details>`;
 }
-export function cardTemplate(item, expanded) {
-  const overdue = !!itemDateStatus(item)?.overdue;
-  const links = state.board.links.filter((l) => l.items.includes(item.id));
-  const total = attachmentCount(item);
-  const sprintName = (id) => state.board.sprints.find((s) => s.id === id)?.name || id;
+function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsToggle }) {
+  const { now, canWrite, writeDisabled, sprintName } = context;
+  const list = useAttachmentList(item.id);
+  const drag = useDraggable('card', item.id, () => canWrite && !item.archived);
+  const drop = useDropZone(`card:${item.id}`, cardDropZones(item.id));
+  const files = useItemFileDrop(item.id);
+  const overdue = !!itemDateStatus(item, now)?.overdue;
+  const links = context.linksByItem.get(item.id) || NO_LINKS;
+  const total = attachmentCount(item, list);
+  const { draggable, ...dragEvents } = drag.props;
   return html`<article
-    class=${classNames({ card: true, 'is-overdue': overdue })}
+    class=${classNames({
+      card: true,
+      'is-overdue': overdue,
+      'drag-source': drag.source,
+      [drop.className]: !!drop.className,
+      [files.className]: !!files.className,
+    })}
     data-item=${item.id}
     data-focus-key=${`item:${item.id}:card`}
     data-drag-type="card"
-    draggable=${writable() && !item.archived}
+    draggable=${draggable}
     tabindex="0"
     aria-label=${`Open work item ${item.title}; draggable`}
-    ref=${attach(attachCard, item.id)}
     onClick=${(event) => openCardFromClick(event, item)}
     onKeydown=${(event) => openCardFromKey(event, item)}
+    ...${mergeEventProps(dragEvents, files.props, drop.props)}
   >
     <div class=${classNames({ 'card-top': true, 'card-top-overdue': overdue })}>
       <button
@@ -221,7 +317,7 @@ export function cardTemplate(item, expanded) {
         data-focus-key=${`item:${item.id}:title`}
         onClick=${() => editItem(item)}
       >${item.title}</button>
-      ${overdue ? dueDateBadgeTemplate(item, ' card-title-due') : null}
+      ${overdue ? dueDateBadgeTemplate(item, now, ' card-title-due') : null}
     </div>
     <div class="card-meta">
       <div class="card-projects">${projectBadgesTemplate(item)}</div>
@@ -230,13 +326,13 @@ export function cardTemplate(item, expanded) {
     <div class="tags" data-card-section="sprints">
       ${item.sprint_ids.map(
         (id) =>
-          html`<span class="badge badge-sprint" data-sprint-id=${id}>${sprintName(id)}</span>`,
+          html`<span key=${id} class="badge badge-sprint" data-sprint-id=${id}>${sprintName(id)}</span>`,
       )}
     </div>
     <div class="tags" data-card-section="labels">
       ${item.labels.map(labelBadgeTemplate)}
-      ${blocked(item) ? html`<span class="badge warning">Blocked by dependency</span>` : null}
-      ${overdue ? null : dueDateBadgeTemplate(item)}
+      ${isBlocked ? html`<span class="badge warning">Blocked by dependency</span>` : null}
+      ${overdue ? null : dueDateBadgeTemplate(item, now)}
       ${item.archived ? html`<span class="badge">Archived</span>` : null}
     </div>
     ${
@@ -244,174 +340,193 @@ export function cardTemplate(item, expanded) {
         ? html`<div class="card-controls">
             <button
               type="button"
-              disabled=${!writable() || state.integrationFormOpen}
+              disabled=${writeDisabled}
               onClick=${() => quick({ kind: 'item.restore', target: item.id })}
             >Restore item</button>
           </div>`
         : null
     }
     ${links.length ? cardLinksTemplate(item, links) : null}
-    ${total ? cardAttachmentsTemplate(item, total, expanded) : null}
+    ${
+      total
+        ? html`<${CardAttachments}
+            item=${item}
+            total=${total}
+            list=${list}
+            open=${attachmentsOpen}
+            onToggle=${onAttachmentsToggle}
+          />`
+        : null
+    }
   </article>`;
 }
-function attachColumn(section, id) {
-  dropZone(
-    section,
-    'card',
-    (dragged) => ({ kind: 'item.move', target: dragged, destination: id }),
-    'end',
-  );
-  dropZone(
-    section,
-    'list',
-    (dragged, after) => {
-      const index = state.board.columns.findIndex((value) => value.id === id);
-      return {
-        kind: 'column.rank',
-        target: dragged,
-        before: after ? state.board.columns[index + 1]?.id || '' : id,
-      };
-    },
-    'x',
-  );
+export const Card = memo(CardView);
+// Open card-attachment disclosures, by item id, for one list of cards.
+export function useExpandedAttachments() {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggle = useCallback((id, open) => {
+    setExpanded((current) => {
+      if (current.has(id) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  return [expanded, toggle];
 }
-function columnTemplate(col, items, expanded) {
-  const peers = items.filter((item) => item.column_id === col.id);
-  const total = state.board.items.filter(
-    (item) => !item.archived && item.column_id === col.id,
-  ).length;
+function Column({ column, peers, total, context, blockedIDs, expanded, onAttachmentsToggle }) {
+  const drop = useDropZone(`column:${column.id}`, columnDropZones(column.id));
+  const drag = useDraggable('list', column.id, () => context.canWrite);
+  const { draggable, ...dragEvents } = drag.props;
   return html`<section
-    class="column"
-    data-column=${col.id}
-    aria-label=${col.name}
-    ref=${attach(attachColumn, col.id)}
+    class=${classNames({ column: true, [drop.className]: !!drop.className })}
+    data-column=${column.id}
+    aria-label=${column.name}
+    ...${drop.props}
   >
     <div
-      class="column-head"
+      class=${classNames({ 'column-head': true, 'drag-source': drag.source })}
       data-drag-type="list"
-      draggable=${writable()}
-      aria-label=${`Drag list ${col.name}`}
-      ref=${attach(attachDrag, 'list', col.id)}
+      draggable=${draggable}
+      aria-label=${`Drag list ${column.name}`}
+      ...${dragEvents}
     >
-      <h3>${col.name}</h3>
-      <small>${`${peers.length} shown · ${columnWIPLabel(col, total)}`}</small>
+      <h3>${column.name}</h3>
+      <small>${`${peers.length} shown · ${columnWIPLabel(column, total)}`}</small>
     </div>
-    ${keyedList(
-      peers,
-      (item) => item.id,
-      (item) => cardTemplate(item, expanded),
+    ${peers.map(
+      (item) => html`<${Card}
+        key=${item.id}
+        item=${item}
+        context=${context}
+        isBlocked=${blockedIDs.has(item.id)}
+        attachmentsOpen=${expanded.has(item.id)}
+        onAttachmentsToggle=${onAttachmentsToggle}
+      />`,
     )}
     ${peers.length ? null : emptyStateTemplate('No work here')}
   </section>`;
 }
 export function BoardContent({ items }) {
-  const expanded = useRef(new Set());
+  const board = useStore(selectBoard);
+  const context = useRowContext();
+  const blockedIDs = useBlockedIDs(items);
+  const [expanded, toggle] = useExpandedAttachments();
   const root = useRef(null);
-  useLayoutEffect(() => {
-    const open = new Set(
-      [...root.current.querySelectorAll('.card-attachments[open]')]
-        .map((node) => node.closest('[data-item]')?.dataset.item)
-        .filter(Boolean),
-    );
-    for (const id of expanded.current) if (!open.has(id)) expanded.current.delete(id);
-    for (const id of open) expanded.current.add(id);
-  });
-  return html`<div class="board" data-content-view="board" ref=${root}>
-    ${keyedList(
-      state.board.columns,
-      (column) => column.id,
-      (column) => columnTemplate(column, items, expanded.current),
+  const focus = useFocusRestore(root, 'board');
+  return html`<div class="board" data-content-view="board" ref=${root} ...${focus}>
+    ${board.columns.map(
+      (column) => html`<${Column}
+        key=${column.id}
+        column=${column}
+        peers=${items.filter((item) => item.column_id === column.id)}
+        total=${board.items.filter((item) => !item.archived && item.column_id === column.id).length}
+        context=${context}
+        blockedIDs=${blockedIDs}
+        expanded=${expanded}
+        onAttachmentsToggle=${toggle}
+      />`,
     )}
   </div>`;
 }
-function editColumn(column) {
-  $('editor').close();
+
+// ── Board setup dialogs ─────────────────────────────────────────────────────
+
+export function ColumnDialog({ column }) {
   const existing = !!column;
-  column ||= { name: '', category: 'todo', wip: 0 };
-  openEditor(
-    existing ? 'Edit board column' : 'Add board column',
-    () => html`${fieldTemplate('name', 'Column name', column.name, 'text', undefined, {
-      required: true,
-      maxLength: 80,
-    })}
-      ${fieldTemplate('category', 'Lifecycle category', column.category, 'text', [
-        ['todo', 'To do'],
-        ['doing', 'In progress'],
-        ['done', 'Done'],
-      ])}
-      ${fieldTemplate(
-        'wip',
-        'WIP limit · 0 means unlimited',
-        String(column.wip),
-        'number',
-        undefined,
-        {
-          min: 0,
-          max: 1000,
-          required: true,
-        },
-      )}
-      ${helpTextTemplate(
-        'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.',
-      )}`,
-    (data) => ({
+  const value = column || { name: '', category: 'todo', wip: 0 };
+  return html`<${CommandDialog}
+    title=${existing ? 'Edit board column' : 'Add board column'}
+    command=${(data) => ({
       kind: 'column.save',
-      target: column.id || '',
+      target: value.id || '',
       column: {
-        ...column,
+        ...value,
         name: data.get('name').trim(),
         category: data.get('category'),
         wip: Number(data.get('wip')),
       },
-    }),
-  );
+    })}
+  >
+    ${fieldTemplate('name', 'Column name', value.name, 'text', undefined, {
+      required: true,
+      maxLength: 80,
+    })}
+    ${fieldTemplate('category', 'Lifecycle category', value.category, 'text', [
+      ['todo', 'To do'],
+      ['doing', 'In progress'],
+      ['done', 'Done'],
+    ])}
+    ${fieldTemplate(
+      'wip',
+      'WIP limit · 0 means unlimited',
+      String(value.wip),
+      'number',
+      undefined,
+      {
+        min: 0,
+        max: 1000,
+        required: true,
+      },
+    )}
+    ${helpTextTemplate(
+      'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.',
+    )}
+  </${CommandDialog}>`;
 }
-function removeColumn(column) {
-  $('editor').close();
-  openEditor(
-    'Remove column & move cards',
-    () => html`<p>${`All cards in ${column.name}, including archived ones, must move to another column.`}</p>
-      ${fieldTemplate(
-        'destination',
-        'Destination column',
-        '',
-        'text',
-        state.board.columns.filter((v) => v.id !== column.id).map((v) => [v.id, v.name]),
-      )}`,
-    (data) => ({ kind: 'column.delete', target: column.id, destination: data.get('destination') }),
-  );
+export function RemoveColumnDialog({ column, destinations }) {
+  return html`<${CommandDialog}
+    title="Remove column & move cards"
+    command=${(data) => ({
+      kind: 'column.delete',
+      target: column.id,
+      destination: data.get('destination'),
+    })}
+  >
+    <p>${`All cards in ${column.name}, including archived ones, must move to another column.`}</p>
+    ${fieldTemplate('destination', 'Destination column', '', 'text', destinations)}
+  </${CommandDialog}>`;
 }
-async function moveColumnLeft(column, index) {
-  await quick({
-    kind: 'column.rank',
-    target: column.id,
-    before: state.board.columns[index - 1].id,
-  });
-  $('editor').close();
+async function moveColumnLeft(columns, column, index) {
+  await quick({ kind: 'column.rank', target: column.id, before: columns[index - 1].id });
+  closeEditor();
 }
-export function setupBoard() {
+// A snapshot of the columns when the dialog opened; each action opens its own
+// dialog, and a reorder closes setup.
+export function BoardSetupDialog({ columns }) {
   const action = (text, fn) => accessButtonTemplate(text, fn, { tracked: false });
-  openEditor(
-    'Board setup',
-    () => html`${helpTextTemplate(
+  return html`<${FormDialog} title="Board setup" readOnly=${true}>
+    ${helpTextTemplate(
       'Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.',
     )}
-      ${state.board.columns.map(
-        (c, index) => html`<div class="setup-row">
-          <strong>${c.name}</strong>
-          <small class="muted">${`${c.category} · WIP ${c.wip || 'unlimited'}`}</small>
-          <div class="actions">
-            ${action('Edit', () => editColumn(c))}
-            ${index > 0 ? action('Move left', () => moveColumnLeft(c, index)) : null}
-            ${state.board.columns.length > 1 ? action('Remove…', () => removeColumn(c)) : null}
-          </div>
-        </div>`,
-      )}
-      ${accessButtonTemplate('＋ Add column', () => editColumn(), {
-        className: 'primary',
-        tracked: false,
-      })}`,
-    () => ({}),
-    true,
-  );
+    ${columns.map(
+      (c, index) => html`<div key=${c.id} class="setup-row">
+        <strong>${c.name}</strong>
+        <small class="muted">${`${c.category} · WIP ${c.wip || 'unlimited'}`}</small>
+        <div class="actions">
+          ${action('Edit', () => openDialog('column.edit', { column: c }))}
+          ${index > 0 ? action('Move left', () => moveColumnLeft(columns, c, index)) : null}
+          ${
+            columns.length > 1
+              ? action('Remove…', () =>
+                  openDialog('column.remove', {
+                    column: c,
+                    destinations: columns.filter((v) => v.id !== c.id).map((v) => [v.id, v.name]),
+                  }),
+                )
+              : null
+          }
+        </div>
+      </div>`,
+    )}
+    ${accessButtonTemplate('＋ Add column', () => openDialog('column.edit', {}), {
+      className: 'primary',
+      tracked: false,
+    })}
+  </${FormDialog}>`;
+}
+export function setupBoard() {
+  if (!state.board) return;
+  openDialog('board.setup', { columns: state.board.columns });
 }

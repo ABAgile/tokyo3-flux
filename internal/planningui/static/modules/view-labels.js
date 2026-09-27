@@ -1,5 +1,4 @@
 // The Labels page and label dialogs.
-import { $ } from './dom.js';
 import {
   fieldTemplate,
   sectionHeadTemplate,
@@ -8,51 +7,57 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { html, keyedList } from './vdom.js';
+import { html } from './vdom.js';
 
 import { state, useStore } from './state.js';
 import { writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { labelInfo, labelBadgeTemplate } from './items.js';
 import { labelColorPickerTemplate } from './multi-select.js';
-import { openEditor, setEditorSaveText } from './dialog.js';
+import { openDialog } from './dialog-state.js';
+import { CommandDialog } from './dialog.js';
 
-function editLabel(label) {
-  $('editor').close();
-  const originalName = typeof label === 'string' ? label : label?.name || '';
-  const originalColor =
-    typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
-  openEditor(
-    originalName ? 'Rename label' : 'Create label',
-    () => html`${fieldTemplate('name', 'Label name', originalName, 'text', undefined, {
+export function LabelDialog({ name = '', color = '#dcefe4' }) {
+  return html`<${CommandDialog}
+    title=${name ? 'Rename label' : 'Create label'}
+    command=${(data) => ({
+      kind: 'label.save',
+      target: name,
+      name: data.get('name').trim(),
+      color: data.get('color') || color,
+    })}
+  >
+    ${fieldTemplate('name', 'Label name', name, 'text', undefined, {
       required: true,
       maxLength: 60,
     })}
-      ${labelColorPickerTemplate(originalColor)}
-      ${helpTextTemplate(
-        'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
-      )}`,
-    (data) => ({
-      kind: 'label.save',
-      target: originalName,
-      name: data.get('name').trim(),
-      color: data.get('color') || originalColor,
-    }),
-  );
+    ${labelColorPickerTemplate(color)}
+    ${helpTextTemplate(
+      'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
+    )}
+  </${CommandDialog}>`;
+}
+function editLabel(label) {
+  const name = typeof label === 'string' ? label : label?.name || '';
+  const color = typeof label === 'string' ? labelInfo(label).color : label?.color || '#dcefe4';
+  openDialog('label.edit', { name, color });
+}
+export function DeleteLabelDialog({ label, count }) {
+  return html`<${CommandDialog}
+    title="Delete label"
+    saveText="Delete label"
+    command=${() => ({ kind: 'label.delete', target: label.name })}
+  >
+    <p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>
+  </${CommandDialog}>`;
 }
 function deleteLabel(label) {
-  $('editor').close();
   const count = state.board.items.filter((i) => i.labels.includes(label.name)).length;
-  openEditor(
-    'Delete label',
-    () =>
-      html`<p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>`,
-    () => ({ kind: 'label.delete', target: label.name }),
-  );
-  setEditorSaveText('Delete label');
+  openDialog('label.delete', { label, count });
 }
 function labelRowTemplate(label, items) {
   const usage = items.filter((item) => item.labels.includes(label.name)).length;
   return maintenanceRowTemplate({
+    key: label.name,
     tag: 'article',
     className: 'label-maintenance-row',
     content: [
@@ -87,11 +92,7 @@ export function LabelsPage() {
       labels.length
         ? maintenanceListTemplate(
             'label-maintenance-list',
-            keyedList(
-              labels,
-              (label) => label.name,
-              (label) => labelRowTemplate(label, items),
-            ),
+            labels.map((label) => labelRowTemplate(label, items)),
           )
         : emptyStateTemplate('No labels yet. Create reusable labels for this workspace.')
     }`;

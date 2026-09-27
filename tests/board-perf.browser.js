@@ -1,10 +1,11 @@
 // Board rendering probe. Execute with playwright-cli run-code (use --raw) against a
 // FRESH seeded disposable workspace; never use team data. It clones the seeded
 // items into a synthetic board of several sizes in the page only (nothing is
-// written to the server) and times the App-owned board render path:
-//   first    new workspace identity, then renderContent (build from scratch)
-//   same     renderContent again with unchanged data (a refresh or poll)
-//   one      renderContent after one item's title changed (a typical write)
+// written to the server) and times the store-driven board render path:
+//   first    a board with a new workspace identity (build from scratch)
+//   same     a new board object with unchanged entities (a merged refresh)
+//   one      a board where one item's title changed (a typical write)
+// Preact's render batch is captured and run synchronously inside the timing.
 // Each time includes the forced style and layout that follows, and "nodes"
 // counts distinct elements inserted into the board by that render, moves
 // included (DOM churn).
@@ -15,20 +16,31 @@ async function run(page) {
   page.setDefaultTimeout(30000);
   await page.waitForFunction(() => document.querySelector('#planning-body .board .card'));
   return page.evaluate(async () => {
-    const { state } = await import('/modules/state.js');
-    const { hooks } = await import('/modules/hooks.js');
+    const { state, setState } = await import('/modules/state.js');
+    const { options } = await import('/modules/vendor-preact.js');
     const body = document.getElementById('planning-body');
     const seeded = state.board.items.filter((item) => !item.archived);
     const seededParticipants = state.board.participants || [];
     const seededLinks = state.board.links.map((link) => ({ ...link, items: [...link.items] }));
-    document.getElementById('scope').value = 'all';
+    // Every synthetic card is shown, whatever sprint its seed belongs to.
+    setState({ scope: 'all' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
-    const measure = (prepare) => {
+    const measure = (update) => {
       const observer = new MutationObserver(() => {});
       observer.observe(body, { childList: true, subtree: true });
-      prepare?.();
+      const scheduled = options.debounceRendering;
+      let render;
+      options.debounceRendering = (callback) => {
+        render = callback;
+      };
+      try {
+        update();
+      } finally {
+        options.debounceRendering = scheduled;
+      }
       const start = performance.now();
-      hooks.renderContent();
+      render?.();
       void body.offsetHeight;
       const time = performance.now() - start;
       const inserted = new Set();
@@ -59,19 +71,22 @@ async function run(page) {
       }
       const runs = { first: [], same: [], one: [] };
       for (let round = 0; round < 7; round++) {
-        const first = measure(() => {
-          state.board.workspace = {
-            ...state.board.workspace,
-            id: `performance-${size}-${round}`,
-          };
-          state.board.items = items;
-          state.board.participants = participants;
-          state.board.links = links;
-        });
-        const same = measure();
+        const first = measure(() =>
+          setState({
+            board: {
+              ...state.board,
+              workspace: { ...state.board.workspace, id: `performance-${size}-${round}` },
+              items,
+              participants,
+              links,
+            },
+          }),
+        );
+        const same = measure(() => setState({ board: { ...state.board } }));
         const one = measure(() => {
           const index = (round * 37) % items.length;
           items[index] = { ...items[index], title: `${items[index].title} *` };
+          setState({ board: { ...state.board, items: [...items] } });
         });
         runs.first.push(first);
         runs.same.push(same);

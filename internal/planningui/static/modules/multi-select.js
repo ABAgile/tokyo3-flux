@@ -1,8 +1,9 @@
 // Multi-select fields, the label color picker and help popovers.
 import { uid } from './dom.js';
 import { requestKey } from './api.js';
-import { html, keyedList } from './vdom.js';
-import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { html } from './vdom.js';
+import { useLayoutEffect, useReducer, useRef, useState } from './vendor-preact.js';
+import { useCommittedChange, useDismiss } from './ui-hooks.js';
 
 const LABEL_PALETTE = Object.freeze([
   '#ff6b6b',
@@ -76,14 +77,7 @@ function HelpPopover({ text, name }) {
   const [open, setOpen] = useState(false);
   const wrapper = useRef();
   const trigger = useRef();
-  useLayoutEffect(() => {
-    if (!open) return;
-    const outside = (event) => {
-      if (!wrapper.current?.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener('click', outside);
-    return () => document.removeEventListener('click', outside);
-  }, [open]);
+  useDismiss(wrapper, open, () => setOpen(false), { closeOnEscape: false, event: 'click' });
   const close = () => {
     setOpen(false);
     trigger.current?.focus();
@@ -118,180 +112,115 @@ function uniqueEntries(entries) {
     .map(([value, text]) => [String(value), String(text)])
     .filter(([value]) => !seen.has(value) && seen.add(value));
 }
-// This component owns picker state and exposes a stable control facade to
-// remote-option loaders. `onReady` receives it once; callers can replace entries,
-// set status, select a value and inspect the current selection without rendering
-// or owning the picker's subtree. `headingAction` and `footer` return VNodes.
-export function multiSelectTemplate(name, title, entries, selected, decorate, helpText, settings) {
-  return html`<${MultiSelect}
-      name=${name}
-      title=${title}
-      entries=${entries}
-      selected=${selected}
-      decorate=${decorate}
-      helpText=${helpText}
-      settings=${settings}
-    />`;
+function initialSelection(values, single) {
+  const list = (values || []).map(String);
+  return single && list.length > 1 ? [list[0]] : list;
 }
-function MultiSelect({ name, title, entries, selected = [], decorate, helpText, settings = {} }) {
+function pickerReducer(current, action) {
+  switch (action.type) {
+    case 'open':
+      return current.editing ? current : { ...current, editing: true };
+    case 'close':
+      return current.editing ? { ...current, editing: false } : current;
+    case 'query':
+      return { ...current, query: action.query };
+    case 'select':
+      return { ...current, selected: action.selected };
+    default:
+      return current;
+  }
+}
+// A labelled chip picker whose checkboxes submit with the enclosing form.
+//
+// Uncontrolled pickers take `defaultValue` and report committed selections
+// through `onChange(values)`; controlled pickers take `value` and report the
+// requested selection. Remote pickers own their `entries` and `status`, and
+// hear the typed filter through `onQuery(query)` and the menu state through
+// `onOpenChange(open, query)`. `headingAction({ select })` renders beside the
+// title; `footer` renders below the picker.
+export function MultiSelect({
+  name,
+  title,
+  entries,
+  value,
+  defaultValue = [],
+  onChange,
+  onQuery,
+  onOpenChange,
+  status = '',
+  single = false,
+  emptyValue,
+  disabled = false,
+  decorate,
+  helpText,
+  headingAction,
+  footer = null,
+  filterMaxLength,
+}) {
   const [menuID] = useState(() => `multi-select-${requestKey()}`);
   const [filterID] = useState(() => uid('multi-select-filter'));
-  const [local, setLocal] = useState(() => {
-    const initialEntries = uniqueEntries(entries);
-    let initialSelected = selected.map(String);
-    if (settings.single && initialSelected.length > 1) initialSelected = [initialSelected[0]];
-    return {
-      entries: initialEntries,
-      selected: new Set(
-        initialSelected.filter((value) => initialEntries.some(([entry]) => entry === value)),
-      ),
-      editing: false,
-      status: '',
-      query: '',
-    };
-  });
-  // Keep the latest state readable by stable callbacks before Preact commits.
-  const localRef = useRef(local);
-  localRef.current = local;
+  const list = uniqueEntries(entries || []);
+  const controlled = value !== undefined;
+  const [local, dispatch] = useReducer(pickerReducer, undefined, () => ({
+    selected: initialSelection(defaultValue, single).filter((candidate) =>
+      list.some(([entry]) => entry === candidate),
+    ),
+    editing: false,
+    query: '',
+  }));
+  const selected = controlled ? initialSelection(value, single) : local.selected;
   const group = useRef();
-  const header = useRef();
-  const root = useRef();
   const edit = useRef();
   const filter = useRef();
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-  const actions = useRef({});
-  const controls = useRef();
-  if (!controls.current) {
-    controls.current = {
-      get root() {
-        return root.current;
-      },
-      get group() {
-        return group.current;
-      },
-      get header() {
-        return header.current;
-      },
-      get edit() {
-        return edit.current;
-      },
-      get filter() {
-        return filter.current;
-      },
-      close: (...args) => actions.current.close(...args),
-      isOpen: () => localRef.current.editing,
-      dispose: () => actions.current.close(false),
-      setEntries: (...args) => actions.current.setEntries(...args),
-      setStatus: (...args) => actions.current.setStatus(...args),
-      select: (...args) => actions.current.select(...args),
-      selected: () => actions.current.selected(),
-      update: () => actions.current.update(),
-    };
-  }
-  const updateLocal = (next) => {
-    const value = typeof next === 'function' ? next(localRef.current) : next;
-    localRef.current = value;
-    setLocal(value);
+  const { editing, query } = local;
+  const chosenValues = list.filter(([entry]) => selected.includes(entry)).map(([entry]) => entry);
+  const setSelected = (next) => {
+    if (controlled) onChange?.(list.filter(([entry]) => next.includes(entry)).map(([v]) => v));
+    else dispatch({ type: 'select', selected: next });
   };
-  const currentValues = () =>
-    localRef.current.entries
-      .filter(([value]) => localRef.current.selected.has(value))
-      .map(([value]) => value);
-  const setStatus = (text) => updateLocal({ ...localRef.current, status: text || '' });
-  const replaceEntries = (nextEntries, selectedValues = currentValues()) => {
-    const config = settingsRef.current;
-    let values = selectedValues.map(String);
-    if (config.single && values.length > 1) values = [values[0]];
-    const next = uniqueEntries(nextEntries);
-    updateLocal({
-      ...localRef.current,
-      entries: next,
-      selected: new Set(values.filter((value) => next.some(([candidate]) => candidate === value))),
-    });
-  };
-  const changed = (nextSelected, notifyForm = false) => {
-    updateLocal({ ...localRef.current, selected: nextSelected });
-    settingsRef.current.onChange?.(
-      localRef.current.entries.filter(([value]) => nextSelected.has(value)).map(([value]) => value),
-    );
-    if (notifyForm) root.current?.dispatchEvent(new Event('change', { bubbles: true }));
-  };
-  const toggleValue = (value, checked) => {
-    const config = settingsRef.current;
-    const next = new Set(localRef.current.selected);
+  // Uncontrolled selections are reported once rendered, so form readers see them.
+  useCommittedChange(controlled ? undefined : local.selected, () => {
+    if (!controlled) onChange?.(chosenValues);
+  });
+  const toggleValue = (candidate, checked) => {
+    let next = selected.filter((current) => current !== candidate);
     if (checked) {
-      if (config.single) next.clear();
-      if (config.emptyValue !== undefined)
-        for (const other of [...next])
-          if (value === String(config.emptyValue) || other === String(config.emptyValue))
-            next.delete(other);
-      next.add(value);
-    } else next.delete(value);
-    changed(next);
+      if (single) next = [];
+      if (emptyValue !== undefined)
+        next = next.filter(
+          (other) => candidate !== String(emptyValue) && other !== String(emptyValue),
+        );
+      next = [...next, candidate];
+    }
+    setSelected(next);
   };
-  const selectValue = (value) => {
-    const current = localRef.current;
-    if (
-      !settingsRef.current.single ||
-      !current.entries.some(([candidate]) => candidate === String(value))
-    )
-      return false;
-    changed(new Set([String(value)]), true);
+  const select = (candidate) => {
+    const next = String(candidate);
+    if (!single || !list.some(([entry]) => entry === next)) return false;
+    setSelected([next]);
     return true;
   };
-  const invoke = (handler, query) => {
-    if (!handler) return;
-    try {
-      Promise.resolve(handler(query, controls.current)).catch((error) =>
-        setStatus(error.message || String(error)),
-      );
-    } catch (error) {
-      setStatus(error.message || String(error));
-    }
-  };
   const close = (focus = false) => {
-    if (!localRef.current.editing) return;
-    updateLocal({ ...localRef.current, editing: false });
+    if (!editing) return;
+    dispatch({ type: 'close' });
+    onOpenChange?.(false, query.trim());
     if (focus) edit.current?.focus();
   };
-  const open = () => updateLocal({ ...localRef.current, editing: true });
-  const toggle = () => (localRef.current.editing ? close(true) : open());
-  const actionsRef = actions;
-  actionsRef.current = {
-    close,
-    setEntries: (nextEntries, selectedValues) =>
-      replaceEntries(nextEntries, selectedValues === undefined ? currentValues() : selectedValues),
-    setStatus,
-    select: selectValue,
-    selected: currentValues,
-    update: () => updateLocal({ ...localRef.current }),
-  };
-  useLayoutEffect(() => {
-    if (!local.editing) return;
-    const outside = (event) => {
-      if (!group.current?.contains(event.target)) actions.current.close(false);
-    };
-    document.addEventListener('click', outside);
-    return () => document.removeEventListener('click', outside);
-  }, [local.editing]);
+  const open = () => dispatch({ type: 'open' });
+  useDismiss(group, editing, () => close(false), { closeOnEscape: false, event: 'click' });
   const wasEditing = useRef(false);
   useLayoutEffect(() => {
-    if (!wasEditing.current && local.editing) {
+    if (!wasEditing.current && editing) {
       filter.current?.focus();
       filter.current?.select();
-      invoke(settingsRef.current.onOpen, filter.current?.value.trim() || '');
+      onOpenChange?.(true, query.trim());
     }
-    wasEditing.current = local.editing;
-  }, [local.editing]);
-  useLayoutEffect(() => {
-    settingsRef.current.onReady?.(controls.current);
-  }, []);
-  const { editing, status, query } = local;
+    wasEditing.current = editing;
+  }, [editing]);
   const needle = query.toLowerCase();
-  const chosen = local.entries.filter(([value]) => local.selected.has(value));
-  const visible = local.entries.filter(
-    ([, text]) => !needle || text.toLowerCase().includes(needle),
+  const chosen = list.filter(([entry]) => selected.includes(entry));
+  const visible = new Set(
+    list.filter(([, text]) => !needle || text.toLowerCase().includes(needle)).map(([v]) => v),
   );
   const help = helpText ? helpPopoverTemplate(helpText, title) : null;
   const closeOnEscape = (event) => {
@@ -301,13 +230,13 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
     close(true);
   };
   return html`<div class="multi-select-field" ref=${group}>
-    <div class="multi-select-header" ref=${header}
+    <div class="multi-select-header"
       onClick=${(event) => {
-        if (localRef.current.editing && !edit.current?.contains(event.target)) close();
+        if (editing && !edit.current?.contains(event.target)) close();
       }}
     >
       <span class="multi-select-heading"
-        ><span class="multi-select-label">${title}</span>${help}${settings.headingAction?.() ?? null}</span
+        ><span class="multi-select-label">${title}</span>${help}${headingAction?.({ select }) ?? null}</span
       >
       <button
         type="button"
@@ -317,20 +246,18 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
         aria-haspopup="true"
         aria-expanded=${String(editing)}
         aria-controls=${menuID}
-        disabled=${!!settings.disabled}
+        disabled=${!!disabled}
         ref=${edit}
-        onClick=${toggle}
+        onClick=${() => (editing ? close(true) : open())}
       >Edit</button>
     </div>
-    <div class="multi-select" role="group" aria-label=${title} ref=${root}>
+    <div class="multi-select" role="group" aria-label=${title}>
       <div class="multi-select-values">
         ${chosen.length ? null : html`<span class="multi-select-empty">None selected</span>`}
-        ${keyedList(
-          chosen,
-          ([value]) => value,
-          ([value, text]) => {
-            const decoration = decorate?.(value, text);
-            return html`<span
+        ${chosen.map(([entry, text]) => {
+          const decoration = decorate?.(entry, text);
+          return html`<span
+            key=${entry}
             class=${`multi-select-chip${decoration?.className ? ` ${decoration.className}` : ''}`}
             style=${decoration?.style}
             ><span>${text}</span
@@ -339,17 +266,12 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
               class="multi-select-remove"
               data-multi-remove="true"
               hidden=${!editing}
-              disabled=${!!settings.disabled}
+              disabled=${!!disabled}
               aria-label=${`Remove ${text}`}
-              onClick=${() => {
-                const next = new Set(localRef.current.selected);
-                next.delete(value);
-                changed(next, true);
-              }}
+              onClick=${() => setSelected(selected.filter((current) => current !== entry))}
             >×</button></span
           >`;
-          },
-        )}
+        })}
       </div>
       <div
         class="multi-select-menu"
@@ -366,13 +288,14 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
           placeholder=${`Filter ${title.toLowerCase()}…`}
           aria-label=${`Filter ${title}`}
           autocomplete="off"
-          disabled=${!!settings.disabled}
+          maxlength=${filterMaxLength ?? null}
+          disabled=${!!disabled}
           value=${query}
           ref=${filter}
           onInput=${(event) => {
             const nextQuery = event.currentTarget.value;
-            updateLocal({ ...localRef.current, query: nextQuery });
-            invoke(settingsRef.current.onFilter, nextQuery.trim());
+            dispatch({ type: 'query', query: nextQuery });
+            onQuery?.(nextQuery.trim());
           }}
         />
         <p
@@ -383,28 +306,27 @@ function MultiSelect({ name, title, entries, selected = [], decorate, helpText, 
           aria-live="polite"
         >${status}</p>
         <div class="multi-select-options">
-          ${keyedList(
-            local.entries,
-            ([value]) => value,
-            ([value, text]) => html`<label
+          ${list.map(
+            ([entry, text]) => html`<label
+              key=${entry}
               class="multi-select-option"
-              hidden=${!visible.some(([candidate]) => candidate === value)}
+              hidden=${!visible.has(entry)}
               ><input
                 type="checkbox"
                 name=${name}
-                value=${value}
-                checked=${local.selected.has(value)}
-                disabled=${!!settings.disabled}
+                value=${entry}
+                checked=${selected.includes(entry)}
+                disabled=${!!disabled}
                 aria-label=${text}
-                onChange=${(event) => toggleValue(value, event.currentTarget.checked)}
+                onChange=${(event) => toggleValue(entry, event.currentTarget.checked)}
               /><span>${text}</span></label
             >`,
           )}
         </div>
-        <p class="multi-select-empty" hidden=${visible.length > 0 || !!status}>No matches.</p>
+        <p class="multi-select-empty" hidden=${visible.size > 0 || !!status}>No matches.</p>
       </div>
     </div>
-    ${settings.footer?.() ?? null}
+    ${footer}
   </div>`;
 }
 export function labelColorPickerTemplate(value) {

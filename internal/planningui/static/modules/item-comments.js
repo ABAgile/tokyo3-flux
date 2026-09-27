@@ -1,16 +1,15 @@
 // Item comments: list, paging and composer.
 import { api, requestKey } from './api.js';
-import { syncDisabled } from './dom.js';
 import { initials } from './format.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import { panelHeadTemplate, helpTextTemplate } from './layout.js';
-import { html, keyedList } from './vdom.js';
-import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { html } from './vdom.js';
+import { useEffect, useReducer, useRef, useState } from './vendor-preact.js';
 
 import { state } from './state.js';
-import { canComment } from './permissions.js';
-import { renderControls } from './controls.js';
+import { canComment, usePermissions } from './permissions.js';
 import { memberInfo, avatarImageTemplate } from './people.js';
+import { useCommittedChange, useMutation, useRequest } from './ui-hooks.js';
 
 function commentTime(value) {
   const date = new Date(value);
@@ -58,55 +57,18 @@ function commentTemplate(comment) {
     </div>
   </article>`;
 }
-// The component owns comment paging, status and submission state. Its request
-// generation guard prevents stale pages from replacing a newer item context.
-function ItemComments({ item }) {
-  const [currentRoot] = useState(() => state.root);
-  const [local, setLocal] = useState({
-    comments: [],
-    nextBefore: 0,
-    olderDisabled: true,
-    busy: false,
-    status: 'Loading comments…',
-    error: false,
-  });
-  // Ref updates synchronously so repeated native events cannot race a state commit.
-  const localRef = useRef(local);
-  localRef.current = local;
-  const active = useRef(false);
-  const commentLoad = useRef(0);
-  const pending = useRef({ body: '', key: '' });
-  const editor = useRef();
-  const writer = state.board.role === 'member' || state.board.role === 'admin';
-  const updateLocal = (next) => {
-    const value = typeof next === 'function' ? next(localRef.current) : next;
-    localRef.current = value;
-    setLocal(value);
-  };
-  const setStatus = (text, error = false) =>
-    updateLocal({ ...localRef.current, status: text || '', error });
-  async function loadComments(before = 0, append = false) {
-    const loadID = ++commentLoad.current;
-    updateLocal({
-      ...localRef.current,
-      olderDisabled: true,
-      status: 'Loading comments…',
-      error: false,
-    });
-    try {
-      const query = new URLSearchParams({ limit: String(COMMENT_PAGE_LIMIT) });
-      if (before) query.set('before', String(before));
-      const page = await api(
-        `${currentRoot}/items/${encodeURIComponent(item.id)}/comments?${query}`,
-      );
-      if (loadID !== commentLoad.current || state.root !== currentRoot || !active.current)
-        return false;
-      if (!validCommentPage(page))
-        throw new Error('Comments are invalid. Reopen the item to retry.');
-      const comments = append ? [...page.comments, ...localRef.current.comments] : page.comments;
-      const nextBefore = page.next_before || 0;
-      updateLocal({
-        ...localRef.current,
+function CommentItem({ comment }) {
+  return commentTemplate(comment);
+}
+function commentsReducer(current, action) {
+  switch (action.type) {
+    case 'loading':
+      return { ...current, olderDisabled: true, status: 'Loading comments…', error: false };
+    case 'loaded': {
+      const comments = action.append ? [...action.comments, ...current.comments] : action.comments;
+      const nextBefore = action.nextBefore || 0;
+      return {
+        ...current,
         comments,
         nextBefore,
         olderDisabled: false,
@@ -114,69 +76,101 @@ function ItemComments({ item }) {
           ? `${comments.length}${nextBefore ? '+' : ''} comment${comments.length === 1 ? '' : 's'} loaded.`
           : 'No comments yet.',
         error: false,
-      });
-      return true;
-    } catch (error) {
-      if (loadID === commentLoad.current && state.root === currentRoot && active.current) {
-        updateLocal({
-          ...localRef.current,
-          olderDisabled: false,
-          status: error.message,
-          error: true,
-        });
-      }
-      return false;
+      };
     }
+    case 'failed':
+      return { ...current, olderDisabled: false, status: action.message, error: true };
+    case 'status':
+      return { ...current, status: action.text || '', error: !!action.error };
+    case 'draft':
+      return { ...current, draft: action.draft };
+    default:
+      return current;
   }
+}
+async function commentPage(root, itemID, before, signal) {
+  const query = new URLSearchParams({ limit: String(COMMENT_PAGE_LIMIT) });
+  if (before) query.set('before', String(before));
+  const page = await api(`${root}/items/${encodeURIComponent(itemID)}/comments?${query}`, {
+    signal,
+  });
+  if (!validCommentPage(page)) throw new Error('Comments are invalid. Reopen the item to retry.');
+  return page;
+}
+// The component owns comment paging, status and the controlled composer. It is
+// keyed by workspace root and item, so a switch remounts it and every pending
+// read or write is aborted rather than applied to another context.
+function ItemComments({ item, onDraftChange }) {
+  const [currentRoot] = useState(() => state.root);
+  const [local, dispatch] = useReducer(commentsReducer, {
+    comments: [],
+    nextBefore: 0,
+    olderDisabled: true,
+    status: 'Loading comments…',
+    error: false,
+    draft: '',
+  });
+  const [reload, setReload] = useState(0);
+  const [before, setBefore] = useState(0);
+  const pending = useRef({ body: '', key: '' });
+  const composer = useRef(null);
+  const writes = useMutation();
+  const { comment: allowed } = usePermissions();
+  // The enclosing editor counts an unsent comment as unsaved input.
+  useCommittedChange(local.draft, onDraftChange);
+  const writer = state.board.role === 'member' || state.board.role === 'admin';
+  // One request per page. Loading older comments appends; a reload after a new
+  // comment replaces the list.
+  const page = useRequest(
+    (signal) => {
+      dispatch({ type: 'loading' });
+      return commentPage(currentRoot, item.id, before, signal);
+    },
+    [currentRoot, item.id, before, reload],
+  );
+  useEffect(() => {
+    if (page.data)
+      dispatch({
+        type: 'loaded',
+        comments: page.data.comments,
+        nextBefore: page.data.next_before,
+        append: before > 0,
+      });
+    else if (page.error) dispatch({ type: 'failed', message: page.error.message });
+  }, [page.data, page.error]);
   async function addComment() {
-    if (localRef.current.busy || !canComment()) return;
-    const textarea = editor.current?.input;
-    if (!textarea) return;
-    const body = textarea.value.trim();
+    if (!canComment()) return;
+    const body = local.draft.trim();
     if (!body) {
-      setStatus('Comment cannot be empty.', true);
-      textarea.focus();
+      dispatch({ type: 'status', text: 'Comment cannot be empty.', error: true });
+      composer.current?.focus();
       return;
     }
     if (body !== pending.current.body) pending.current = { body, key: requestKey() };
-    updateLocal({ ...localRef.current, busy: true, status: 'Adding comment…', error: false });
-    commentLoad.current++;
-    try {
-      await api(`${currentRoot}/items/${encodeURIComponent(item.id)}/comments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': state.session.csrf,
-          'Idempotency-Key': pending.current.key,
-        },
-        body: JSON.stringify({ body }),
-      });
-      if (state.root !== currentRoot || !active.current) return;
-      pending.current = { body: '', key: '' };
-      textarea.value = '';
-      editor.current.refresh();
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      await loadComments();
-    } catch (error) {
-      if (state.root === currentRoot && active.current) setStatus(error.message, true);
-    } finally {
-      if (active.current) {
-        updateLocal({ ...localRef.current, busy: false });
-        renderControls();
+    await writes.run(async (signal) => {
+      dispatch({ type: 'status', text: 'Adding comment…' });
+      try {
+        await api(`${currentRoot}/items/${encodeURIComponent(item.id)}/comments`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': state.session.csrf,
+            'Idempotency-Key': pending.current.key,
+          },
+          body: JSON.stringify({ body }),
+          signal,
+        });
+        if (signal.aborted) return;
+        pending.current = { body: '', key: '' };
+        dispatch({ type: 'draft', draft: '' });
+        setBefore(0);
+        setReload((value) => value + 1);
+      } catch (error) {
+        if (!signal.aborted) dispatch({ type: 'status', text: error.message, error: true });
       }
-    }
+    });
   }
-  useLayoutEffect(() => {
-    active.current = true;
-    return () => {
-      active.current = false;
-      commentLoad.current++;
-    };
-  }, []);
-  useEffect(() => {
-    void loadComments();
-  }, []);
-  const { comments, nextBefore, status, error, olderDisabled, busy } = local;
+  const { comments, nextBefore, status, error, olderDisabled, draft } = local;
   return html`<section class="item-comments">
     ${panelHeadTemplate('Comments')}
     <p
@@ -192,25 +186,23 @@ function ItemComments({ item }) {
       hidden=${!nextBefore}
       disabled=${olderDisabled}
       onClick=${() => {
-        if (localRef.current.nextBefore && !localRef.current.busy)
-          void loadComments(localRef.current.nextBefore, true);
+        if (nextBefore && !writes.pending) setBefore(nextBefore);
       }}
     >Load older comments</button>
-    <div class="comment-list">${keyedList(comments, (comment) => comment.id, commentTemplate)}</div>
+    <div class="comment-list">${comments.map((comment) => html`<${CommentItem} key=${comment.id} comment=${comment} />`)}</div>
     ${
       writer
         ? html`<div class="comment-composer">
-            ${markdownEditorTemplate('comment_body', 'Add a comment', '', 4000, false, false, {
+            ${markdownEditorTemplate('comment_body', 'Add a comment', draft, 4000, false, false, {
               commentControl: true,
-              onReady: (ready) => {
-                editor.current = ready;
-              },
+              inputRef: composer,
+              onValueChange: (value) => dispatch({ type: 'draft', draft: value }),
             })}
             <button
               type="button"
               class="primary"
               data-comment-write="true"
-              ref=${syncDisabled(busy || !canComment())}
+              disabled=${writes.pending || !allowed}
               onClick=${addComment}
             >Add comment</button>
           </div>`
@@ -218,6 +210,10 @@ function ItemComments({ item }) {
     }
   </section>`;
 }
-export function itemCommentsTemplate(item) {
-  return html`<${ItemComments} key=${item.id} item=${item} />`;
+export function itemCommentsTemplate(item, onDraftChange) {
+  return html`<${ItemComments}
+    key=${`${state.root}:${item.id}`}
+    item=${item}
+    onDraftChange=${onDraftChange}
+  />`;
 }

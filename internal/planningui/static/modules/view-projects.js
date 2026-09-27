@@ -1,5 +1,4 @@
 // The Projects page and project dialogs.
-import { $ } from './dom.js';
 import {
   panelTemplate,
   sectionHeadTemplate,
@@ -15,121 +14,94 @@ import {
   maintenanceListTemplate,
   maintenanceRowTemplate,
 } from './layout.js';
-import { html, keyedList, withKey } from './vdom.js';
-import { useEffect, useMemo, useRef } from './vendor-preact.js';
+import { html, shallowEqual } from './vdom.js';
+import { useReducer, useState } from './vendor-preact.js';
 
-import { state, useStore } from './state.js';
-import { hooks } from './hooks.js';
+import { setState, state, useStore } from './state.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { itemProjectIDs } from './items.js';
 import { memberName } from './people.js';
-import { gitlabProjectLabel } from './gitlab-catalog.js';
-import {
-  PROJECT_FILTER_NAMES,
-  projectFilters,
-  addFilterValue,
-  setFilterValues,
-  matchesFilter,
-  filterChipTemplates,
-  resetSearch,
-} from './filters.js';
-import { openEditor } from './dialog.js';
-import { persistPlanningURL } from './url-state.js';
-import { closeDetail } from './item-detail.js';
-import {
-  editIntegration,
-  loadIntegrationCatalog,
-  integrationFormTemplate,
-} from './view-integration.js';
+import { gitlabProjectLabel, loadGitLabProjects } from './gitlab-catalog.js';
+import { PROJECT_FILTER_NAMES, withFilterValue, matchesFilter, FilterChips } from './filters.js';
+import { openDialog } from './dialog-state.js';
+import { CommandDialog } from './dialog.js';
+import { openProject } from './actions.js';
+import { editIntegration, IntegrationForm } from './view-integration.js';
+import { useRequest } from './ui-hooks.js';
 
-function editProject(project) {
-  $('editor').close();
-  openEditor(
-    project ? 'Edit project' : 'Create project',
-    () => html`${fieldTemplate('name', 'Project name', project?.name || '', 'text', undefined, {
-      required: true,
-      maxLength: 120,
-    })}
-      ${helpTextTemplate(
-        'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.',
-      )}`,
-    (data) => ({
+export function ProjectDialog({ project }) {
+  return html`<${CommandDialog}
+    title=${project ? 'Edit project' : 'Create project'}
+    command=${(data) => ({
       kind: 'project.save',
       target: project?.id || '',
       project: { ...(project || {}), name: data.get('name').trim() },
-    }),
-  );
+    })}
+  >
+    ${fieldTemplate('name', 'Project name', project?.name || '', 'text', undefined, {
+      required: true,
+      maxLength: 120,
+    })}
+    ${helpTextTemplate(
+      'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.',
+    )}
+  </${CommandDialog}>`;
 }
-function openProject(project) {
-  if (!state.board || !project || state.busy || state.loading || state.integrationFormOpen) return;
-  if (state.detailState && !closeDetail({ focus: false })) return;
-  state.view = 'board';
-  state.presentation = 'list';
-  setFilterValues('project', [project.id]);
-  setFilterValues('assignee', []);
-  setFilterValues('label', []);
-  state.scope = 'all';
-  resetSearch();
-  hooks.render();
-  persistPlanningURL();
+function editProject(project) {
+  openDialog('project.edit', { project });
 }
-function projectMatchesFilters(project) {
-  if (!projectFilters.assignee.size && !projectFilters.label.size) return true;
+function projectMatchesFilters(project, filters) {
+  if (!filters.assignee.length && !filters.label.length) return true;
   return state.board.items.some((item) =>
     item.archived
       ? false
       : itemProjectIDs(item).includes(project.id) &&
-        matchesFilter('assignee', item.assignee ? [item.assignee] : [], projectFilters) &&
-        matchesFilter('label', item.labels || [], projectFilters),
+        matchesFilter(filters.assignee, item.assignee ? [item.assignee] : []) &&
+        matchesFilter(filters.label, item.labels || []),
   );
 }
-function integrationProjectChipsTemplate(projectIDs) {
-  const catalog = new Map(state.integrationCatalog.map((project) => [String(project.id), project]));
+function integrationProjectChipsTemplate(projectIDs, projects) {
+  const catalog = new Map(projects.map((project) => [String(project.id), project]));
   return html`<div class="tags integration-project-chips" aria-label="Approved GitLab projects">
     ${projectIDs.map((id) => {
       const project = catalog.get(String(id));
       const label = project ? gitlabProjectLabel(project) : `GitLab project #${id}`;
-      return html`<span class="badge integration-project-chip" title=${label}>${label}</span>`;
+      return html`<span key=${id} class="badge integration-project-chip" title=${label}>${label}</span>`;
     })}
   </div>`;
 }
-// Rebuild the form only when catalog or submission status changes. Selected
-// projects and consent live in shared state so a failed save can reopen it intact.
-function IntegrationEditor({ board, catalog, loading, error, submitting, formError }) {
-  const generation = useRef(0);
-  return useMemo(
-    () => withKey(++generation.current, integrationFormTemplate()),
-    [board, catalog, loading, error, submitting, formError],
-  );
-}
-function integrationTemplate(approvedIDs) {
+function integrationTemplate(page, approvedIDs, catalog) {
   const head = (...actions) => sectionHeadTemplate('GitLab integration', ...actions);
-  // Reset the form only when its catalog or board inputs change, not when
-  // the surrounding Projects page re-renders for search or filter changes.
-  if (state.integrationFormOpen) {
+  const projects = catalog.data || [];
+  const error = catalog.error?.message || '';
+  if (page.integrationFormOpen) {
     return panelTemplate(
       'maintenance-section',
-      html`${head()}<${IntegrationEditor} board=${state.board} catalog=${state.integrationCatalog} loading=${state.integrationCatalogLoading} error=${state.integrationCatalogError} submitting=${state.integrationSubmitting} formError=${state.integrationFormError} />`,
+      html`${head()}<${IntegrationForm}
+        board=${page.board}
+        catalog=${projects}
+        loading=${catalog.loading}
+        error=${error}
+        onRetry=${catalog.reload}
+      />`,
     );
   }
-  const configured = state.board.connector_instance || 'Not configured';
+  const configured = page.board.connector_instance || 'Not configured';
   const approved = approvedIDs.length;
   return panelTemplate(
     'maintenance-section',
     html`${head(accessButtonTemplate('Edit integration', editIntegration))}
     ${helpTextTemplate(`Operator-configured GitLab instance: ${configured}`)}
     ${helpTextTemplate(`${approved} approved GitLab project${approved === 1 ? '' : 's'}.`)}
-    ${approved ? integrationProjectChipsTemplate(approvedIDs) : null}
-    ${state.integrationCatalogLoading ? helpTextTemplate('Loading approved GitLab project names…') : null}
+    ${approved ? integrationProjectChipsTemplate(approvedIDs, projects) : null}
+    ${catalog.loading ? helpTextTemplate('Loading approved GitLab project names…') : null}
     ${
-      state.integrationCatalogError
-        ? helpTextTemplate(
-            `Project names are unavailable; approved IDs remain visible. ${state.integrationCatalogError}`,
-          )
+      error
+        ? helpTextTemplate(`Project names are unavailable; approved IDs remain visible. ${error}`)
         : null
     }
     ${
-      state.board.connector_instance
+      page.board.connector_instance
         ? null
         : helpTextTemplate(
             'Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN to enable the connector.',
@@ -137,7 +109,7 @@ function integrationTemplate(approvedIDs) {
     }`,
   );
 }
-function projectRowsTemplate(matches, filtered, search) {
+function projectRowsTemplate(page, matches, filtered, search) {
   if (!matches.length) {
     const narrowed = filtered.length !== state.board.projects.length;
     const message = !state.board.projects.length
@@ -149,47 +121,43 @@ function projectRowsTemplate(matches, filtered, search) {
           : 'No projects hold work matching the current filters.';
     return emptyStateTemplate(message);
   }
-  const openDisabled = state.busy || state.loading || state.integrationFormOpen;
-  return keyedList(
-    matches,
-    (project) => project.id,
-    (project) =>
-      maintenanceRowTemplate({
-        content: [html`<strong>${project.name}</strong>`],
-        actions: [
-          actionIconTemplate('View scope', '◎', () => openProject(project), {
-            disabled: openDisabled,
-          }),
-          writeIconTemplate('Edit project', '✎', () => editProject(project)),
-        ],
-      }),
+  const openDisabled = page.busy || page.loading || page.integrationFormOpen;
+  return matches.map((project) =>
+    maintenanceRowTemplate({
+      key: project.id,
+      content: [html`<strong>${project.name}</strong>`],
+      actions: [
+        actionIconTemplate('View scope', '◎', () => openProject(project), {
+          disabled: openDisabled,
+        }),
+        writeIconTemplate('Edit project', '✎', () => editProject(project)),
+      ],
+    }),
   );
 }
-function rerenderProjects() {
-  hooks.renderContent();
-}
-function projectsTemplate() {
-  const search = state.projectSearch.trim();
+function projectsTemplate(page, ids, rerender) {
+  const search = page.projectSearch.trim();
   const query = search.toLowerCase();
-  const filtered = state.board.projects.filter(projectMatchesFilters);
+  const filters = page.projectFilters;
+  const filtered = page.board.projects.filter((project) => projectMatchesFilters(project, filters));
   const matches = filtered.filter((project) => project.name.toLowerCase().includes(query));
-  // Filter controls keep one generated id each for the life of the session.
-  state.projectFilterIDs ||= {
-    assignee: filterControlID('Assignee'),
-    label: filterControlID('Label'),
-    search: filterControlID('Search'),
-  };
-  const ids = state.projectFilterIDs;
+  // Each select adds one value and returns to its "any" entry.
   const addFilter = (name) => (event) => {
-    addFilterValue(name, event.currentTarget.value, projectFilters);
-    rerenderProjects();
+    const value = event.currentTarget.value;
+    setState((current) => ({
+      projectFilters: {
+        ...current.projectFilters,
+        [name]: withFilterValue(current.projectFilters[name], value),
+      },
+    }));
+    rerender();
   };
   const controls = html`${filterSelectTemplate(
     'Assignee',
     [
       ['all', 'Any assignee'],
       ['none', 'Unassigned'],
-      ...state.board.members.map((member) => [member.subject, memberName(member.subject)]),
+      ...page.board.members.map((member) => [member.subject, memberName(member.subject)]),
     ],
     ids.assignee,
     addFilter('assignee'),
@@ -198,20 +166,21 @@ function projectsTemplate() {
     [
       ['all', 'Any label'],
       ['none', 'No labels'],
-      ...state.board.labels.map((label) => [label.name, label.name]),
+      ...page.board.labels.map((label) => [label.name, label.name]),
     ],
     ids.label,
     addFilter('label'),
   )}${filterSearchTemplate(
     'Search',
     ids.search,
-    { value: state.projectSearch, placeholder: 'Find projects…', maxLength: 120 },
-    (event) => {
-      state.projectSearch = event.currentTarget.value;
-      rerenderProjects();
-    },
+    { value: page.projectSearch, placeholder: 'Find projects…', maxLength: 120 },
+    (event) => setState({ projectSearch: event.currentTarget.value }),
   )}`;
-  const chips = filterChipTemplates(projectFilters, PROJECT_FILTER_NAMES, rerenderProjects, {
+  const chips = FilterChips({
+    group: filters,
+    names: PROJECT_FILTER_NAMES,
+    disabled: page.busy || page.loading,
+    onChange: (next) => setState({ projectFilters: next }),
     clearLabel: 'Clear project filters',
   });
   const count = `${matches.length} project${matches.length === 1 ? '' : 's'}`;
@@ -228,18 +197,15 @@ function projectsTemplate() {
     ${helpTextTemplate(
       'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide. Assignee and Label filters list projects with current non-archived work matching every active filter; Unassigned and No labels match empty values.',
     )}
-    ${maintenanceListTemplate('', projectRowsTemplate(matches, filtered, search))}
+    ${maintenanceListTemplate('', projectRowsTemplate(page, matches, filtered, search))}
   </section>`;
 }
 const PROJECT_PAGE_KEYS = [
   'board',
+  'root',
   'projectSearch',
-  'projectFilterIDs',
+  'projectFilters',
   'integrationFormOpen',
-  'integrationCatalog',
-  'integrationCatalogLoaded',
-  'integrationCatalogError',
-  'integrationCatalogLoading',
   'integrationSubmitting',
   'integrationFormError',
   'busy',
@@ -248,27 +214,25 @@ const PROJECT_PAGE_KEYS = [
 function selectProjectsPage(current) {
   return Object.fromEntries(PROJECT_PAGE_KEYS.map((key) => [key, current[key]]));
 }
-function sameProjectsPage(left, right) {
-  return PROJECT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
-}
 export function ProjectsPage() {
-  const selected = useStore(selectProjectsPage, sameProjectsPage);
-  const board = selected.board;
+  const page = useStore(selectProjectsPage, shallowEqual);
+  const board = page.board;
   const approvedIDs = board.integration?.projects || [];
-  useEffect(() => {
-    if (
-      !selected.integrationFormOpen &&
-      board.connector_instance &&
-      approvedIDs.length &&
-      !selected.integrationCatalogLoaded &&
-      !selected.integrationCatalogLoading
-    )
-      void loadIntegrationCatalog();
-  }, [
-    board,
-    selected.integrationFormOpen,
-    selected.integrationCatalogLoaded,
-    selected.integrationCatalogLoading,
-  ]);
-  return html`${integrationTemplate(approvedIDs)}${projectsTemplate()}`;
+  // Filter controls keep one generated id each for the life of the page.
+  const [ids] = useState(() => ({
+    assignee: filterControlID('Assignee'),
+    label: filterControlID('Label'),
+    search: filterControlID('Search'),
+  }));
+  // Project names come from the connector's catalog: for approved projects in
+  // the summary, and for every visible project while the form is open, which
+  // reloads it.
+  const needed = !!board.connector_instance && (page.integrationFormOpen || approvedIDs.length > 0);
+  const catalog = useRequest(
+    (signal) => (needed ? loadGitLabProjects(page.root, signal) : Promise.resolve([])),
+    [page.root, board.connector_instance, needed, page.integrationFormOpen],
+  );
+  const [, rerender] = useReducer((value) => value + 1, 0);
+  const shown = { ...catalog, loading: needed && catalog.loading };
+  return html`${integrationTemplate(page, approvedIDs, shown)}${projectsTemplate(page, ids, rerender)}`;
 }

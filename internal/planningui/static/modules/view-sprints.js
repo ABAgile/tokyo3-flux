@@ -1,6 +1,5 @@
 // Sprint panels, the Sprints page, sprint history and sprint dialogs.
 import { uid } from './dom.js';
-import { api } from './api.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import {
   fieldTemplate,
@@ -12,18 +11,25 @@ import {
   maintenanceListTemplate,
 } from './layout.js';
 import { classNames } from './dom.js';
-import { html, keyedList, withKey } from './vdom.js';
+import { html, shallowEqual } from './vdom.js';
 import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
 
-import { state, useStore } from './state.js';
-import { hooks } from './hooks.js';
-import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
+import { setState, state, useStore } from './state.js';
+import {
+  actionIconTemplate,
+  writeIconTemplate,
+  accessButtonTemplate,
+  usePermissions,
+} from './permissions.js';
 import { done, blocked, scopeItems } from './items.js';
-import { sprintFilterItems, sprintMatchesFilters } from './filters.js';
+import { sprintFilterItems, sprintResults } from './filters.js';
+import { PlanningFilters } from './planning-filters.js';
 import { burndownTemplate } from './view-burndown.js';
 import { quick } from './commands.js';
-import { openEditor, setEditorSaveText } from './dialog.js';
-import { persistPlanningURL } from './url-state.js';
+import { openDialog } from './dialog-state.js';
+import { CommandDialog } from './dialog.js';
+import { loadSprintHistory } from './page-data.js';
+import { toggleBurndown, viewSprintScope } from './actions.js';
 import { sprintVelocityTemplate } from './view-velocity.js';
 
 // The sprint goal measures its rendered height to decide whether to offer
@@ -70,24 +76,8 @@ function SprintGoal({ value }) {
     >${expanded ? 'Show less' : 'Show more'}</button>
   </div>`;
 }
-function sprintGoalTemplate(value) {
-  return html`<${SprintGoal} value=${value} />`;
-}
-function toggleBurndown(s) {
-  if (state.burndownExpanded.has(s.id)) state.burndownExpanded.delete(s.id);
-  else state.burndownExpanded.add(s.id);
-  hooks.render();
-  [...document.querySelectorAll('[data-burndown-toggle]')]
-    .find((element) => element.dataset.burndownToggle === s.id)
-    ?.focus();
-}
-function viewSprintScope(s) {
-  state.view = 'board';
-  state.scope = s.id;
-  hooks.render();
-  persistPlanningURL();
-}
-function sprintActionsTemplate(s, expanded) {
+function SprintActions({ sprint: s, expanded }) {
+  const { busy } = usePermissions();
   const label = expanded ? 'Hide burn down' : 'Show burn down';
   return html`<div class="actions sprint-actions">
     <button
@@ -100,11 +90,11 @@ function sprintActionsTemplate(s, expanded) {
       data-burndown-toggle=${s.id}
       aria-expanded=${String(expanded)}
       aria-controls=${expanded ? `burndown-${s.id}` : null}
-      disabled=${state.busy || state.loading}
-      onClick=${() => toggleBurndown(s)}
+      disabled=${busy}
+      onClick=${() => toggleBurndown(s.id)}
     ></button>
     ${actionIconTemplate('View scope', '◎', () => viewSprintScope(s))}
-    ${s.state !== 'closed' ? writeIconTemplate('Edit sprint', '✎', () => editSprint(s)) : null}
+    ${s.state !== 'closed' ? writeIconTemplate('Edit sprint', '✎', () => openDialog('sprint.edit', { sprint: s })) : null}
     ${
       s.state === 'planned'
         ? writeIconTemplate(
@@ -120,15 +110,17 @@ function sprintActionsTemplate(s, expanded) {
       s.state === 'closed'
         ? html`${writeIconTemplate('Re-open sprint', '↶', () =>
             quick({ kind: 'sprint.reopen', target: s.id }),
-          )}${writeIconTemplate('Archive sprint', '▣', () => archiveSprint(s), 'quiet')}`
+          )}${writeIconTemplate('Archive sprint', '▣', () => openDialog('sprint.archive', { sprint: s }), 'quiet')}`
         : null
     }
   </div>`;
 }
-function sprintPanelTemplate(s, items = scopeItems(s)) {
-  const expanded = state.burndownExpanded.has(s.id);
-  // withKey gives a changed goal a fresh widget; otherwise it keeps its state.
-  const goal = withKey(s.goal, sprintGoalTemplate(s.goal));
+function selectBurndownExpanded(current) {
+  return current.burndownExpanded;
+}
+// A changed goal gets a fresh goal widget; otherwise it keeps its measurement.
+function SprintPanel({ sprint: s, items }) {
+  const expanded = useStore(selectBurndownExpanded).has(s.id);
   return html`<article class="panel sprint-panel" data-sprint-id=${s.id}>
     <div class="sprint-info">
       <div class="sprint-title-row">
@@ -137,7 +129,7 @@ function sprintPanelTemplate(s, items = scopeItems(s)) {
           <h2>${s.name}</h2>
         </div>
       </div>
-      ${goal}
+      <${SprintGoal} key=${s.goal} value=${s.goal} />
       <small class="muted">${`${s.start} → ${s.end}`}</small>
       ${
         s.state === 'closed'
@@ -147,7 +139,7 @@ function sprintPanelTemplate(s, items = scopeItems(s)) {
           : null
       }
     </div>
-    ${sprintActionsTemplate(s, expanded)}
+    <${SprintActions} sprint=${s} expanded=${expanded} />
     ${metricListTemplate([
       [items.length, 'In scope'],
       [items.filter(done).length, s.state === 'closed' ? 'Done now' : 'Done'],
@@ -155,13 +147,6 @@ function sprintPanelTemplate(s, items = scopeItems(s)) {
     ])}
     ${expanded ? burndownTemplate(s) : null}
   </article>`;
-}
-export function sprintResults(board, query) {
-  const filtered = (board?.sprints || []).filter(sprintMatchesFilters);
-  const matches = filtered.filter(
-    (sprint) => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query),
-  );
-  return { filtered, matches };
 }
 function sprintRowsTemplate({ filtered, matches }) {
   const search = state.searchInput.trim();
@@ -176,10 +161,12 @@ function sprintRowsTemplate({ filtered, matches }) {
           : 'No sprints hold work matching the current filters.';
     return emptyStateTemplate(message);
   }
-  return keyedList(
-    matches,
-    (sprint) => sprint.id,
-    (sprint) => sprintPanelTemplate(sprint, sprintFilterItems(sprint)),
+  return matches.map(
+    (sprint) => html`<${SprintPanel}
+      key=${sprint.id}
+      sprint=${sprint}
+      items=${sprintFilterItems(sprint)}
+    />`,
   );
 }
 function sprintHistoryTime(value) {
@@ -191,13 +178,11 @@ function sprintHistoryTime(value) {
 async function loadOlderSprintHistory() {
   try {
     await loadSprintHistory();
-    hooks.render();
   } catch (error) {
-    state.sprintHistoryError = error.message;
-    hooks.render();
+    setState({ sprintHistoryError: error.message });
   }
 }
-function sprintHistoryRowTemplate(record) {
+function SprintHistoryRow({ record }) {
   const sprint = record.sprint || {};
   const closure = record.closure || {};
   const counts = `${closure.scope_count || 0} committed · ${closure.completed_count || 0} completed · ${closure.carry_over_count || 0} carried over`;
@@ -217,7 +202,9 @@ function sprintHistoryBody() {
     );
   return maintenanceListTemplate(
     'sprint-history-list',
-    state.sprintHistory.map(sprintHistoryRowTemplate),
+    state.sprintHistory.map(
+      (record) => html`<${SprintHistoryRow} key=${record.sprint?.id} record=${record} />`,
+    ),
   );
 }
 function sprintHistoryTemplate() {
@@ -243,6 +230,7 @@ function sprintHistoryTemplate() {
 // first, then a titled section whose shared planning filters sit below its heading.
 const SPRINT_PAGE_KEYS = [
   'board',
+  'filters',
   'searchQuery',
   'searchInput',
   'busy',
@@ -254,26 +242,30 @@ const SPRINT_PAGE_KEYS = [
 function selectSprintPage(current) {
   return Object.fromEntries(SPRINT_PAGE_KEYS.map((key) => [key, current[key]]));
 }
-function sameSprintPage(left, right) {
-  return SPRINT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
-}
-export function SprintsPage({ results, filters }) {
-  useStore(selectSprintPage, sameSprintPage);
+// The page lists the sprints matching the planning filters and search; the
+// shared filter bar renders in its slot below the section heading.
+export function SprintsPage() {
+  const { board, searchQuery } = useStore(selectSprintPage, shallowEqual);
+  const results = sprintResults(board, searchQuery);
   return html`${sprintVelocityTemplate()}
       <section class="sprint-planning">
         ${sectionHeadTemplate(
           'Goals, scope, and deliberate carry-over',
-          accessButtonTemplate('＋ New sprint', () => editSprint(), {
+          accessButtonTemplate('＋ New sprint', () => openDialog('sprint.edit', {}), {
             className: 'primary',
             tracked: false,
           }),
         )}
-        <div class="filter-slot" id="sprint-filter-slot">${filters}</div>
+        <div class="filter-slot" id="sprint-filter-slot"><${PlanningFilters} /></div>
         <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate(results)}</div>
       </section>
       ${sprintHistoryTemplate()}`;
 }
+function selectSummaryFilters(current) {
+  return current.filters;
+}
 export function SprintSummary({ board, view, scope }) {
+  useStore(selectSummaryFilters);
   const selected = board?.sprints?.find((sprint) => sprint.id === scope);
   const sprints =
     view !== 'board' || !board
@@ -285,10 +277,9 @@ export function SprintSummary({ board, view, scope }) {
   const content =
     view !== 'board' || !board
       ? null
-      : html`${keyedList(
-          sprints,
-          (sprint) => sprint.id,
-          (sprint) => sprintPanelTemplate(sprint),
+      : html`${sprints.map(
+          (sprint) =>
+            html`<${SprintPanel} key=${sprint.id} sprint=${sprint} items=${scopeItems(sprint)} />`,
         )}${
           sprints.length
             ? null
@@ -298,128 +289,99 @@ export function SprintSummary({ board, view, scope }) {
         }`;
   return html`<section id="sprint-summary" class="sprints" aria-label=${label}>${content}</section>`;
 }
-const SPRINT_HISTORY_PAGE = 50;
-export function resetSprintHistory() {
-  state.sprintHistory = [];
-  state.sprintHistoryOffset = 0;
-  state.sprintHistoryMore = false;
-  state.sprintHistoryError = '';
-}
-function validSprintHistoryPage(page) {
-  return (
-    page &&
-    Array.isArray(page.records) &&
-    Number.isSafeInteger(page.total) &&
-    page.total >= 0 &&
-    page.records.every(
-      (record) =>
-        record &&
-        record.sprint &&
-        typeof record.sprint.id === 'string' &&
-        record.closure &&
-        typeof record.closure.closed_at === 'string' &&
-        !Number.isNaN(Date.parse(record.closure.closed_at)),
-    ) &&
-    (page.next_offset === undefined ||
-      (Number.isSafeInteger(page.next_offset) && page.next_offset >= 0))
-  );
-}
-export async function loadSprintHistory(reset = false) {
-  const offset = reset ? 0 : state.sprintHistoryOffset;
-  const page = await api(
-    `${state.root}/sprints/archive?offset=${offset}&limit=${SPRINT_HISTORY_PAGE}`,
-  );
-  if (!validSprintHistoryPage(page))
-    throw new Error('Sprint history response is invalid. Refresh to retry.');
-  state.sprintHistory = reset ? page.records : [...state.sprintHistory, ...page.records];
-  state.sprintHistoryOffset = offset + page.records.length;
-  state.sprintHistoryMore = page.next_offset !== undefined;
-  state.sprintHistoryError = '';
-}
-function editSprint(sprint) {
+export function SprintDialog({ sprint }) {
   const existing = !!sprint;
-  sprint ||= {
+  const value = sprint || {
     name: '',
     goal: '',
     start: new Date().toISOString().slice(0, 10),
     end: new Date(Date.now() + 13 * 86400000).toISOString().slice(0, 10),
   };
-  openEditor(
-    existing ? 'Edit sprint' : 'Plan a sprint',
-    () => html`${fieldTemplate('name', 'Sprint name', sprint.name, 'text', undefined, {
-      required: true,
-      maxLength: 120,
-    })}
-      ${markdownEditorTemplate(
-        'goal',
-        'Sprint goal · what outcome matters?',
-        sprint.goal,
-        4000,
-        false,
-        false,
-        { subject: 'sprint goal' },
-      )}
-      <div class="form-grid">
-        ${fieldTemplate('start', 'Start date', sprint.start, 'date', undefined, { required: true })}
-        ${fieldTemplate('end', 'End date', sprint.end, 'date', undefined, { required: true })}
-      </div>
-      ${helpTextTemplate(
-        'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
-      )}`,
-    (data) => {
+  return html`<${CommandDialog}
+    title=${existing ? 'Edit sprint' : 'Plan a sprint'}
+    command=${(data) => {
       const goal = String(data.get('goal') || '').trim();
       if (!goal) throw new Error('Sprint goal is required.');
       return {
         kind: 'sprint.save',
-        target: sprint.id || '',
+        target: value.id || '',
         sprint: {
-          ...sprint,
+          ...value,
           name: data.get('name').trim(),
           goal,
           start: data.get('start'),
           end: data.get('end'),
         },
       };
-    },
-  );
+    }}
+  >
+    ${fieldTemplate('name', 'Sprint name', value.name, 'text', undefined, {
+      required: true,
+      maxLength: 120,
+    })}
+    ${markdownEditorTemplate(
+      'goal',
+      'Sprint goal · what outcome matters?',
+      value.goal,
+      4000,
+      false,
+      false,
+      { subject: 'sprint goal' },
+    )}
+    <div class="form-grid">
+      ${fieldTemplate('start', 'Start date', value.start, 'date', undefined, { required: true })}
+      ${fieldTemplate('end', 'End date', value.end, 'date', undefined, { required: true })}
+    </div>
+    ${helpTextTemplate(
+      'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
+    )}
+  </${CommandDialog}>`;
 }
 function closeSprint(sprint) {
   const items = scopeItems(sprint);
-  const unfinished = items.filter((i) => !done(i));
-  const destinations = state.board.sprints
-    .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
-    .map((s) => [s.id, s.name]);
-  openEditor(
-    'Close sprint & decide carry-over',
-    () => html`<p>${`${sprint.name}: ${items.length} items in scope; ${unfinished.length} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`}</p>
-      ${fieldTemplate('destination', 'Also assign unfinished work to', '', 'text', [
-        ['', 'No additional sprint'],
-        ...destinations,
-      ])}
-      ${helpTextTemplate(
-        'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
-      )}
-      ${fieldTemplate('reason', 'Closing decision / rationale', '', 'textarea', undefined, {
-        required: true,
-        maxLength: 4000,
-      })}`,
-    (data) => ({
+  openDialog('sprint.close', {
+    sprint,
+    scoped: items.length,
+    unfinished: items.filter((i) => !done(i)).length,
+    destinations: state.board.sprints
+      .filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
+      .map((s) => [s.id, s.name]),
+  });
+}
+export function CloseSprintDialog({ sprint, scoped, unfinished, destinations }) {
+  return html`<${CommandDialog}
+    title="Close sprint & decide carry-over"
+    saveText="Close sprint"
+    command=${(data) => ({
       kind: 'sprint.close',
       target: sprint.id,
       destination: data.get('destination'),
       reason: data.get('reason').trim(),
-    }),
-  );
-  setEditorSaveText('Close sprint');
+    })}
+  >
+    <p>${`${sprint.name}: ${scoped} items in scope; ${unfinished} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`}</p>
+    ${fieldTemplate('destination', 'Also assign unfinished work to', '', 'text', [
+      ['', 'No additional sprint'],
+      ...destinations,
+    ])}
+    ${helpTextTemplate(
+      'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
+    )}
+    ${fieldTemplate('reason', 'Closing decision / rationale', '', 'textarea', undefined, {
+      required: true,
+      maxLength: 4000,
+    })}
+  </${CommandDialog}>`;
 }
-function archiveSprint(sprint) {
-  openEditor(
-    'Archive sprint',
-    () => html`<p>${`Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`}</p>
-      ${helpTextTemplate(
-        'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
-      )}`,
-    () => ({ kind: 'sprint.archive', target: sprint.id }),
-  );
-  setEditorSaveText('Archive sprint');
+export function ArchiveSprintDialog({ sprint }) {
+  return html`<${CommandDialog}
+    title="Archive sprint"
+    saveText="Archive sprint"
+    command=${() => ({ kind: 'sprint.archive', target: sprint.id })}
+  >
+    <p>${`Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`}</p>
+    ${helpTextTemplate(
+      'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
+    )}
+  </${CommandDialog}>`;
 }

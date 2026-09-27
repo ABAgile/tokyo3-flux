@@ -11,16 +11,19 @@ async function run(page) {
     );
     const renderIsland = (host, template) => render(template, host);
     const unmount = (host) => render(null, host);
-    const { useRequest, useDismiss } = await import('/modules/ui-hooks.js');
+    const { useRequest, useDismiss, useMutation, useEventListener, useFocusRestore } = await import(
+      '/modules/ui-hooks.js'
+    );
     const { state, setState, useStore } = await import('/modules/state.js');
     const { StatusBars, notice, showPlanningChangeNotice, clearPlanningChangeNotice } =
       await import('/modules/notices.js');
-    const { App } = await import('/modules/app-shell.js');
+    const { App, DIALOGS } = await import('/modules/app-shell.js');
     const { LabelsPage } = await import('/modules/view-labels.js');
     const { MembersPage } = await import('/modules/view-members.js');
-    const { openEditor, openFormDialog, closeEditor } = await import('/modules/dialog.js');
-    const { api } = await import('/modules/api.js');
-    const { helpPopoverTemplate, multiSelectTemplate } = await import('/modules/multi-select.js');
+    const { FormDialog, CommandDialog } = await import('/modules/dialog.js');
+    const { openDialog, closeEditor } = await import('/modules/dialog-state.js');
+    const { api, apiUpload } = await import('/modules/api.js');
+    const { helpPopoverTemplate, MultiSelect } = await import('/modules/multi-select.js');
     const { markdownTemplate, markdownEditorTemplate } = await import('/modules/markdown.js');
     const { WorkspaceSelection, WorkspaceCreation, FirstRunChecklist } = await import(
       '/modules/gate-components.js'
@@ -114,34 +117,43 @@ async function run(page) {
     host.firstElementChild.click();
     await flush();
     check(host.textContent === 'Reduced 1', 'useReducer updates component state');
-    const initialChord = state.shortcutChord;
+    setState({ probeCount: 0 });
     let storeRenders = 0;
     function StoreProbe() {
       storeRenders++;
-      const chord = useStore((current) => current.shortcutChord);
+      const count = useStore((current) => current.probeCount);
       return html`<button onClick=${() =>
         setState((current) => ({
-          shortcutChord: current.shortcutChord + 1,
-        }))}>Store ${chord}</button>`;
+          probeCount: current.probeCount + 1,
+        }))}>Store ${count}</button>`;
     }
     renderIsland(host, html`<${StoreProbe} />`);
     host.firstElementChild.click();
     await flush();
     check(
-      host.textContent === `Store ${initialChord + 1}` && storeRenders === 2,
+      host.textContent === 'Store 1' && storeRenders === 2,
       'store selector reacts to state updates',
     );
     setState({ errorText: 'Unrelated update' });
     await flush();
     check(storeRenders === 2, 'selector skips unrelated state changes');
     setState({ errorText: '' });
-    state.shortcutChord = initialChord + 2;
-    await flush();
+    let rejected = false;
+    try {
+      state.probeCount = 5;
+    } catch {
+      rejected = true;
+    }
+    check(rejected && state.probeCount === 1, 'the state view is read-only; writes use setState');
+    const selection = new Set(['one']);
+    setState({ bulkSelection: selection });
+    setState((current) => ({ bulkSelection: new Set([...current.bulkSelection, 'two']) }));
     check(
-      host.textContent === `Store ${initialChord + 2}` && storeRenders === 3,
-      'compatibility state writes notify store selectors',
+      selection.size === 1 && state.bulkSelection.size === 2,
+      'set-valued state is replaced, never mutated',
     );
-    setState({ shortcutChord: initialChord });
+    setState({ bulkSelection: new Set() });
+    unmount(host);
 
     const previousLabelBoard = state.board;
     const labels = [{ name: 'type::component', color: '#ffcc00' }];
@@ -187,7 +199,44 @@ async function run(page) {
     const previousGate = state.workspaceGate;
     const previousBoard = state.board;
     const previousView = state.view;
-    renderIsland(host, html`<${App} refresh=${() => {}} />`);
+    // Dialogs are data looked up in the App's map; probes join the real ones.
+    let editorBuilds = 0;
+    function ProbeDialog({ title, text, name = 'probe', value = 'initial' }) {
+      editorBuilds++;
+      return html`<${CommandDialog} title=${title} command=${() => ({ kind: 'probe' })}>
+        <div><p id="dialog-field-root">${text}</p>
+        <label>Probe<input name=${name} defaultValue=${value} /></label></div>
+      </${CommandDialog}>`;
+    }
+    let customSubmission;
+    function CustomProbeDialog() {
+      return html`<${FormDialog}
+        title="Custom form probe"
+        saveText="Submit probe"
+        onSubmit=${(data) => {
+          customSubmission = data.get('probe');
+          throw new Error('Keep this draft');
+        }}
+      ><label>Probe<input name="probe" defaultValue="initial" /></label></${FormDialog}>`;
+    }
+    const dialogs = { ...DIALOGS, probe: ProbeDialog, 'custom.probe': CustomProbeDialog };
+    // Mounted planning content renders from complete board payloads only.
+    const fixtureBoard = (extra) => ({
+      role: 'member',
+      workspace: { revision: 1, id: 'test' },
+      projects: [],
+      sprints: [],
+      items: [],
+      columns: [],
+      labels: [],
+      members: [],
+      links: [],
+      participants: [],
+      closed_scope: [],
+      integration: { instance: '', projects: [] },
+      ...extra,
+    });
+    renderIsland(host, html`<${App} dialogs=${dialogs} />`);
     const legacyBody = host.querySelector('#planning-body');
     check(
       host.querySelector('#title')?.textContent === 'Loading planning data',
@@ -203,29 +252,8 @@ async function run(page) {
     );
     setState({ theme: previousTheme });
     await flush();
-    setState({
-      board: {
-        role: 'member',
-        workspace: { revision: 1, id: 'test' },
-        projects: [],
-        sprints: [],
-        items: [],
-        columns: [],
-        labels: [],
-        members: [],
-        links: [],
-      },
-    });
-    let editorBuilds = 0;
-    openEditor(
-      'Dialog snapshot',
-      () => {
-        editorBuilds++;
-        return html`<div><p id="dialog-field-root">Reactive dialog content</p>
-          <label>Probe<input name="probe" defaultValue="initial" /></label></div>`;
-      },
-      () => ({ kind: 'probe' }),
-    );
+    setState({ board: fixtureBoard() });
+    openDialog('probe', { title: 'Dialog snapshot', text: 'Reactive dialog content' });
     await flush();
     check(
       host.querySelector('#editor')?.open &&
@@ -254,17 +282,13 @@ async function run(page) {
         editorBuilds === 1,
       'App owns workspace page content without replacing mounts or editor snapshots',
     );
-    const pageBoard = {
+    const pageBoard = fixtureBoard({
       role: 'admin',
-      workspace: { id: 'test', revision: 1 },
-      labels: [],
-      items: [],
-      projects: [],
-      members: [],
-      sprints: [{ id: 'active', name: 'Active sprint', state: 'active' }],
+      sprints: [
+        { id: 'active', name: 'Active sprint', state: 'active', goal: '', start: '', end: '' },
+      ],
       columns: [{ id: 'todo', name: 'To do', category: 'todo', wip: 0 }],
-      links: [],
-    };
+    });
     setState({ board: pageBoard, workspaceGate: '', view: 'labels' });
     await flush();
     check(
@@ -274,7 +298,7 @@ async function run(page) {
         gateRoot.textContent.includes('No labels yet.'),
       'App renders page components directly inside its content mount',
     );
-    setState({ view: 'board', contentBusy: false });
+    setState({ view: 'board', loading: false });
     await flush();
     const planningBody = host.querySelector('#planning-body');
     const boardRoot = planningBody.firstElementChild;
@@ -292,7 +316,7 @@ async function run(page) {
         planningBody.firstElementChild === boardRoot,
       'the inactive planning frame retains its content lifetime',
     );
-    setState({ view: 'board', contentBusy: true });
+    setState({ view: 'board', loading: true });
     await flush();
     check(
       !host.querySelector('#planning-frame')?.hidden &&
@@ -301,18 +325,15 @@ async function run(page) {
         planningBody.firstElementChild === boardRoot,
       'aria-busy follows the active content body without rebuilding it',
     );
-    setState({ view: 'labels', contentBusy: false });
+    setState({ view: 'labels', loading: false });
     await flush();
     const dialogNode = host.querySelector('#editor');
-    setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
-    openEditor(
-      'Replacement snapshot',
-      () => {
-        editorBuilds++;
-        return html`<p id="dialog-field-root">Replacement content</p>`;
-      },
-      () => ({ kind: 'probe' }),
-    );
+    setState({ board: fixtureBoard({ workspace: { revision: 2, id: 'test' } }) });
+    openDialog('probe', {
+      title: 'Replacement snapshot',
+      text: 'Replacement content',
+      name: 'replacement',
+    });
     await flush();
     check(
       host.querySelector('#editor') === dialogNode &&
@@ -321,27 +342,23 @@ async function run(page) {
         host.querySelector('#dialog-field-root')?.textContent === 'Replacement content' &&
         !host.querySelector('[name="probe"]') &&
         editorBuilds === 2,
-      'changing the editor config replaces its snapshot without replacing the dialog',
+      'opening another dialog replaces its snapshot without replacing the dialog',
+    );
+    check(
+      state.editorDialog.revision === 2 && state.editorDialog.type === 'probe',
+      'a dialog record is data captured when it opens',
     );
     setState({ board: previousBoard });
     closeEditor();
     await flush();
     check(!host.querySelector('#editor')?.open, 'EditorDialog closes through the controller');
 
-    setState({ board: { role: 'member', workspace: { revision: 2, id: 'test' } } });
-    openEditor(
-      'First field snapshot',
-      () => html`<label>Snapshot<input name="snapshot" defaultValue="first" /></label>`,
-      () => ({ kind: 'probe' }),
-    );
+    setState({ board: fixtureBoard({ workspace: { revision: 2, id: 'test' } }) });
+    openDialog('probe', { title: 'First field snapshot', name: 'snapshot', value: 'first' });
     await flush();
     const oldFields = host.querySelector('#fields');
     host.querySelector('[name="snapshot"]').value = 'draft';
-    openEditor(
-      'Second field snapshot',
-      () => html`<label>Snapshot<input name="snapshot" defaultValue="second" /></label>`,
-      () => ({ kind: 'probe' }),
-    );
+    openDialog('probe', { title: 'Second field snapshot', name: 'snapshot', value: 'second' });
     await flush();
     check(
       host.querySelector('#fields') !== oldFields &&
@@ -350,16 +367,7 @@ async function run(page) {
     );
     closeEditor();
     await flush();
-    let customSubmission;
-    openFormDialog(
-      'Custom form probe',
-      'Submit probe',
-      () => html`<label>Probe<input name="probe" defaultValue="initial" /></label>`,
-      (data, { setError }) => {
-        customSubmission = data.get('probe');
-        setError('Keep this draft');
-      },
-    );
+    openDialog('custom.probe');
     await flush();
     const customInput = host.querySelector('[name="probe"]');
     customInput.value = 'retained';
@@ -389,7 +397,34 @@ async function run(page) {
       'undo notice is a store-driven polite live region',
     );
     setState({ undoOffer: undefined, undoText: '' });
-    unmount(host);
+    const appListeners = [];
+    const addListener = document.addEventListener;
+    const removeListener = document.removeEventListener;
+    document.addEventListener = function (type, listener, options) {
+      appListeners.push(type);
+      return addListener.call(this, type, listener, options);
+    };
+    document.removeEventListener = function (type, listener, options) {
+      const index = appListeners.indexOf(type);
+      if (index >= 0) appListeners.splice(index, 1);
+      return removeListener.call(this, type, listener, options);
+    };
+    try {
+      unmount(host);
+      renderIsland(host, html`<${App} dialogs=${dialogs} />`);
+      await flush();
+      check(
+        appListeners.filter((type) => type === 'keydown').length === 2 &&
+          appListeners.includes('visibilitychange') &&
+          appListeners.includes('drop'),
+        'App effects install the shortcut, clock and file-drop listeners',
+      );
+      unmount(host);
+      check(!appListeners.length, 'unmounting the App removes every document listener');
+    } finally {
+      document.addEventListener = addListener;
+      document.removeEventListener = removeListener;
+    }
     setState({ board: previousBoard, workspaceGate: previousGate, view: previousView });
 
     let refreshes = 0;
@@ -402,7 +437,7 @@ async function run(page) {
     notice('Workspace ready');
     await flush();
     const announcedChanges = textChanges.length;
-    setState({ shortcutChord: initialChord + 1 });
+    setState({ probeCount: 2 });
     await flush();
     check(
       status.textContent === 'Workspace ready' && textChanges.length === announcedChanges,
@@ -476,6 +511,73 @@ async function run(page) {
     );
     unmount(host);
     check(requestSignals[1].aborted, 'request cleanup aborts work on unmount');
+
+    let mutationSignal;
+    let runMutation;
+    function MutationProbe() {
+      const { run, pending } = useMutation();
+      runMutation = run;
+      return html`<span>${pending ? 'Saving' : 'Idle'}</span>`;
+    }
+    renderIsland(host, html`<${MutationProbe} key="one" />`);
+    const firstWrite = runMutation(
+      (signal) =>
+        new Promise((_resolve, reject) => {
+          mutationSignal = signal;
+          signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+        }),
+    );
+    const secondWrite = await runMutation(() => Promise.resolve('second'));
+    await flush();
+    check(
+      host.textContent === 'Saving' && secondWrite === undefined,
+      'a pending mutation refuses a second submission',
+    );
+    renderIsland(host, html`<${MutationProbe} key="two" />`);
+    await firstWrite.catch(() => {});
+    check(mutationSignal.aborted, 'remounting a keyed component aborts its pending write');
+    unmount(host);
+    const upload = new AbortController();
+    const uploading = apiUpload('/upload-probe', { body: new FormData(), signal: upload.signal });
+    upload.abort();
+    const uploadError = await uploading.catch((error) => error);
+    check(uploadError?.name === 'AbortError', 'apiUpload aborts its request with the signal');
+
+    let keyed = 0;
+    function ListenerProbe({ active }) {
+      useEventListener(document, 'keyup', () => keyed++, { active });
+      return null;
+    }
+    renderIsland(host, html`<${ListenerProbe} active=${true} />`);
+    document.dispatchEvent(new KeyboardEvent('keyup'));
+    renderIsland(host, html`<${ListenerProbe} active=${false} />`);
+    document.dispatchEvent(new KeyboardEvent('keyup'));
+    renderIsland(host, html`<${ListenerProbe} active=${true} />`);
+    unmount(host);
+    document.dispatchEvent(new KeyboardEvent('keyup'));
+    check(keyed === 1, 'event listener effects follow active state and clean up on unmount');
+
+    function FocusProbe({ column }) {
+      const ref = useRef(null);
+      const focus = useFocusRestore(ref, 'probe');
+      return html`<div ref=${ref} ...${focus}>
+        ${['left', 'right'].map(
+          (name) => html`<section key=${name} data-column=${name}>
+            ${column === name ? html`<button key="card" data-focus-key="probe:card">Card</button>` : null}
+          </section>`,
+        )}
+      </div>`;
+    }
+    renderIsland(host, html`<${FocusProbe} column="left" />`);
+    host.querySelector('[data-focus-key="probe:card"]').focus();
+    renderIsland(host, html`<${FocusProbe} column="right" />`);
+    const movedCard = host.querySelector('[data-focus-key="probe:card"]');
+    check(
+      movedCard.closest('section').dataset.column === 'right' &&
+        document.activeElement === movedCard,
+      'focus follows a keyed control recreated in another parent',
+    );
+    unmount(host);
 
     let dismissed = 0;
     function DismissProbe() {
@@ -568,21 +670,31 @@ async function run(page) {
       check(listeners.size === 1, 'popover registers its outside listener');
       renderIsland(host, null);
       check(listeners.size === 0, 'popover releases its outside listener on removal');
-      let pickerControls, changedValues;
+      let changedValues;
+      let selectOne;
       renderIsland(
         host,
-        multiSelectTemplate('labels', 'Labels', [['one', 'One']], [], undefined, undefined, {
-          onReady: (controls) => {
-            pickerControls = controls;
-          },
-          onChange: (values) => {
+        html`<${MultiSelect}
+          name="labels"
+          title="Labels"
+          entries=${[['one', 'One'], ['two', 'Two']]}
+          single=${true}
+          headingAction=${({ select }) => {
+            selectOne = select;
+            return null;
+          }}
+          onChange=${(values) => {
             changedValues = values;
-          },
-        }),
+          }}
+        />`,
       );
+      selectOne('two');
+      await flush();
       check(
-        pickerControls.group === host.firstElementChild,
-        'picker exposes its component-owned controls',
+        changedValues?.[0] === 'two' &&
+          host.querySelector('input[value="two"]').checked &&
+          host.querySelector('.multi-select-chip')?.textContent.includes('Two'),
+        'heading actions select through the picker and report committed values',
       );
       host.querySelector('[data-multi-edit]').click();
       await flush();
@@ -591,8 +703,11 @@ async function run(page) {
       checkbox.click();
       await flush();
       check(
-        checkbox.checked && changedValues?.[0] === 'one' && pickerControls.selected()[0] === 'one',
-        'native checkbox selection updates component state and its control API',
+        checkbox.checked &&
+          changedValues?.length === 1 &&
+          changedValues[0] === 'one' &&
+          !host.querySelector('input[value="two"]').checked,
+        'native checkbox selection updates component state and reports its value',
       );
       renderIsland(host, null);
       check(listeners.size === 0, 'picker releases its outside listener on removal');
@@ -623,7 +738,7 @@ async function run(page) {
     renderIsland(host, html`<${FirstRunChecklist} steps=${steps} disabled=${false} />`);
     await new Promise((resolve) => setTimeout(resolve, 0));
     check(!violations.length, `CSP violations: ${violations}`);
-    return 'escaping, keyed identity/focus, events, native forms, lifecycle cleanup and permission updates';
+    return 'escaping, keyed identity/focus, events, native forms, lifecycle and listener cleanup, request and mutation cancellation, focus restore, dialog snapshots and permission updates';
   });
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {

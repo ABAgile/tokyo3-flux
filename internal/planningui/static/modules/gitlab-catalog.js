@@ -71,9 +71,9 @@ export function memberUserEntries(users, selected = []) {
   });
   return entries;
 }
-export async function loadGitLabUsers(currentRoot, search = '') {
+export async function loadGitLabUsers(currentRoot, search = '', signal) {
   const params = new URLSearchParams({ search });
-  const data = await api(currentRoot + '/gitlab/users?' + params);
+  const data = await api(currentRoot + '/gitlab/users?' + params, { signal });
   if (!validGitLabUserCatalog(data))
     throw new Error('GitLab user results are invalid. Refresh to retry.');
   return data;
@@ -91,10 +91,17 @@ function validGitLabProjectCatalog(data) {
     )
   );
 }
-export async function loadGitLabProjects(currentRoot) {
-  const data = await api(currentRoot + '/gitlab/projects');
+export async function loadGitLabProjects(currentRoot, signal) {
+  const data = await api(currentRoot + '/gitlab/projects', { signal });
   if (!validGitLabProjectCatalog(data))
     throw new Error('GitLab project catalog is invalid. Refresh to retry.');
+  return data;
+}
+export async function loadGitLabMergeRequests(currentRoot, { project, scope, search }, signal) {
+  const params = new URLSearchParams({ project, scope: scope || 'recent', search });
+  const data = await api(`${currentRoot}/gitlab/merge-requests?${params}`, { signal });
+  if (!validGitLabMergeRequestCatalog(data))
+    throw new Error('GitLab merge-request results are invalid. Refresh to retry.');
   return data;
 }
 export function approvedGitLabProjectEntries(projects) {
@@ -114,7 +121,7 @@ function mergeRequestLabel(mergeRequest) {
     : ` · updated ${new Date(timestamp).toLocaleDateString()}`;
   return `MR !${mergeRequest.iid} · ${title}${state ? ` · ${state}` : ''}${mergeRequest.draft ? ' · Draft' : ''}${updated}`;
 }
-export function validGitLabMergeRequestCatalog(data) {
+function validGitLabMergeRequestCatalog(data) {
   return (
     Array.isArray(data) &&
     data.every(
@@ -147,4 +154,32 @@ export function mergeRequestEntries(mergeRequests, selected) {
     if (!seen.has(value)) entries.push([value, `MR !${value} (currently selected)`]);
   });
   return entries;
+}
+// Link identity and cached observations, compared when the idle poll reloads them.
+export function linkIdentitySignature(link) {
+  return JSON.stringify({
+    id: link.id,
+    project: link.project,
+    kind: link.kind,
+    number: link.number,
+    items: [...(link.items || [])].sort(),
+  });
+}
+function observationSignature(link) {
+  return JSON.stringify({
+    observation: link.observation || null,
+    last_success: link.last_success || null,
+    last_attempt: link.last_attempt || null,
+    outcome: link.outcome || '',
+    next_refresh: link.next_refresh || null,
+    refresh_pending: !!link.refresh_pending,
+  });
+}
+export function observationsChanged(previousLinks, nextLinks) {
+  const previous = new Map(previousLinks.map((link) => [link.id, link]));
+  return nextLinks.some(
+    (link) =>
+      previous.has(link.id) &&
+      observationSignature(previous.get(link.id)) !== observationSignature(link),
+  );
 }

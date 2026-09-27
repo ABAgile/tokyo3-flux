@@ -1,9 +1,14 @@
-// Keyboard shortcuts and Escape handling.
-import { $ } from './dom.js';
-import { state } from './state.js';
-import { hooks } from './hooks.js';
+// Keyboard shortcuts, the shortcut list and Escape handling for page controls.
+import { html } from './vdom.js';
+import { useRef } from './vendor-preact.js';
+import { setState, state, useStore } from './state.js';
 import { notice } from './notices.js';
-import { closeDetail } from './item-detail.js';
+import { canWrite } from './permissions.js';
+import { isEditorOpen } from './dialog-state.js';
+import { Modal } from './dialog.js';
+import { useEventListener } from './ui-hooks.js';
+import { searchInputRef } from './planning-filters.js';
+import { interactionBlocked, navigate, newItem, refreshWorkspace } from './actions.js';
 
 // Global shortcuts never fire while typing, while a dialog is open, or with
 // Alt/Control/Meta held, so they cannot shadow browser or assistive-technology
@@ -19,39 +24,33 @@ const VIEW_SHORTCUTS = Object.freeze({
   h: 'history',
 });
 const SHORTCUT_CHORD_MS = 2500;
+const TYPING = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
 function typingTarget(target) {
-  return (
-    target instanceof Element &&
-    target.closest('input,textarea,select,[contenteditable=""],[contenteditable="true"]') !== null
-  );
-}
-export function goToView(next) {
-  const control = document.querySelector(`[data-view="${next}"]`);
-  if (control && !control.disabled) control.click();
+  return target instanceof Element && target.closest(TYPING) !== null;
 }
 function shortcutKey(event) {
   return event.key.length === 1 ? event.key.toLowerCase() : event.key;
 }
-// Registers the keyboard listeners in their original order (the detail pane
-// handles Escape first); app.js calls this once at startup.
-export function initShortcuts() {
-  document.addEventListener('keydown', (event) => {
-    if (
-      event.key !== 'Escape' ||
-      !state.detailState?.pane?.contains(event.target) ||
-      $('editor').open
-    )
-      return;
-    const menu = event.target.closest?.('.multi-select-menu');
-    if (menu && !menu.hidden) return;
-    if (closeDetail()) event.preventDefault();
-    event.stopImmediatePropagation();
-  });
+// The search field is shown for the planning views and Sprints.
+function searchAvailable(current) {
+  return !!current.board && !['history', 'projects', 'labels', 'members'].includes(current.view);
+}
+function openShortcuts() {
+  setState({ shortcutsOpen: true });
+}
+function closeShortcuts() {
+  setState({ shortcutsOpen: false });
+}
+// Installs the document keyboard listeners for the App's lifetime. The List
+// detail pane and open menus handle their own Escape before it reaches here.
+// `mainRef` is the main region that receives focus when Escape leaves a control.
+export function useGlobalShortcuts(mainRef) {
+  const chord = useRef(0);
   // Escape leaves a page-level control so shortcuts become available without
   // reaching for the pointer. Focus moves to the main region rather than being
   // dropped, and contexts that already own Escape — dialogs, the detail pane and
   // open selection menus — keep their existing close behavior.
-  document.addEventListener('keydown', (event) => {
+  useEventListener(document, 'keydown', (event) => {
     if (
       event.key !== 'Escape' ||
       event.altKey ||
@@ -60,37 +59,29 @@ export function initShortcuts() {
       !(event.target instanceof Element)
     )
       return;
-    const control = event.target.closest(
-      'input,textarea,select,[contenteditable=""],[contenteditable="true"]',
-    );
-    if (
-      !control ||
-      control.closest('dialog') ||
-      control.closest('.multi-select-menu') ||
-      state.detailState?.pane?.contains(control)
-    )
-      return;
+    const control = event.target.closest(TYPING);
+    if (!control || control.closest('dialog') || control.closest('.multi-select-menu')) return;
     event.preventDefault();
     control.blur();
-    $('main').focus({ preventScroll: true });
+    mainRef.current?.focus({ preventScroll: true });
   });
-  document.addEventListener('keydown', (event) => {
+  useEventListener(document, 'keydown', (event) => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
-    if ($('shortcuts').open) {
-      if (event.key === 'Escape') $('shortcuts').close();
+    if (state.shortcutsOpen) {
+      if (event.key === 'Escape') closeShortcuts();
       return;
     }
-    if (typingTarget(event.target) || $('editor').open) return;
+    if (typingTarget(event.target) || isEditorOpen()) return;
     // A modifier or lock key pressed on its own must not consume a pending chord,
     // so holding Shift between `g` and the view key still navigates.
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(event.key)) return;
     const key = shortcutKey(event);
-    const chord = state.shortcutChord && Date.now() - state.shortcutChord < SHORTCUT_CHORD_MS;
-    state.shortcutChord = 0;
-    if (chord) {
+    const pending = chord.current && Date.now() - chord.current < SHORTCUT_CHORD_MS;
+    chord.current = 0;
+    if (pending) {
       if (VIEW_SHORTCUTS[key]) {
         event.preventDefault();
-        goToView(VIEW_SHORTCUTS[key]);
+        void navigate(VIEW_SHORTCUTS[key]);
         return;
       }
       if (key !== 'g') {
@@ -100,34 +91,68 @@ export function initShortcuts() {
     }
     if (event.key === '?' || (event.shiftKey && key === '/')) {
       event.preventDefault();
-      $('shortcuts').showModal();
+      openShortcuts();
       return;
     }
     if (key === '/') {
       event.preventDefault();
-      if (!$('search-filter').hidden && !$('planning-filters').hidden) {
-        $('search').focus();
-        $('search').select();
+      if (searchAvailable(state)) {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
       }
       return;
     }
     if (key === 'g') {
-      state.shortcutChord = Date.now();
+      chord.current = Date.now();
       notice('Go to… press b, s, p, m, l, a or h.');
       return;
     }
     if (key === 'n') {
-      if (!$('new-item').disabled && !document.querySelector('.heading .actions').hidden) {
+      if (canWrite(state) && !state.integrationFormOpen) {
         event.preventDefault();
-        $('new-item').click();
+        newItem();
       }
       return;
     }
     if (key === 'r') {
-      if (!$('refresh').disabled) {
+      if (!interactionBlocked()) {
         event.preventDefault();
-        void hooks.refresh();
+        void refreshWorkspace();
       }
     }
   });
+}
+function selectShortcutsOpen(current) {
+  return current.shortcutsOpen;
+}
+export function ShortcutsDialog() {
+  const open = useStore(selectShortcutsOpen);
+  return html`<${Modal}
+    id="shortcuts"
+    labelledBy="shortcuts-title"
+    open=${open}
+    onClosed=${closeShortcuts}
+  >
+    <div class="dialog-panel">
+      <div class="dialog-head">
+        <h2 id="shortcuts-title">Keyboard shortcuts</h2>
+        <button type="button" id="shortcuts-dismiss" aria-label="Close keyboard shortcuts" onClick=${closeShortcuts}>×</button>
+      </div>
+      <dl class="shortcut-list">
+        <dt><kbd>/</kbd></dt><dd>Focus the work search</dd>
+        <dt><kbd>n</kbd></dt><dd>Create a work item</dd>
+        <dt><kbd>r</kbd></dt><dd>Refresh the workspace</dd>
+        <dt><kbd>g</kbd> <kbd>b</kbd></dt><dd>Go to the Kanban board</dd>
+        <dt><kbd>g</kbd> <kbd>s</kbd></dt><dd>Go to Sprints</dd>
+        <dt><kbd>g</kbd> <kbd>p</kbd></dt><dd>Go to Projects</dd>
+        <dt><kbd>g</kbd> <kbd>m</kbd></dt><dd>Go to Members</dd>
+        <dt><kbd>g</kbd> <kbd>l</kbd></dt><dd>Go to Labels</dd>
+        <dt><kbd>g</kbd> <kbd>a</kbd></dt><dd>Go to Archive</dd>
+        <dt><kbd>g</kbd> <kbd>h</kbd></dt><dd>Go to History</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Leave the focused control, or close the open dialog or detail pane</dd>
+        <dt><kbd>?</kbd></dt><dd>Show this list</dd>
+      </dl>
+      <div class="dialog-foot"><button type="button" id="shortcuts-close" class="primary" onClick=${closeShortcuts}>Close</button></div>
+    </div>
+  </${Modal}>`;
 }

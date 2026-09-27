@@ -5,7 +5,7 @@
 import { uid } from './dom.js';
 import { requestKey } from './api.js';
 import { html } from './vdom.js';
-import { useLayoutEffect, useMemo, useRef, useState } from './vendor-preact.js';
+import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
@@ -342,8 +342,9 @@ function markdownPreview(source, emptyText) {
     String(source || '').trim() ? null : html`<p class="help">${emptyText}</p>`
   }`;
 }
-// The Markdown editor keeps preview mode in component state while the native
-// textarea owns its draft for the lifetime of the enclosing form.
+// The Markdown editor keeps preview mode in component state. By default the
+// native textarea owns its draft for the lifetime of the enclosing form; with
+// `settings.onValueChange` the caller owns `value` and the field is controlled.
 function markdownEditorTemplate(
   name,
   title,
@@ -375,30 +376,14 @@ function MarkdownEditor({
   const [inputID] = useState(() => `markdown-${requestKey()}`);
   const [previewing, setPreviewing] = useState(!!previewByDefault);
   const [previewSource, setPreviewSource] = useState(previewByDefault ? value : null);
-  const input = useRef();
-  const mode = useRef(previewing);
-  mode.current = previewing;
-  const onReady = useRef(settings.onReady);
-  onReady.current = settings.onReady;
-  const refresh = useMemo(
-    () => () => {
-      if (mode.current) setPreviewSource(input.current?.value ?? '');
-    },
-    [],
-  );
-  const editor = useMemo(
-    () => ({
-      get input() {
-        return input.current;
-      },
-      refresh,
-    }),
-    [refresh],
-  );
+  const ownInput = useRef();
+  // `settings.inputRef` lets the owner focus the native field.
+  const input = settings.inputRef || ownInput;
+  const controlled = typeof settings.onValueChange === 'function';
+  const onInput = (event) => {
+    if (controlled) settings.onValueChange(event.currentTarget.value);
+  };
   const wasPreviewing = useRef(previewing);
-  useLayoutEffect(() => {
-    if (!readOnly) onReady.current?.(editor);
-  }, []);
   useLayoutEffect(() => {
     if (wasPreviewing.current && !previewing) input.current?.focus();
     wasPreviewing.current = previewing;
@@ -410,6 +395,8 @@ function MarkdownEditor({
     const end = target.selectionEnd ?? start;
     const selected = target.value.slice(start, end) || placeholder;
     target.setRangeText(transform(selected), start, end, 'select');
+    // setRangeText does not announce the edit; the input event keeps the
+    // enclosing form's draft tracking and a controlled owner in step.
     target.dispatchEvent(new Event('input', { bubbles: true }));
     target.focus();
   };
@@ -428,6 +415,7 @@ function MarkdownEditor({
   if (readOnly)
     return html`<div class="markdown-field">${label}<div class="markdown-preview">${markdownPreview(value, 'No content.')}</div></div>`;
   const modeLabel = previewing ? `Edit ${subject}` : `Preview ${subject}`;
+  const shownPreview = controlled && previewing ? value : previewSource;
   return html`<div class="markdown-field">${label}<div class="markdown-editor">
     <div class="markdown-toolbar">
       <button
@@ -436,7 +424,7 @@ function MarkdownEditor({
         aria-label=${modeLabel}
         title=${modeLabel}
         onClick=${() => {
-          if (!previewing) setPreviewSource(input.current?.value ?? '');
+          if (!previewing) setPreviewSource(controlled ? value : (input.current?.value ?? ''));
           setPreviewing(!previewing);
         }}
       >${previewing ? 'Edit' : 'Preview'}</button>
@@ -468,14 +456,14 @@ function MarkdownEditor({
       data-markdown-control="true"
       data-comment-control=${settings.commentControl ? 'true' : null}
       autocomplete="off"
-      defaultValue=${value || ''}
+      ...${controlled ? { value } : { defaultValue: value || '' }}
       hidden=${previewing}
       ref=${input}
-      onInput=${refresh}
+      onInput=${onInput}
       onKeydown=${shortcut}
     ></textarea>
     <div class="markdown-preview" hidden=${!previewing} tabindex="0">
-      ${previewSource === null ? null : markdownPreview(previewSource, 'Nothing to preview yet.')}
+      ${shownPreview === null ? null : markdownPreview(shownPreview, 'Nothing to preview yet.')}
     </div>
   </div></div>`;
 }

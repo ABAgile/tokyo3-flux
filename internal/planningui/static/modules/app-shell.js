@@ -1,28 +1,97 @@
-// Preact owns the application shell; named content hosts keep existing view
-// lifetimes stable while their controllers move into components.
-import { Fragment } from './vendor-preact.js';
-import { html, withKey } from './vdom.js';
-import { useLayoutEffect, useRef } from './vendor-preact.js';
+// The body-level App: sidebar, page frame, planning content, the editor dialog
+// host with its dialog map, and the App-lifetime effects.
+import { Fragment, useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
+import { html, shallowEqual } from './vdom.js';
 
-import { state, useStore } from './state.js';
+import { useStore } from './state.js';
 import { workspaceLabel } from './format.js';
-import { memberName } from './people.js';
 import { StatusBars } from './notices.js';
-import { EditorDialog } from './dialog.js';
-import { AttachmentTooltip } from './item-attachments.js';
+import { canWrite } from './permissions.js';
 import { emptyStateTemplate } from './layout.js';
-import { filteredItems, planningFilterChipsTemplate, singleFilterValue } from './filters.js';
-import { labelOptionColors } from './items.js';
+import { selectFilteredItems, singleFilterValue } from './filters.js';
+import { useDueDateClock } from './due-dates.js';
+import { usePolling } from './sync.js';
+import { usePlanningURL } from './url-state.js';
+import { EditorDialog } from './dialog.js';
+import { AttachmentTooltip } from './tooltip.js';
+import { isFileTransfer } from './item-attachments.js';
+import { useEventListener } from './ui-hooks.js';
+import {
+  applyHistoryNavigation,
+  chooseWorkspace,
+  createWorkspace,
+  navigate,
+  newItem,
+  refreshWorkspace,
+  runUndo,
+  showProposals,
+  showWorkspaceCreate,
+  showWorkspaceSelection,
+  toggleTheme,
+} from './actions.js';
 import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
-import { ProjectsPage } from './view-projects.js';
-import { SprintsPage, SprintSummary, sprintResults as getSprintResults } from './view-sprints.js';
-import { MembersPage } from './view-members.js';
-import { LabelsPage } from './view-labels.js';
+import { AddLinkDialog } from './item-links.js';
+import { ArchiveItemDialog, ItemEditorDialog } from './item-editor.js';
+import { LinksDialog } from './gitlab.js';
+import { PlanningFilters, SearchDebounce } from './planning-filters.js';
+import { ProjectsPage, ProjectDialog } from './view-projects.js';
+import {
+  SprintsPage,
+  SprintSummary,
+  SprintDialog,
+  CloseSprintDialog,
+  ArchiveSprintDialog,
+} from './view-sprints.js';
+import { MembersPage, MemberDialog, RemoveMemberDialog, AddMemberDialog } from './view-members.js';
+import { LabelsPage, LabelDialog, DeleteLabelDialog } from './view-labels.js';
 import { HistoryPage } from './view-history.js';
-import { BoardContent, ProjectSummary } from './view-board.js';
+import {
+  BoardContent,
+  ProjectSummary,
+  BoardSetupDialog,
+  ColumnDialog,
+  RemoveColumnDialog,
+  setupBoard,
+} from './view-board.js';
 import { ListPresentation } from './view-list.js';
 import { CardListContent } from './view-archive.js';
+import { BulkAssignDialog, BulkSprintDialog, BulkLabelDialog, BulkArchiveDialog } from './bulk.js';
+import {
+  ProposalsDialog,
+  ProposalImportDialog,
+  ProposalReviewDialog,
+  ProposalRejectDialog,
+} from './view-proposals.js';
 import { FirstRunPage, showFirstRun } from './view-gate.js';
+import { ShortcutsDialog, useGlobalShortcuts } from './shortcuts.js';
+
+// Every editor dialog, by the type named in `openDialog(type, props)`.
+export const DIALOGS = Object.freeze({
+  'item.edit': ItemEditorDialog,
+  'item.archive': ArchiveItemDialog,
+  'links.show': LinksDialog,
+  'link.add': AddLinkDialog,
+  'board.setup': BoardSetupDialog,
+  'column.edit': ColumnDialog,
+  'column.remove': RemoveColumnDialog,
+  'bulk.assign': BulkAssignDialog,
+  'bulk.sprint': BulkSprintDialog,
+  'bulk.label': BulkLabelDialog,
+  'bulk.archive': BulkArchiveDialog,
+  'sprint.edit': SprintDialog,
+  'sprint.close': CloseSprintDialog,
+  'sprint.archive': ArchiveSprintDialog,
+  'project.edit': ProjectDialog,
+  'label.edit': LabelDialog,
+  'label.delete': DeleteLabelDialog,
+  'member.edit': MemberDialog,
+  'member.remove': RemoveMemberDialog,
+  'member.add': AddMemberDialog,
+  proposals: ProposalsDialog,
+  'proposal.import': ProposalImportDialog,
+  'proposal.review': ProposalReviewDialog,
+  'proposal.reject': ProposalRejectDialog,
+});
 
 const VIEWS = [
   ['board', '▦', 'Kanban board'],
@@ -47,41 +116,20 @@ const SUBTITLES = {
   labels: 'Maintain labels used to classify work.',
   members: 'Manage workspace members, roles, and names.',
 };
-function selectShell(state) {
-  return {
-    board: state.board,
-    root: state.root,
-    session: state.session,
-    workspaces: state.workspaces,
-    view: state.view,
-    presentation: state.presentation,
-    scope: state.scope,
-    theme: state.theme,
-    workspaceGate: state.workspaceGate,
-    busy: state.busy,
-    loading: state.loading,
-    integrationFormOpen: state.integrationFormOpen,
-    searchQuery: state.searchQuery,
-    undoOffer: state.undoOffer,
-    undoText: state.undoText,
-    editorDialog: state.editorDialog,
-    editorSaveText: state.editorSaveText,
-    editorError: state.editorError,
-    contentBusy: state.contentBusy,
-  };
-}
-function sameShell(left, right) {
-  const keys = Object.keys(left);
-  return (
-    keys.length === Object.keys(right).length &&
-    keys.every((key) => Object.is(left[key], right[key]))
-  );
-}
-function shellTitle({ board, view, presentation, workspaceGate, workspaces }) {
+const PAGE_VIEWS = ['projects', 'sprints', 'members', 'labels', 'history'];
+const PAGES = {
+  projects: ProjectsPage,
+  sprints: SprintsPage,
+  members: MembersPage,
+  labels: LabelsPage,
+  history: HistoryPage,
+};
+
+function shellTitle({ board, view, presentation, workspaceGate, workspaceCount }) {
   if (board) return view === 'board' && presentation === 'list' ? 'Planning list' : TITLES[view];
   if (workspaceGate === 'select') return 'Choose a workspace';
   if (workspaceGate === 'create')
-    return workspaces.length ? 'Create a workspace' : 'Create your first workspace';
+    return workspaceCount ? 'Create a workspace' : 'Create your first workspace';
   return 'Loading planning data';
 }
 function shellSubtitle({ board, view, workspaceGate }) {
@@ -93,401 +141,248 @@ function shellSubtitle({ board, view, workspaceGate }) {
   if (board.role === 'viewer') return 'Read-only workspace access.';
   return SUBTITLES[view] || 'Plan intentionally. Keep work moving.';
 }
+function blocked(current) {
+  return current.busy || current.loading || current.integrationFormOpen;
+}
 
-function PageContent({
-  board,
-  view,
-  workspaceGate,
-  workspaces,
-  session,
-  onWorkspaceChoose,
-  onWorkspaceCreate,
-  onWorkspaceSubmit,
-  onWorkspaceBack,
-  sprintResults,
-  planningFilters,
-}) {
-  if (!board) {
-    if (workspaceGate === 'select')
-      return html`<section class="panel workspace-gate" data-content-view="workspace-select" aria-label="Choose a workspace">
-        <${WorkspaceSelection} workspaces=${workspaces} choose=${onWorkspaceChoose} create=${onWorkspaceCreate} />
-      </section>`;
-    if (workspaceGate === 'create')
-      return html`<section class="panel workspace-gate" data-content-view="workspace-create" aria-label="Create a workspace">
-        <${WorkspaceCreation} name=${session?.name} hasWorkspaces=${workspaces.length > 0} submit=${onWorkspaceSubmit} back=${onWorkspaceBack} />
-      </section>`;
-    return html`<div data-content-view="workspace-loading">${emptyStateTemplate('Loading workspace access…')}</div>`;
-  }
-  const pages = {
-    projects: ProjectsPage,
-    sprints: SprintsPage,
-    members: MembersPage,
-    labels: LabelsPage,
-    history: HistoryPage,
+function selectSidebar(current) {
+  return {
+    board: current.board,
+    root: current.root,
+    session: current.session,
+    workspaces: current.workspaces,
+    view: current.view,
+    theme: current.theme,
+    workspaceGate: current.workspaceGate,
+    disabled: blocked(current),
   };
-  const Page = pages[view];
-  if (!Page) return null;
-  const content =
-    view === 'sprints'
-      ? html`<${SprintsPage} results=${sprintResults} filters=${planningFilters} />`
-      : html`<${Page} />`;
-  return html`<div class="page-stack" data-content-view=${view}>${content}</div>`;
 }
-
-function PlanningContent({ board, view, presentation, busy, loading, integrationFormOpen, items }) {
-  if (showFirstRun())
-    return html`<${FirstRunPage}
-      board=${board}
-      disabled=${board.role === 'viewer' || busy || loading || integrationFormOpen}
-    />`;
-  if (view === 'board' && presentation === 'list')
-    return html`<${ListPresentation} items=${items} />`;
-  if (view === 'board') return html`<${BoardContent} items=${items} />`;
-  return html`<${CardListContent}
-    items=${items}
-    view=${view}
-    archiveMore=${state.archiveMore}
-    disabled=${busy || loading}
-  />`;
-}
-
-function PlanningBody({
-  active,
-  board,
-  view,
-  presentation,
-  busy,
-  loading,
-  integrationFormOpen,
-  items,
-}) {
-  const content = useRef(null);
-  if (active && board && ['board', 'archive'].includes(view))
-    content.current = html`${withKey(
-      board.workspace.id,
-      html`<${PlanningContent}
-        board=${board}
-        view=${view}
-        presentation=${presentation}
-        busy=${busy}
-        loading=${loading}
-        integrationFormOpen=${integrationFormOpen}
-        items=${items}
-      />`,
-    )}`;
-  return content.current;
-}
-
-// The App owns both content mounts; the planning body keeps its component
-// lifetime while hidden, just as the persistent frame did before migration.
-function PlanningFilters({
-  board,
-  view,
-  presentation,
-  scope,
-  busy,
-  loading,
-  integrationFormOpen,
-  count,
-  onPresentation,
-  onScopeChange,
-  onFilterChange,
-  onSearchInput,
-  onSearchChange,
-  onSearchKeyDown,
-}) {
-  const searchInput = useStore((current) => current.searchInput);
-  const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
-  const showLabelFilter = !['sprints', 'history'].includes(view);
-  return html`<${Fragment}>
-    <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
-      <div class="actions">
-        <label id="scope-label" hidden=${view !== 'board'}>Scope<select id="scope" data-focus-key="filter:scope" value=${scope} onChange=${onScopeChange}>
-          <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
-          ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
-        </select></label>
-        <label>Project<select id="project" data-focus-key="filter:project" aria-label="Project" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('project', event)}>
-          <option value="all">All projects</option><option value="none">No project</option>
-          ${board?.projects?.map((project) => html`<option key=${project.id} value=${project.id}>${project.name}</option>`)}
-        </select></label>
-        <label>Assignee<select id="assignee" data-focus-key="filter:assignee" aria-label="Assignee" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('assignee', event)}>
-          <option value="all">All assignees</option><option value="none">Unassigned</option>
-          ${board?.members?.map((member) => html`<option key=${member.subject} value=${member.subject}>${memberName(member.subject)}</option>`)}
-        </select></label>
-        <label id="label-filter" hidden=${!showLabelFilter}>Label<select id="label" data-focus-key="filter:label" aria-label="Label" value="all" disabled=${!board || busy || loading} onChange=${(event) => onFilterChange('label', event)}>
-          <option value="all">All labels</option><option value="none">No labels</option>
-          ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(label.name)}>${label.name}</option>`)}
-        </select></label>
-        <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" data-focus-key="filter:search" type="search" autocomplete="off" value=${searchInput} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${onSearchInput} onChange=${onSearchChange} onKeydown=${onSearchKeyDown} /></label>
-      </div>
-      <div class="filter-bar-end">
-        <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation" hidden=${!board || view !== 'board'}>
-          <button id="presentation-board" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'board')} onClick=${() => onPresentation('board')}>Board</button>
-          <button id="presentation-list" type="button" disabled=${!board || busy || loading || integrationFormOpen} aria-pressed=${String(presentation === 'list')} onClick=${() => onPresentation('list')}>List</button>
-        </div>
-        <span id="count" class="filter-bar-count muted">${count}</span>
-      </div>
-    </div>
-    ${planningFilterChipsTemplate(showFilters, showLabelFilter)}
-  </${Fragment}>`;
-}
-
-function PlanningArea({
-  showPageRoot,
-  renderPageContent,
-  sprintResults,
-  contentBusy,
-  board,
-  view,
-  presentation,
-  scope,
-  busy,
-  loading,
-  integrationFormOpen,
-  onPresentation,
-  onScopeChange,
-  onFilterChange,
-  onSearchInput,
-  onSearchChange,
-  onSearchKeyDown,
-}) {
-  const items = board && ['board', 'archive'].includes(view) ? filteredItems() : [];
-  const count = !board
-    ? ''
-    : view === 'sprints'
-      ? `${sprintResults?.matches?.length || 0} ${sprintResults?.matches?.length === 1 ? 'sprint' : 'sprints'}`
-      : !['board', 'archive'].includes(view)
-        ? ''
-        : view === 'archive'
-          ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
-          : `${items.length} items · workspace revision ${board.workspace.revision}`;
-  const planningFilters = html`<${PlanningFilters}
-    board=${board}
-    view=${view}
-    presentation=${presentation}
-    scope=${scope}
-    busy=${busy}
-    loading=${loading}
-    integrationFormOpen=${integrationFormOpen}
-    count=${count}
-    onPresentation=${onPresentation}
-    onScopeChange=${onScopeChange}
-    onFilterChange=${onFilterChange}
-    onSearchInput=${onSearchInput}
-    onSearchChange=${onSearchChange}
-    onSearchKeyDown=${onSearchKeyDown}
-  />`;
-  const pageContent = renderPageContent(planningFilters);
-  const focusKey = useRef('');
-  const focusRoute = `${showPageRoot ? 'page' : view}:${view === 'board' ? presentation : ''}`;
-  const previousRoute = useRef(focusRoute);
-  if (previousRoute.current !== focusRoute) {
-    focusKey.current = '';
-    previousRoute.current = focusRoute;
-  }
-  useLayoutEffect(() => {
-    if (showPageRoot || !focusKey.current || document.activeElement !== document.body) return;
-    const target = document.querySelector(
-      `#planning-body [data-focus-key="${CSS.escape(focusKey.current)}"]`,
-    );
-    target?.focus({ preventScroll: true });
-  });
-  const recordFocus = (event) => {
-    const target = event.target.closest?.('[data-focus-key]');
-    focusKey.current = target?.dataset.focusKey || '';
-  };
-  const clearOutsideFocus = (event) => {
-    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
-      focusKey.current = '';
-  };
-  return html`<${Fragment}>
-      <section id="content" aria-label="Planning content">
-        <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
-          <${ProjectSummary} board=${board} view=${view} projectID=${singleFilterValue('project')} />
-          <${SprintSummary} board=${board} view=${view} scope=${scope} />
-          <div id="planning-filter-slot" class="filter-slot">
-            ${view === 'sprints' ? null : planningFilters}
-          </div>
-          <div
-            id="planning-body"
-            aria-busy=${showPageRoot ? undefined : String(contentBusy)}
-            onFocusCapture=${recordFocus}
-            onBlurCapture=${clearOutsideFocus}
-            onPointerDownCapture=${recordFocus}
-          ><${PlanningBody}
-            active=${!showPageRoot}
-            board=${board}
-            view=${view}
-            presentation=${presentation}
-            busy=${busy}
-            loading=${loading}
-            integrationFormOpen=${integrationFormOpen}
-            items=${items}
-          /></div>
-        </div>
-        <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>
-          ${showPageRoot ? pageContent : null}
-        </div>
-      </section>
-    </>`;
-}
-
-function DialogHost({ onShortcutClose }) {
-  return html`<${Fragment}>
-      <dialog id="shortcuts" aria-labelledby="shortcuts-title">
-        <div class="dialog-panel">
-          <div class="dialog-head">
-            <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-            <button type="button" id="shortcuts-dismiss" aria-label="Close keyboard shortcuts" onClick=${onShortcutClose}>×</button>
-          </div>
-          <dl class="shortcut-list">
-            <dt><kbd>/</kbd></dt><dd>Focus the work search</dd>
-            <dt><kbd>n</kbd></dt><dd>Create a work item</dd>
-            <dt><kbd>r</kbd></dt><dd>Refresh the workspace</dd>
-            <dt><kbd>g</kbd> <kbd>b</kbd></dt><dd>Go to the Kanban board</dd>
-            <dt><kbd>g</kbd> <kbd>s</kbd></dt><dd>Go to Sprints</dd>
-            <dt><kbd>g</kbd> <kbd>p</kbd></dt><dd>Go to Projects</dd>
-            <dt><kbd>g</kbd> <kbd>m</kbd></dt><dd>Go to Members</dd>
-            <dt><kbd>g</kbd> <kbd>l</kbd></dt><dd>Go to Labels</dd>
-            <dt><kbd>g</kbd> <kbd>a</kbd></dt><dd>Go to Archive</dd>
-            <dt><kbd>g</kbd> <kbd>h</kbd></dt><dd>Go to History</dd>
-            <dt><kbd>Esc</kbd></dt><dd>Leave the focused control, or close the open dialog or detail pane</dd>
-            <dt><kbd>?</kbd></dt><dd>Show this list</dd>
-          </dl>
-          <div class="dialog-foot"><button type="button" id="shortcuts-close" class="primary" onClick=${onShortcutClose}>Close</button></div>
-        </div>
-      </dialog>
-    </>`;
-}
-
-export function App({
-  refresh,
-  onUndo,
-  onThemeToggle,
-  onWorkspaceCreate,
-  onWorkspaceChoose,
-  onWorkspaceChange,
-  onView,
-  onProposals,
-  onSetupBoard,
-  onNewItem,
-  onPresentation,
-  onScopeChange,
-  onFilterChange,
-  onSearchInput,
-  onSearchChange,
-  onSearchKeyDown,
-  onShortcutClose,
-  onWorkspaceSubmit,
-  onWorkspaceBack,
-}) {
-  const shell = useStore(selectShell, sameShell);
-  const {
-    board,
-    session,
-    workspaces,
-    root,
-    view,
-    presentation,
-    scope,
-    theme,
-    workspaceGate,
-    busy,
-    loading,
-    integrationFormOpen,
-    searchQuery,
-  } = shell;
+function Sidebar() {
+  const { board, root, session, workspaces, view, theme, workspaceGate, disabled } = useStore(
+    selectSidebar,
+    shallowEqual,
+  );
+  // A refused workspace change renders again so the select shows the current one.
+  const [, rerender] = useReducer((value) => value + 1, 0);
   const currentWorkspace =
     board?.workspace?.id ||
     workspaces.find(
       (workspace) => `/api/v2/workspaces/${encodeURIComponent(workspace.id)}` === root,
     )?.id ||
     '';
-  const disabled = busy || loading || integrationFormOpen;
-  const canWrite = !!board && board.role !== 'viewer' && !disabled;
-  const sprintResults =
-    board && view === 'sprints' ? getSprintResults(board, searchQuery) : undefined;
+  const changeWorkspace = async (event) => {
+    if (!(await chooseWorkspace(event.currentTarget.value))) rerender();
+  };
+  return html`<aside class="sidebar">
+    <a class="brand" href="/" aria-label="Flux home"><span class="mark">F</span> flux <small>PLANNING</small></a>
+    <div id="workspace-field" class="workspace-field" hidden=${!board && workspaceGate !== 'loading'}>
+      <div class="workspace-label-row">
+        <label for="workspace">Workspace</label>
+        <div class="workspace-actions">
+          <button id="new-workspace" class="icon-button" type="button" aria-label="Create workspace" title="Create workspace" disabled=${!session || disabled} onClick=${showWorkspaceCreate}><span aria-hidden="true">＋</span></button>
+          <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh workspace" disabled=${disabled} onClick=${refreshWorkspace}><span aria-hidden="true">↻</span></button>
+        </div>
+      </div>
+      <select id="workspace" aria-label="Workspace" value=${currentWorkspace} disabled=${!board || disabled} onChange=${changeWorkspace}>
+        ${workspaces.map((workspace) => html`<option key=${workspace.id} value=${workspace.id}>${workspaceLabel(workspace)}</option>`)}
+      </select>
+    </div>
+    <nav aria-label="Planning views" hidden=${!board}>
+      ${VIEWS.map(([id, icon, label]) => html`<button key=${id} data-view=${id} aria-current=${view === id ? 'page' : null} disabled=${disabled} onClick=${() => navigate(id)}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`)}
+    </nav>
+    <div class="sidebar-foot">
+      <div class="sidebar-session">
+        <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title=${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick=${toggleTheme}><span aria-hidden="true">${theme === 'dark' ? '☀' : '☾'}</span></button>
+        <div class="sidebar-account"><span id="identity">${session?.name || session?.subject || 'Loading session…'}</span><a href="/auth/logout">Sign out</a></div>
+      </div>
+    </div>
+  </aside>`;
+}
+
+function selectHeading(current) {
+  return {
+    board: current.board,
+    view: current.view,
+    presentation: current.presentation,
+    workspaceGate: current.workspaceGate,
+    workspaceCount: current.workspaces.length,
+    canWrite: canWrite(current) && !current.integrationFormOpen,
+  };
+}
+function Heading() {
+  const heading = useStore(selectHeading, shallowEqual);
+  return html`<div class="heading">
+    <div><h1 id="title">${shellTitle(heading)}</h1><p id="subtitle" class="muted">${shellSubtitle(heading)}</p></div>
+    <div class="actions heading-actions" hidden=${!heading.board}>
+      <button id="proposals" onClick=${showProposals}>Proposals</button>
+      <button id="columns" data-write disabled=${!heading.canWrite} onClick=${setupBoard}>Board setup</button>
+      <button id="new-item" class="primary" data-write disabled=${!heading.canWrite} onClick=${newItem}>＋ New item</button>
+    </div>
+  </div>`;
+}
+
+function selectUndo(current) {
+  return {
+    offer: !!current.undoOffer,
+    text: current.undoText,
+    disabled: !current.board || current.board.role === 'viewer' || current.busy || current.loading,
+  };
+}
+function UndoBar() {
+  const undo = useStore(selectUndo, shallowEqual);
+  return html`<div id="undo-bar" class="notice-bar notice-bar-accent" hidden=${!undo.offer} role="status" aria-live="polite">
+    <span id="undo-text">${undo.text}</span>
+    <button id="undo" type="button" disabled=${undo.disabled} onClick=${runUndo}>Undo</button>
+  </div>`;
+}
+
+function selectGatePage(current) {
+  return {
+    board: current.board,
+    view: current.view,
+    workspaceGate: current.workspaceGate,
+    workspaces: current.workspaces,
+    session: current.session,
+  };
+}
+function PageContent() {
+  const { board, view, workspaceGate, workspaces, session } = useStore(
+    selectGatePage,
+    shallowEqual,
+  );
+  if (!board) {
+    if (workspaceGate === 'select')
+      return html`<section class="panel workspace-gate" data-content-view="workspace-select" aria-label="Choose a workspace">
+        <${WorkspaceSelection} workspaces=${workspaces} choose=${chooseWorkspace} create=${showWorkspaceCreate} />
+      </section>`;
+    if (workspaceGate === 'create')
+      return html`<section class="panel workspace-gate" data-content-view="workspace-create" aria-label="Create a workspace">
+        <${WorkspaceCreation} name=${session?.name} hasWorkspaces=${workspaces.length > 0} submit=${createWorkspace} back=${showWorkspaceSelection} />
+      </section>`;
+    return html`<div data-content-view="workspace-loading">${emptyStateTemplate('Loading workspace access…')}</div>`;
+  }
+  const Page = PAGES[view];
+  if (!Page) return null;
+  return html`<div class="page-stack" data-content-view=${view}><${Page} /></div>`;
+}
+
+// The planning body stays mounted while a page view is shown, so returning to
+// the board keeps its component lifetime; it renders the last planning view.
+function selectPlanningBody(view) {
+  return (current) => {
+    const board = current.board;
+    return {
+      board,
+      presentation: current.presentation,
+      items: selectFilteredItems(current, view),
+      firstRun: !!board && showFirstRun(current, view),
+      busy: current.busy || current.loading,
+      writeBlocked: board?.role === 'viewer' || blocked(current),
+      archiveMore: current.archiveMore,
+    };
+  };
+}
+function PlanningBody({ view }) {
+  const body = useStore(selectPlanningBody(view), shallowEqual);
+  const { board, presentation, items } = body;
+  if (body.firstRun) return html`<${FirstRunPage} board=${board} disabled=${body.writeBlocked} />`;
+  if (view === 'board' && presentation === 'list')
+    return html`<${ListPresentation} items=${items} />`;
+  if (view === 'board') return html`<${BoardContent} items=${items} />`;
+  return html`<${CardListContent}
+    items=${items}
+    view=${view}
+    archiveMore=${body.archiveMore}
+    disabled=${body.busy}
+  />`;
+}
+function selectContentBusy(current) {
+  return (
+    current.loading ||
+    current.burndownPending > 0 ||
+    (!current.board && current.workspaceGate === 'loading')
+  );
+}
+function selectPlanningArea(current) {
+  return {
+    workspaceID: current.board?.workspace?.id,
+    view: current.view,
+    contentBusy: selectContentBusy(current),
+  };
+}
+function selectSummaries(current) {
+  return {
+    board: current.board,
+    view: current.view,
+    scope: current.scope,
+    projectID: singleFilterValue('project', current.filters),
+  };
+}
+function Summaries() {
+  const { board, view, scope, projectID } = useStore(selectSummaries, shallowEqual);
+  return html`<${Fragment}>
+    <${ProjectSummary} board=${board} view=${view} projectID=${projectID} />
+    <${SprintSummary} board=${board} view=${view} scope=${scope} />
+  </${Fragment}>`;
+}
+function PlanningArea() {
+  const { workspaceID, view, contentBusy } = useStore(selectPlanningArea, shallowEqual);
+  const showPageRoot = !workspaceID || PAGE_VIEWS.includes(view);
+  const planningView = useRef('board');
+  if (['board', 'archive'].includes(view)) planningView.current = view;
+  return html`<section id="content" aria-label="Planning content">
+    <div id="planning-frame" class="page-stack" hidden=${showPageRoot}>
+      <${Summaries} />
+      <div id="planning-filter-slot" class="filter-slot">
+        ${view === 'sprints' ? null : html`<${PlanningFilters} />`}
+      </div>
+      <div id="planning-body" aria-busy=${showPageRoot ? undefined : String(contentBusy)}>${
+        workspaceID
+          ? html`<${PlanningBody} key=${workspaceID} view=${planningView.current} />`
+          : null
+      }</div>
+    </div>
+    <div id="page-root" hidden=${!showPageRoot} aria-busy=${showPageRoot ? String(contentBusy) : undefined}>
+      ${showPageRoot ? html`<${PageContent} />` : null}
+    </div>
+  </section>`;
+}
+
+function selectTheme(current) {
+  return current.theme;
+}
+// The App renders once at the body; every change reaches it through the store.
+export function App({ dialogs = DIALOGS }) {
+  const main = useRef(null);
+  const theme = useStore(selectTheme);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  useGlobalShortcuts(main);
+  usePolling();
+  usePlanningURL();
+  useDueDateClock();
+  useEventListener(window, 'popstate', () => {
+    void applyHistoryNavigation();
+  });
+  // A file dropped outside an attachment target must not navigate the page away.
+  const guardFileDrop = (event) => {
+    if (isFileTransfer(event.dataTransfer)) event.preventDefault();
+  };
+  useEventListener(document, 'dragover', guardFileDrop);
+  useEventListener(document, 'drop', guardFileDrop);
   return html`<${Fragment}>
     <a class="skip" href="#main">Skip to planning</a>
-    <aside class="sidebar">
-      <a class="brand" href="/" aria-label="Flux home"><span class="mark">F</span> flux <small>PLANNING</small></a>
-      <div id="workspace-field" class="workspace-field" hidden=${!board && workspaceGate !== 'loading'}>
-        <div class="workspace-label-row">
-          <label for="workspace">Workspace</label>
-          <div class="workspace-actions">
-            <button id="new-workspace" class="icon-button" type="button" aria-label="Create workspace" title="Create workspace" disabled=${!session || disabled} onClick=${onWorkspaceCreate}><span aria-hidden="true">＋</span></button>
-            <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh workspace" disabled=${disabled} onClick=${refresh}><span aria-hidden="true">↻</span></button>
-          </div>
-        </div>
-        <select id="workspace" aria-label="Workspace" value=${currentWorkspace} disabled=${!board || disabled} onChange=${onWorkspaceChange}>
-          ${workspaces.map((workspace) => html`<option key=${workspace.id} value=${workspace.id}>${workspaceLabel(workspace)}</option>`)}
-        </select>
-      </div>
-      <nav aria-label="Planning views" hidden=${!board}>
-        ${VIEWS.map(([id, icon, label]) => html`<button key=${id} data-view=${id} aria-current=${view === id ? 'page' : null} disabled=${disabled} onClick=${() => onView(id)}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`)}
-      </nav>
-      <div class="sidebar-foot">
-        <div class="sidebar-session">
-          <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title=${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick=${onThemeToggle}><span aria-hidden="true">${theme === 'dark' ? '☀' : '☾'}</span></button>
-          <div class="sidebar-account"><span id="identity">${session?.name || session?.subject || 'Loading session…'}</span><a href="/auth/logout">Sign out</a></div>
-        </div>
-      </div>
-    </aside>
-    <main id="main" tabindex="-1">
-      <div class="heading">
-        <div><h1 id="title">${shellTitle(shell)}</h1><p id="subtitle" class="muted">${shellSubtitle(shell)}</p></div>
-        <div class="actions heading-actions" hidden=${!board}>
-          <button id="proposals" onClick=${onProposals}>Proposals</button>
-          <button id="columns" data-write disabled=${!canWrite} onClick=${onSetupBoard}>Board setup</button>
-          <button id="new-item" class="primary" data-write disabled=${!canWrite} onClick=${onNewItem}>＋ New item</button>
-        </div>
-      </div>
-      <div id="status-bars"><${StatusBars} refresh=${refresh} /></div>
-      <div id="undo-bar" class="notice-bar notice-bar-accent" hidden=${!shell.undoOffer} role="status" aria-live="polite">
-        <span id="undo-text">${shell.undoText}</span>
-        <button id="undo" type="button" disabled=${!board || board.role === 'viewer' || busy || loading} onClick=${onUndo}>Undo</button>
-      </div>
-      <${PlanningArea}
-        showPageRoot=${
-          !board || ['projects', 'sprints', 'members', 'labels', 'history'].includes(view)
-        }
-        contentBusy=${shell.contentBusy}
-        sprintResults=${sprintResults}
-        board=${board}
-        view=${view}
-        presentation=${presentation}
-        scope=${scope}
-        busy=${busy}
-        loading=${loading}
-        integrationFormOpen=${integrationFormOpen}
-        renderPageContent=${(planningFilters) => html`<${PageContent}
-          board=${board}
-          view=${view}
-          workspaceGate=${workspaceGate}
-          workspaces=${workspaces}
-          session=${session}
-          onWorkspaceChoose=${onWorkspaceChoose}
-          onWorkspaceCreate=${onWorkspaceCreate}
-          onWorkspaceSubmit=${onWorkspaceSubmit}
-          onWorkspaceBack=${onWorkspaceBack}
-          sprintResults=${sprintResults}
-          planningFilters=${planningFilters}
-        />`}
-        onPresentation=${onPresentation}
-        onScopeChange=${onScopeChange}
-        onFilterChange=${onFilterChange}
-        onSearchInput=${onSearchInput}
-        onSearchChange=${onSearchChange}
-        onSearchKeyDown=${onSearchKeyDown}
-      />
+    <${Sidebar} />
+    <main id="main" tabindex="-1" ref=${main}>
+      <${Heading} />
+      <div id="status-bars"><${StatusBars} refresh=${refreshWorkspace} /></div>
+      <${UndoBar} />
+      <${PlanningArea} />
     </main>
-    <${EditorDialog}
-      config=${shell.editorDialog}
-      busy=${shell.busy}
-      saveText=${shell.editorSaveText}
-      errorText=${shell.editorError}
-    />
+    <${EditorDialog} dialogs=${dialogs} />
     <${AttachmentTooltip} />
-    <${DialogHost} onShortcutClose=${onShortcutClose} />
-  </>`;
+    <${ShortcutsDialog} />
+    <${SearchDebounce} />
+  </${Fragment}>`;
 }

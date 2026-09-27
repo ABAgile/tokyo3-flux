@@ -1,107 +1,141 @@
-// Drag-and-drop of cards, rows and columns.
-import { state } from './state.js';
+// Drag-and-drop of cards, rows and columns as hooks that return event props.
+// The dragged record and its preview image are transient browser state kept in
+// this module; the store holds only whether a drag is on and the marked target.
+import { useState } from './vendor-preact.js';
+import { setState, state, useStore } from './state.js';
 import { writable } from './permissions.js';
-import { findItem } from './items.js';
 import { quick } from './commands.js';
-import { hideAttachmentTooltip } from './item-attachments.js';
+import { hideAttachmentTooltip } from './tooltip.js';
 
-function clearDropMarks() {
-  document
-    .querySelectorAll('.drop-before,.drop-after,.drop-end')
-    .forEach((e) => e.classList.remove('drop-before', 'drop-after', 'drop-end'));
+let session;
+let preview;
+
+function endDrag() {
+  preview?.remove();
+  preview = undefined;
+  session = undefined;
+  setState({ dragging: false, dropTarget: undefined });
 }
-// Drag listeners for a card, row, column head or list section. Templates
-// render `draggable`; this ref only installs the gesture listeners.
-export function attachDrag(node, type, id) {
-  node.draggable = writable() && !(type === 'card' && findItem(id)?.archived);
-  node.addEventListener('dragstart', (e) => {
-    if (
-      !writable() ||
-      (type === 'card' && findItem(id)?.archived) ||
-      (e.target !== node && e.target.closest?.('button,a,input,select,textarea'))
-    ) {
-      e.preventDefault();
-      return;
+// Combines event props from several hooks; handlers run in argument order.
+export function mergeEventProps(...list) {
+  const merged = {};
+  for (const props of list)
+    for (const [name, handler] of Object.entries(props)) {
+      const previous = merged[name];
+      merged[name] = previous
+        ? (event) => {
+            previous(event);
+            handler(event);
+          }
+        : handler;
     }
-    e.stopPropagation();
-    node.classList.add('drag-source');
-    state.observationTooltipTarget = undefined;
-    hideAttachmentTooltip();
-    state.drag = { type, id, revision: state.board.workspace.revision, root: state.root };
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', id);
-    const bounds = node.getBoundingClientRect();
-    state.dragPreview?.remove();
-    state.dragPreview = node.cloneNode(true);
-    state.dragPreview.classList.add('drag-preview');
-    state.dragPreview.dataset.dragPreview = 'true';
-    state.dragPreview.removeAttribute('draggable');
-    state.dragPreview.removeAttribute('data-drag-type');
-    state.dragPreview.setAttribute('aria-hidden', 'true');
-    state.dragPreview.inert = true;
-    Object.assign(state.dragPreview.style, {
-      position: 'fixed',
-      left: '-10000px',
-      top: '0',
-      width: `${bounds.width}px`,
-      height: `${bounds.height}px`,
-      margin: '0',
-      pointerEvents: 'none',
-      zIndex: '-1',
-    });
-    document.body.append(state.dragPreview);
-    const x =
-      e.clientX >= bounds.left && e.clientX < bounds.right
-        ? e.clientX - bounds.left
-        : bounds.width / 2;
-    const y =
-      e.clientY >= bounds.top && e.clientY < bounds.bottom
-        ? e.clientY - bounds.top
-        : bounds.height / 2;
-    e.dataTransfer.setDragImage(state.dragPreview, x, y);
-  });
-  node.addEventListener('dragend', () => {
-    node.classList.remove('drag-source');
-    state.dragPreview?.remove();
-    state.dragPreview = undefined;
-    state.drag = undefined;
-    clearDropMarks();
-  });
-  return node;
+  return merged;
 }
-export function dropZone(node, type, command, axis = 'y') {
-  function accepts() {
-    return (
-      state.drag?.type === type &&
-      state.drag.root === state.root &&
-      writable() &&
-      !(type === 'card' && findItem(node.dataset.item)?.archived)
-    );
-  }
-  function after(e) {
-    const r = node.getBoundingClientRect();
-    return axis === 'x' ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
-  }
-  node.addEventListener('dragover', (e) => {
-    if (!accepts()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
-    clearDropMarks();
-    node.classList.add(axis === 'end' ? 'drop-end' : after(e) ? 'drop-after' : 'drop-before');
-  });
-  node.addEventListener('dragleave', (e) => {
-    if (!node.contains(e.relatedTarget))
-      node.classList.remove('drop-before', 'drop-after', 'drop-end');
-  });
-  node.addEventListener('drop', (e) => {
-    if (!accepts()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const c = command(state.drag.id, after(e));
-    const revision = state.drag.revision;
-    state.drag = undefined;
-    clearDropMarks();
-    if (c && c.target !== c.before) quick({ ...c, revision });
-  });
+// A draggable card, row, column head or list section. `canDrag` is read at
+// render and again when the gesture starts.
+export function useDraggable(type, id, canDrag) {
+  const [source, setSource] = useState(false);
+  const props = {
+    draggable: canDrag(),
+    onDragStart: (event) => {
+      const node = event.currentTarget;
+      if (
+        !writable() ||
+        !canDrag() ||
+        (event.target !== node && event.target.closest?.('button,a,input,select,textarea'))
+      ) {
+        event.preventDefault();
+        return;
+      }
+      event.stopPropagation();
+      setSource(true);
+      hideAttachmentTooltip();
+      session = { type, id, revision: state.board.workspace.revision, root: state.root };
+      setState({ dragging: true, dropTarget: undefined });
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', id);
+      // The drag image is a detached clone of the source, so the native image
+      // matches the element without Preact owning the copy.
+      const bounds = node.getBoundingClientRect();
+      preview?.remove();
+      preview = node.cloneNode(true);
+      preview.classList.add('drag-source', 'drag-preview');
+      preview.dataset.dragPreview = 'true';
+      preview.removeAttribute('draggable');
+      preview.removeAttribute('data-drag-type');
+      preview.setAttribute('aria-hidden', 'true');
+      preview.inert = true;
+      Object.assign(preview.style, {
+        position: 'fixed',
+        left: '-10000px',
+        top: '0',
+        width: `${bounds.width}px`,
+        height: `${bounds.height}px`,
+        margin: '0',
+        pointerEvents: 'none',
+        zIndex: '-1',
+      });
+      document.body.append(preview);
+      const x =
+        event.clientX >= bounds.left && event.clientX < bounds.right
+          ? event.clientX - bounds.left
+          : bounds.width / 2;
+      const y =
+        event.clientY >= bounds.top && event.clientY < bounds.bottom
+          ? event.clientY - bounds.top
+          : bounds.height / 2;
+      event.dataTransfer.setDragImage(preview, x, y);
+    },
+    onDragEnd: () => {
+      setSource(false);
+      endDrag();
+    },
+  };
+  return { props, source };
+}
+const DROP_CLASSES = { before: 'drop-before', after: 'drop-after', end: 'drop-end' };
+// A drop target identified by `key`. Each zone accepts one drag `type`, places
+// the drop on `axis` ('y', 'x', or 'end' for the whole element) and builds the
+// planning command from the dragged id. `enabled()` can refuse at event time.
+export function useDropZone(key, zones) {
+  const mark = useStore((current) =>
+    current.dropTarget?.key === key ? current.dropTarget.mark : '',
+  );
+  const zoneFor = () =>
+    session && session.root === state.root && writable()
+      ? zones.find((zone) => zone.type === session.type && (zone.enabled?.() ?? true))
+      : undefined;
+  const after = (event, zone) => {
+    const r = event.currentTarget.getBoundingClientRect();
+    return zone.axis === 'x'
+      ? event.clientX > r.left + r.width / 2
+      : event.clientY > r.top + r.height / 2;
+  };
+  const props = {
+    onDragOver: (event) => {
+      const zone = zoneFor();
+      if (!zone) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = 'move';
+      const next = zone.axis === 'end' ? 'end' : after(event, zone) ? 'after' : 'before';
+      if (state.dropTarget?.key !== key || state.dropTarget.mark !== next)
+        setState({ dropTarget: { key, mark: next } });
+    },
+    onDragLeave: (event) => {
+      if (!event.currentTarget.contains(event.relatedTarget) && state.dropTarget?.key === key)
+        setState({ dropTarget: undefined });
+    },
+    onDrop: (event) => {
+      const zone = zoneFor();
+      if (!zone) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const command = zone.command(session.id, after(event, zone));
+      const revision = session.revision;
+      endDrag();
+      if (command && command.target !== command.before) quick({ ...command, revision });
+    },
+  };
+  return { props, className: DROP_CLASSES[mark] || '' };
 }

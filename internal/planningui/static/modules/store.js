@@ -1,25 +1,32 @@
 // Small Preact-aware external store for shared application state.
 import { useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
 
+const UNSET = Symbol('unset');
+
 export function createStore(initialState) {
   const listeners = new Set();
-  const store = { state: initialState };
+  let current = initialState;
 
-  function publish() {
+  function getState() {
+    return current;
+  }
+
+  // Every change is one top-level patch. Values are replaced, never mutated, so
+  // subscribers compare selections by identity.
+  function setState(update) {
+    const patch = typeof update === 'function' ? update(current) : update;
+    if (!patch || typeof patch !== 'object') return;
+    let next;
+    for (const [key, value] of Object.entries(patch)) {
+      if (Object.is(current[key], value)) continue;
+      next ||= { ...current };
+      next[key] = value;
+    }
+    if (!next) return;
+    current = next;
     listeners.forEach((listener) => {
       listener();
     });
-  }
-
-  function setState(update) {
-    const patch = typeof update === 'function' ? update(store.state) : update;
-    if (!patch || typeof patch !== 'object') return;
-    const entries = Object.entries(patch).filter(
-      ([key, value]) => !Object.is(store.state[key], value),
-    );
-    if (!entries.length) return;
-    store.state = { ...store.state, ...Object.fromEntries(entries) };
-    publish();
   }
 
   function subscribe(listener) {
@@ -32,13 +39,13 @@ export function createStore(initialState) {
     selectorRef.current = selector;
     const equalRef = useRef(equal);
     equalRef.current = equal;
-    const selectedRef = useRef(selector(store.state));
+    const selectedRef = useRef(UNSET);
     const [, forceRender] = useReducer((value) => value + 1, 0);
 
     useLayoutEffect(() => {
       const update = () => {
-        const next = selectorRef.current(store.state);
-        if (equalRef.current(selectedRef.current, next)) return;
+        const next = selectorRef.current(current);
+        if (selectedRef.current !== UNSET && equalRef.current(selectedRef.current, next)) return;
         selectedRef.current = next;
         forceRender();
       };
@@ -47,36 +54,34 @@ export function createStore(initialState) {
       return unsubscribe;
     }, []);
 
-    const selected = selectorRef.current(store.state);
-    if (!equalRef.current(selectedRef.current, selected)) selectedRef.current = selected;
-    return selected;
+    const selected = selectorRef.current(current);
+    if (selectedRef.current === UNSET || !equalRef.current(selectedRef.current, selected))
+      selectedRef.current = selected;
+    return selectedRef.current;
   }
 
-  // Compatibility view for existing controllers while they migrate to patches.
-  const state = new Proxy(initialState, {
-    get(_target, property) {
-      return store.state[property];
+  // Read-only view for controllers and event handlers. Writes go through setState.
+  const state = new Proxy(
+    {},
+    {
+      get(_target, property) {
+        return current[property];
+      },
+      set(_target, property) {
+        throw new TypeError(`state.${String(property)} is read-only; use setState.`);
+      },
+      has(_target, property) {
+        return property in current;
+      },
+      ownKeys() {
+        return Reflect.ownKeys(current);
+      },
+      getOwnPropertyDescriptor(_target, property) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, property);
+        return descriptor && { ...descriptor, configurable: true, writable: false };
+      },
     },
-    set(_target, property, value) {
-      setState({ [property]: value });
-      return true;
-    },
-    deleteProperty(_target, property) {
-      if (!Object.hasOwn(store.state, property)) return true;
-      const next = { ...store.state };
-      delete next[property];
-      store.state = next;
-      publish();
-      return true;
-    },
-    ownKeys() {
-      return Reflect.ownKeys(store.state);
-    },
-    getOwnPropertyDescriptor(_target, property) {
-      const descriptor = Object.getOwnPropertyDescriptor(store.state, property);
-      return descriptor && { ...descriptor, configurable: true };
-    },
-  });
+  );
 
-  return { state, setState, useStore };
+  return { state, getState, setState, subscribe, useStore };
 }

@@ -67,11 +67,11 @@ Module and CSS names are listed in [AGENTS.md](AGENTS.md).
 
 | Area | Design doc | JS modules | CSS files |
 |---|---|---|---|
-| Shell, pages, dialogs, first run | [shell-and-pages](docs/design/shell-and-pages.md) | `app.js`, `mount`, `dialog`, `view-gate`, `view-archive`, `view-history` | `010`–`030`, `033-workspace-gate`, `037-archive-history`, `040-dialog`, `130-motion`, `180-shortcuts` |
-| Filters and search | [filters](docs/design/filters.md) | `filters`, `url-state` | `100-filters` |
+| Shell, pages, dialogs, first run | [shell-and-pages](docs/design/shell-and-pages.md) | `app.js`, `app-shell`, `dialog`, `dialog-state`, `view-gate`, `view-archive`, `view-history` | `010`–`030`, `033-workspace-gate`, `037-archive-history`, `040-dialog`, `130-motion`, `180-shortcuts` |
+| Filters and search | [filters](docs/design/filters.md) | `filters`, `planning-filters`, `url-state` | `100-filters` |
 | Board and List | [board-and-list](docs/design/board-and-list.md) | `view-board`, `view-list`, `bulk`, `drag`, `item-detail` | `032-board`, `036-summaries`, `102-list`, `104-item-detail`, `106-list-responsive`, `120-bulk` |
 | Cards, dates and participants | [cards-and-participants](docs/design/cards-and-participants.md) | `view-board`, `items`, `people`, `due-dates` | `032-board`, `200-participants`, `220-dates` |
-| Attachments | [attachments](docs/design/attachments.md) | `item-attachments` | `108-attachments` |
+| Attachments | [attachments](docs/design/attachments.md) | `item-attachments`, `tooltip` | `108-attachments` |
 | Item editor, Markdown and comments | [item-editor](docs/design/item-editor.md) | `item-editor`, `item-detail`, `multi-select`, `markdown`, `item-comments` | `034-comments`, `035-markdown`, `050-forms`, `060-item-editor`, `220-dates` |
 | GitLab links and observations | [gitlab-observations](docs/design/gitlab-observations.md) | `gitlab`, `gitlab-catalog`, `item-links`, `view-integration` | `090-gitlab`, `050-forms` |
 | Sprints, burn-down and delivery trend | [sprints-burndown-velocity](docs/design/sprints-burndown-velocity.md) | `view-sprints`, `view-burndown`, `view-velocity` | `031-panels`, `070-burndown`, `160-velocity`, `210-sprint-goal` |

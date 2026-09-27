@@ -1,19 +1,12 @@
 // Workspace, filter and open-card state kept in the address bar.
-import { $ } from './dom.js';
 import { api } from './api.js';
-import { state } from './state.js';
-import { hooks } from './hooks.js';
+import { useLayoutEffect } from './vendor-preact.js';
+import { shallowEqual } from './vdom.js';
+import { setState, state, useStore } from './state.js';
 import { notice } from './notices.js';
-import {
-  FILTER_NAMES,
-  filterValues,
-  setFilterValues,
-  singleFilterValue,
-  knownFilterValue,
-} from './filters.js';
-import { closeEditor } from './dialog.js';
+import { FILTER_NAMES, knownFilterValue, singleFilterValue, withFilterValue } from './filters.js';
 
-function workspaceURLState() {
+export function workspaceURLState() {
   return new URL(window.location.href).searchParams.get('workspace') || '';
 }
 export function workspacePreference() {
@@ -30,8 +23,7 @@ export function persistWorkspaceURL(id) {
   else {
     url.searchParams.delete('workspace');
     url.searchParams.delete('item');
-    state.sharedItemID = '';
-    state.editorItemID = '';
+    setState({ sharedItemID: '', editorItemID: '' });
     localStorage.removeItem('flux-plan-workspace');
   }
   window.history.replaceState(null, '', url);
@@ -48,39 +40,90 @@ export function planningURLState() {
     item: params.get('item') || undefined,
   };
 }
+// The store patch that applies a planning URL to the loaded board. Unknown
+// filter values and scopes are dropped; the requested card is kept while it
+// resolves, so a reload of a shared link never drops the card it names.
+export function planningPatchFromURL(urlState, board) {
+  const filters = Object.fromEntries(
+    FILTER_NAMES.map((name) => [
+      name,
+      String(urlState[name] || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value && value !== 'all' && knownFilterValue(name, value, board))
+        .reduce(withFilterValue, []),
+    ]),
+  );
+  const project = singleFilterValue('project', filters);
+  const lens = project !== 'all' && project !== 'none';
+  const requestedScope = urlState.scope;
+  const validScope =
+    requestedScope &&
+    (['active', 'backlog', 'all'].includes(requestedScope) ||
+      board.sprints.some((value) => value.id === requestedScope));
+  return {
+    filters,
+    presentation: urlState.mode === 'list' || (!urlState.mode && lens) ? 'list' : 'board',
+    scope: validScope ? requestedScope : lens ? 'all' : 'active',
+    sharedItemID: String(urlState.item || ''),
+    planningURLReady: true,
+  };
+}
 // Filters serialize as comma-separated values so a multi-value planning view
 // stays shareable as a URL.
-function filterURLValue(name) {
-  const values = filterValues(name);
-  return values.length ? values.join(',') : 'all';
-}
-export function persistPlanningURL({ push = false } = {}) {
-  if (!state.board) return;
+function planningURL(current) {
   const url = new URL(window.location.href);
-  url.searchParams.set('mode', state.presentation);
-  FILTER_NAMES.forEach((name) => url.searchParams.set(name, filterURLValue(name)));
-  url.searchParams.set('scope', state.scope || 'active');
-  if (state.sharedItemID) url.searchParams.set('item', state.sharedItemID);
+  url.searchParams.set('mode', current.presentation);
+  FILTER_NAMES.forEach((name) => {
+    const values = current.filters[name];
+    url.searchParams.set(name, values.length ? values.join(',') : 'all');
+  });
+  url.searchParams.set('scope', current.scope || 'active');
+  if (current.sharedItemID) url.searchParams.set('item', current.sharedItemID);
   else url.searchParams.delete('item');
-  if (url.href === window.location.href) return;
-  if (push) window.history.pushState(null, '', url);
-  else window.history.replaceState(null, '', url);
+  return url;
+}
+// A refused Back/Forward leaves the state as it was; this puts its URL back.
+export function restorePlanningURL() {
+  if (state.board && state.planningURLReady)
+    window.history.replaceState(null, '', planningURL(state));
 }
 // Opening and closing a card is a navigation, so it gets its own history entry
 // and Back/Forward move between the board and the open card. Switching directly
-// from one card to another closes and opens within the same task; the update is
-// coalesced into one entry so Back does not stop at an intermediate state.
+// from one card to another closes and opens within the same task; the URL
+// effect sees only the final card, so Back does not stop at an intermediate state.
+let pushSharedItem = false;
 export function setSharedItem(id) {
   const next = String(id || '');
   if (next === state.sharedItemID) return;
-  state.sharedItemID = next;
-  if (state.sharedItemSync) return;
-  state.sharedItemSync = true;
-  queueMicrotask(() => {
-    state.sharedItemSync = false;
-    if ((new URL(window.location.href).searchParams.get('item') || '') !== state.sharedItemID)
-      persistPlanningURL({ push: true });
-  });
+  pushSharedItem = true;
+  setState({ sharedItemID: next });
+}
+function selectPlanningURL(current) {
+  return {
+    ready: !!current.board && current.planningURLReady,
+    presentation: current.presentation,
+    filters: current.filters,
+    scope: current.scope,
+    sharedItemID: current.sharedItemID,
+  };
+}
+// The one writer of planning URL parameters: every URL-relevant state change
+// replaces the current entry, and a changed open card pushes a new one.
+export function usePlanningURL() {
+  const current = useStore(selectPlanningURL, shallowEqual);
+  // A layout effect, so the address bar matches the view it was rendered with.
+  useLayoutEffect(() => {
+    const push = pushSharedItem;
+    pushSharedItem = false;
+    if (!current.ready) return;
+    const url = planningURL(current);
+    if (url.href === window.location.href) return;
+    const itemChanged =
+      (new URL(window.location.href).searchParams.get('item') || '') !== current.sharedItemID;
+    if (push && itemChanged) window.history.pushState(null, '', url);
+    else window.history.replaceState(null, '', url);
+  }, [current]);
 }
 // A shared link carries only the workspace and the card. Filters are deliberately
 // dropped: a reader must never receive a link whose active scope hides the very
@@ -111,92 +154,16 @@ export async function copyCardLink(item) {
 // A card link resolves against the board first and falls back to the single-card
 // read, which answers for archived cards too. Archive pages are never walked:
 // the card is found by identity regardless of how much history exists.
-async function resolveSharedItem(itemID) {
+export async function resolveSharedItem(itemID) {
   const local = state.board.items.find((value) => value.id === itemID);
   if (local) return local;
-  const current = state.board,
-    path = state.root;
+  const path = state.root;
   let response;
   try {
     response = await api(`${path}/items/${encodeURIComponent(itemID)}`);
   } catch {
     return undefined;
   }
-  if (state.board !== current || state.root !== path) return undefined;
+  if (!state.board || state.root !== path) return undefined;
   return response?.item?.id === itemID ? response.item : undefined;
-}
-export async function openSharedItem(itemID) {
-  if (!state.board || !itemID) return false;
-  if (state.detailState?.itemID === itemID || (state.editorItemID === itemID && $('editor').open))
-    return true;
-  const item = await resolveSharedItem(itemID);
-  if (!item) {
-    setSharedItem('');
-    notice('Card not found or no longer available.', true);
-    return false;
-  }
-  if (state.view === 'board' && state.presentation === 'list' && state.detailPane) {
-    if (!hooks.closeDetail({ focus: false })) return false;
-    state.selectedItemID = item.id;
-    hooks.openItemDetail(item);
-  } else hooks.editItemModal(item);
-  return true;
-}
-// Back/Forward restores the whole planning URL, including which card is open.
-// Unsaved editor input is protected first: a refused close leaves the view and
-// the address bar exactly as they were.
-export async function applyHistoryNavigation() {
-  const urlState = planningURLState();
-  const workspace = workspaceURLState();
-  if (state.board && workspace && workspace !== state.board.workspace.id) {
-    state.pendingPlanningURLState = urlState;
-    await hooks.chooseWorkspace(workspace);
-    return;
-  }
-  if (!state.board) return;
-  const target = String(urlState.item || '');
-  if (
-    state.detailState &&
-    state.detailState.itemID !== target &&
-    !hooks.closeDetail({ focus: false })
-  ) {
-    state.sharedItemID = state.detailState.itemID;
-    persistPlanningURL();
-    return;
-  }
-  if ($('editor').open && state.editorItemID !== target && !state.busy) closeEditor();
-  applyPlanningURLState(urlState);
-}
-export function applyPlanningURLState(urlState = planningURLState()) {
-  if (!state.board) return;
-  FILTER_NAMES.forEach((name) =>
-    setFilterValues(
-      name,
-      String(urlState[name] || '')
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => value && value !== 'all' && knownFilterValue(name, value)),
-    ),
-  );
-  const project = singleFilterValue('project');
-  state.presentation =
-    urlState.mode === 'list' || (!urlState.mode && project !== 'all' && project !== 'none')
-      ? 'list'
-      : 'board';
-  const requestedScope = urlState.scope;
-  const validScope =
-    requestedScope &&
-    (['active', 'backlog', 'all'].includes(requestedScope) ||
-      state.board.sprints.some((value) => value.id === requestedScope));
-  state.scope = validScope
-    ? requestedScope
-    : project !== 'all' && project !== 'none'
-      ? 'all'
-      : 'active';
-  // The requested card is kept in the URL while it resolves, so a reload of a
-  // shared link never drops the card it names before the details open.
-  state.sharedItemID = String(urlState.item || '');
-  hooks.render();
-  persistPlanningURL();
-  if (state.sharedItemID) void openSharedItem(state.sharedItemID);
 }

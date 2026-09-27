@@ -1,11 +1,10 @@
 // Planning changes: posting, optimistic apply, undo and sequences.
 import { api, requestKey } from './api.js';
 import { state, setState } from './state.js';
-import { hooks } from './hooks.js';
 import { writable } from './permissions.js';
-import { notice } from './notices.js';
+import { notice, offerUndo, UNDO_TTL } from './notices.js';
 import { findItem } from './items.js';
-import { renderControls } from './controls.js';
+import { refresh } from './sync.js';
 
 // minimal skips the committed board in the receipt. A batch only needs the
 // board once, so every command but the last asks for a minimal receipt and the
@@ -35,8 +34,7 @@ export function receiptRevision(receipt, fallback) {
 }
 export async function change(command, key = requestKey()) {
   if (!writable()) throw new Error('Planning is read-only or a request is in progress.');
-  state.busy = true;
-  renderControls();
+  setState({ busy: true });
   notice('Saving changes…');
   let receipt;
   try {
@@ -46,10 +44,9 @@ export async function change(command, key = requestKey()) {
     notice('');
     throw error;
   } finally {
-    state.busy = false;
-    renderControls();
+    setState({ busy: false });
   }
-  const refreshed = await hooks.refresh(preloadedBoard(receipt));
+  const refreshed = await refresh(preloadedBoard(receipt));
   notice(
     refreshed
       ? 'Changes saved.'
@@ -63,65 +60,55 @@ export async function change(command, key = requestKey()) {
 // revision, the save is still announced, and a rejected write is rolled back to
 // the exact previous placement rather than left silently applied.
 const OPTIMISTIC_KINDS = new Set(['item.move', 'item.rank', 'item.archive', 'item.restore']);
-function optimisticApply(command) {
-  if (!state.board || !OPTIMISTIC_KINDS.has(command.kind)) return undefined;
-  if (command.kind === 'item.archive' || command.kind === 'item.restore') {
-    const source = command.kind === 'item.archive' ? state.board.items : state.archiveItems;
-    const index = source.findIndex((value) => value.id === command.target);
-    if (index < 0) return undefined;
-    const [removed] = source.splice(index, 1);
-    return () => {
-      if (source !== (command.kind === 'item.archive' ? state.board?.items : state.archiveItems))
-        return;
-      source.splice(index, 0, removed);
+// Returns the store patch for the optimistic placement, or undefined.
+function optimisticPatch(command) {
+  const board = state.board;
+  if (!board || !OPTIMISTIC_KINDS.has(command.kind)) return undefined;
+  if (command.kind === 'item.archive') {
+    if (!board.items.some((value) => value.id === command.target)) return undefined;
+    return {
+      board: { ...board, items: board.items.filter((value) => value.id !== command.target) },
     };
   }
-  const items = state.board.items;
-  const index = items.findIndex((value) => value.id === command.target);
+  if (command.kind === 'item.restore') {
+    if (!state.archiveItems.some((value) => value.id === command.target)) return undefined;
+    return { archiveItems: state.archiveItems.filter((value) => value.id !== command.target) };
+  }
+  const index = board.items.findIndex((value) => value.id === command.target);
   if (index < 0) return undefined;
-  const item = items[index];
-  const column = item.column_id;
-  const ranks = items.map((value) => value.rank);
   if (
     command.kind === 'item.move' &&
-    !state.board.columns.some((value) => value.id === command.destination)
+    !board.columns.some((value) => value.id === command.destination)
   )
     return undefined;
-  items.splice(index, 1);
+  const moved =
+    command.kind === 'item.move'
+      ? { ...board.items[index], column_id: command.destination }
+      : board.items[index];
+  const items = board.items.filter((_value, position) => position !== index);
   let at = items.length;
   if (command.before) {
     at = items.findIndex((value) => value.id === command.before);
-    if (at < 0) {
-      items.splice(index, 0, item);
-      return undefined;
-    }
+    if (at < 0) return undefined;
   }
-  items.splice(at, 0, item);
-  if (command.kind === 'item.move') item.column_id = command.destination;
-  items.forEach((value, rank) => {
-    value.rank = rank;
-  });
-  return () => {
-    if (items !== state.board?.items) return;
-    items.splice(at, 1);
-    items.splice(index, 0, item);
-    item.column_id = column;
-    items.forEach((value, position) => {
-      value.rank = ranks[position];
-    });
+  items.splice(at, 0, moved);
+  return {
+    board: {
+      ...board,
+      items: items.map((value, rank) => (value.rank === rank ? value : { ...value, rank })),
+    },
   };
 }
-export const UNDO_TTL = 10000;
-export function clearUndo() {
-  if (state.undoTimer) clearTimeout(state.undoTimer);
-  setState({ undoTimer: undefined, undoOffer: undefined, undoText: '' });
-}
-export function offerUndo(text, commands) {
-  const list = (Array.isArray(commands) ? commands : [commands]).filter(Boolean);
-  clearUndo();
-  if (!list.length) return;
-  setState({ undoOffer: list, undoText: text });
-  state.undoTimer = setTimeout(clearUndo, UNDO_TTL);
+// Applies the optimistic patch and returns its rollback: the exact previous
+// values, restored only while the optimistic ones are still current.
+function optimisticApply(command) {
+  const patch = optimisticPatch(command);
+  if (!patch) return undefined;
+  const previous = Object.fromEntries(Object.keys(patch).map((key) => [key, state[key]]));
+  setState(patch);
+  return () => {
+    if (Object.entries(patch).every(([key, value]) => state[key] === value)) setState(previous);
+  };
 }
 function itemTitle(id) {
   return findItem(id)?.title || 'work item';
@@ -173,17 +160,14 @@ export async function quick(command) {
   const full = { revision: state.board.workspace.revision, ...command };
   const allowed = writable();
   const undo = allowed ? undoableInverse(full) : undefined;
-  const currentBoard = state.board;
   const rollback = allowed ? optimisticApply(full) : undefined;
-  if (rollback) hooks.render();
   try {
     await change(full);
     if (undo)
       offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
   } catch (e) {
-    if (rollback && state.board === currentBoard) rollback();
+    rollback?.();
     notice(e.message, true);
-    hooks.render();
   }
 }
 // Bulk edits are separate revision-checked commands applied in order. The
@@ -204,8 +188,7 @@ export async function runSequence(label, commands) {
     receipt,
     applied = 0,
     failure = '';
-  state.busy = true;
-  renderControls();
+  setState({ busy: true });
   try {
     for (const [index, command] of commands.entries()) {
       notice(`${label} · ${applied}/${commands.length}…`);
@@ -223,11 +206,9 @@ export async function runSequence(label, commands) {
       }
     }
   } finally {
-    state.busy = false;
-    renderControls();
+    setState({ busy: false });
   }
-  const refreshed = await hooks.refresh(preloadedBoard(receipt));
-  if (!refreshed) hooks.render();
+  await refresh(preloadedBoard(receipt));
   notice(
     failure
       ? `${label}: applied ${applied} of ${commands.length}. ${failure}`

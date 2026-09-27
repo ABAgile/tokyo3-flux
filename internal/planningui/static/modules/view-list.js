@@ -1,25 +1,28 @@
 // The List presentation of the board.
 import { columnWIPLabel } from './format.js';
 import { emptyStateTemplate } from './layout.js';
-import { attach, classNames } from './dom.js';
-import { html, keyedList } from './vdom.js';
+import { classNames } from './dom.js';
+import { html, memo } from './vdom.js';
+import { useEffect, useRef } from './vendor-preact.js';
 
-import { state, useStore } from './state.js';
-import { hooks } from './hooks.js';
-import { projectBadgesTemplate, labelBadgeTemplate, blocked, findItem } from './items.js';
+import { setState, state, useStore } from './state.js';
+import { projectBadgesTemplate, labelBadgeTemplate } from './items.js';
 import { memberName, participantStackTemplate } from './people.js';
 import { itemDateStatus, dueDateBadgeTemplate } from './due-dates.js';
-import { filteredItems } from './filters.js';
 import {
   attachmentCount,
-  itemFileDropZone,
+  useAttachmentList,
+  useItemFileDrop,
   attachmentPaperclipTemplate,
 } from './item-attachments.js';
-import { attachDrag, dropZone } from './drag.js';
-import { writable } from './permissions.js';
+import { mergeEventProps, useDraggable, useDropZone } from './drag.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
-import { ItemDetailPane, selectItem } from './item-detail.js';
-import { pruneBulkSelection, bulkBarTemplate } from './bulk.js';
+import { ItemDetailPane } from './item-detail.js';
+import { prunedBulkSelection, BulkBar } from './bulk.js';
+import { closeDetail, selectItem, setBulkSelected } from './actions.js';
+import { isEditorOpen } from './dialog-state.js';
+import { useFocusRestore } from './ui-hooks.js';
+import { cardDropZones, columnDropZones, useBlockedIDs, useRowContext } from './view-board.js';
 
 // Rows and the complete detail form are rendered from shared state. The keyed
 // detail component keeps one uncontrolled form lifetime per opened item.
@@ -31,40 +34,22 @@ function listCellTemplate(label, className, content) {
   </div>`;
 }
 const emptyCell = html`<span class="list-cell-empty">—</span>`;
+function rowFocusKey(item) {
+  return `item:${item.id}:list-row`;
+}
 function selectFromRow(event, item) {
   if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
     return;
-  selectItem(item.id, event.currentTarget);
+  selectItem(item.id, rowFocusKey(item));
 }
 function selectFromKey(event, item) {
   if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
   event.preventDefault();
-  selectItem(item.id, event.currentTarget);
+  selectItem(item.id, rowFocusKey(item));
 }
-function toggleBulk(event, item) {
-  if (event.currentTarget.checked) state.bulkSelection.add(item.id);
-  else state.bulkSelection.delete(item.id);
-  hooks.renderContent();
-}
-function attachRow(node, id) {
-  attachDrag(node, 'card', id);
-  itemFileDropZone(node, findItem(id));
-  dropZone(node, 'card', (dragged, after) => {
-    const current = findItem(id);
-    if (!current) return undefined;
-    const peers = filteredItems().filter((value) => value.column_id === current.column_id);
-    const index = peers.findIndex((value) => value.id === current.id);
-    return {
-      kind: 'item.move',
-      target: dragged,
-      destination: current.column_id,
-      before: after ? peers[index + 1]?.id || '' : current.id,
-    };
-  });
-}
-function titleCellTemplate(item, overdue, bulkSelected) {
-  const selectable = state.board.role !== 'viewer' && !item.archived;
-  const busy = state.busy || state.loading;
+function titleCellTemplate(item, overdue, bulkSelected, context) {
+  const selectable = context.role !== 'viewer' && !item.archived;
+  const busy = context.busy;
   return listCellTemplate(
     'Title',
     'list-cell-title',
@@ -81,7 +66,7 @@ function titleCellTemplate(item, overdue, bulkSelected) {
                 data-focus-key=${`item:${item.id}:bulk-select`}
                 aria-label=${`Select ${item.title} for bulk actions`}
                 onClick=${(event) => event.stopPropagation()}
-                onChange=${(event) => toggleBulk(event, item)}
+                onChange=${(event) => setBulkSelected(item.id, event.currentTarget.checked)}
               />`
             : null
         }
@@ -89,10 +74,10 @@ function titleCellTemplate(item, overdue, bulkSelected) {
           type="button"
           class="list-row-title"
           data-focus-key=${`item:${item.id}:list-title`}
-          onClick=${(event) => selectItem(item.id, event.currentTarget.closest('.list-row'))}
+          onClick=${() => selectItem(item.id, rowFocusKey(item))}
         >${item.title}</button>
       </div>
-      ${overdue ? dueDateBadgeTemplate(item, ' list-title-due') : null}
+      ${overdue ? dueDateBadgeTemplate(item, context.now, ' list-title-due') : null}
     </div>`,
   );
 }
@@ -110,10 +95,8 @@ function linksTemplate(item, links) {
         onClick=${() => showLinks(item)}
       >View observations</button>
     </div>
-    ${keyedList(
-      links,
-      (link) => link.id,
-      (link) => html`<span class="list-row-link-line"
+    ${links.map(
+      (link) => html`<span key=${link.id} class="list-row-link-line"
         >${
           link.kind === 'mr'
             ? cardObservationIconTemplate(link, `item:${item.id}:list-observation:${link.id}`)
@@ -123,16 +106,14 @@ function linksTemplate(item, links) {
     )}
   </div>`;
 }
-function statusCellTemplate(item, due) {
+function statusCellTemplate(item, due, isBlocked, links, total, now) {
   const overdue = !!due?.overdue;
   const badges = [
-    blocked(item) ? html`<span class="badge warning">Blocked</span>` : null,
-    due && !overdue ? dueDateBadgeTemplate(item) : null,
+    isBlocked ? html`<span class="badge warning">Blocked</span>` : null,
+    due && !overdue ? dueDateBadgeTemplate(item, now) : null,
     item.archived ? html`<span class="badge">Archived</span>` : null,
   ];
-  const hasBadges = blocked(item) || (due && !overdue) || item.archived;
-  const links = state.board.links.filter((link) => link.items.includes(item.id));
-  const total = attachmentCount(item);
+  const hasBadges = isBlocked || (due && !overdue) || item.archived;
   const content = [
     // The badge row stays for an overdue item, whose due badge sits by the title.
     hasBadges || overdue ? html`<div class="list-row-status-badges">${badges}</div>` : null,
@@ -152,12 +133,18 @@ function statusCellTemplate(item, due) {
     empty ? emptyCell : html`<div class="list-row-status-content">${content}</div>`,
   );
 }
-function listRowTemplate(item) {
-  const due = itemDateStatus(item);
+const NO_LINKS = Object.freeze([]);
+function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
+  const { now, canWrite, sprintName } = context;
+  const list = useAttachmentList(item.id);
+  const drag = useDraggable('card', item.id, () => canWrite && !item.archived);
+  const drop = useDropZone(`card:${item.id}`, cardDropZones(item.id));
+  const files = useItemFileDrop(item.id);
+  const due = itemDateStatus(item, now);
   const overdue = !!due?.overdue;
-  const selected = item.id === state.selectedItemID;
-  const bulkSelected = state.bulkSelection.has(item.id);
-  const sprintName = (id) => state.board.sprints.find((s) => s.id === id)?.name || id;
+  const links = context.linksByItem.get(item.id) || NO_LINKS;
+  const total = attachmentCount(item, list);
+  const { draggable, ...dragEvents } = drag.props;
   // The list shows the same participant aggregate as a card, and keeps the
   // assignee's name in text so the column stays scannable as a table.
   return html`<article
@@ -166,19 +153,22 @@ function listRowTemplate(item) {
       'is-overdue': overdue,
       'is-selected': selected,
       'is-bulk-selected': bulkSelected,
+      'drag-source': drag.source,
+      [drop.className]: !!drop.className,
+      [files.className]: !!files.className,
     })}
     data-item=${item.id}
-    data-focus-key=${`item:${item.id}:list-row`}
+    data-focus-key=${rowFocusKey(item)}
     tabindex="0"
     aria-label=${`Open work item ${item.title}; draggable`}
     aria-current=${selected ? 'true' : null}
     data-drag-type="card"
-    draggable=${writable() && !item.archived}
-    ref=${attach(attachRow, item.id)}
+    draggable=${draggable}
     onClick=${(event) => selectFromRow(event, item)}
     onKeydown=${(event) => selectFromKey(event, item)}
+    ...${mergeEventProps(dragEvents, files.props, drop.props)}
   >
-    ${titleCellTemplate(item, overdue, bulkSelected)}
+    ${titleCellTemplate(item, overdue, bulkSelected, context)}
     ${listCellTemplate(
       'Project',
       'list-cell-project',
@@ -202,54 +192,33 @@ function listRowTemplate(item) {
       'list-cell-sprints',
       item.sprint_ids.length
         ? item.sprint_ids.map(
-            (id) => html`<span class="badge badge-sprint">${sprintName(id)}</span>`,
+            (id) => html`<span key=${id} class="badge badge-sprint">${sprintName(id)}</span>`,
           )
         : emptyCell,
     )}
-    ${statusCellTemplate(item, due)}
+    ${statusCellTemplate(item, due, isBlocked, links, total, now)}
   </article>`;
 }
-function attachListSection(section, id) {
-  dropZone(
-    section,
-    'card',
-    (dragged) => ({ kind: 'item.move', target: dragged, destination: id }),
-    'end',
-  );
-  dropZone(
-    section,
-    'list',
-    (dragged, after) => {
-      const index = state.board.columns.findIndex((value) => value.id === id);
-      return {
-        kind: 'column.rank',
-        target: dragged,
-        before: after ? state.board.columns[index + 1]?.id || '' : id,
-      };
-    },
-    'x',
-  );
-}
+const ListRow = memo(ListRowView);
 // A section's open state belongs to the user: `open` is a static attribute, so
 // Preact sets it once and never again.
-function listSectionTemplate(column, items) {
-  const peers = items.filter((item) => item.column_id === column.id);
-  const total = state.board.items.filter(
-    (item) => !item.archived && item.column_id === column.id,
-  ).length;
+function ListSection({ column, peers, total, context, blockedIDs, selectedID, bulkSelection }) {
+  const drop = useDropZone(`column:${column.id}`, columnDropZones(column.id));
+  const drag = useDraggable('list', column.id, () => context.canWrite);
+  const { draggable, ...dragEvents } = drag.props;
   return html`<details
-    class="list-section"
+    class=${classNames({ 'list-section': true, [drop.className]: !!drop.className })}
     data-column=${column.id}
     open
     aria-label=${column.name}
-    ref=${attach(attachListSection, column.id)}
+    ...${drop.props}
   >
     <summary
-      class="list-section-head"
+      class=${classNames({ 'list-section-head': true, 'drag-source': drag.source })}
       data-drag-type="list"
-      draggable=${writable()}
+      draggable=${draggable}
       aria-label=${`Drag list ${column.name}`}
-      ref=${attach(attachDrag, 'list', column.id)}
+      ...${dragEvents}
     >
       <span class="list-section-title"><h3>${column.name}</h3></span>
       <span class="list-section-summary"
@@ -257,40 +226,72 @@ function listSectionTemplate(column, items) {
       >
     </summary>
     <div class="list-section-body">
-      ${keyedList(peers, (item) => item.id, listRowTemplate)}
+      ${peers.map(
+        (item) => html`<${ListRow}
+          key=${item.id}
+          item=${item}
+          context=${context}
+          isBlocked=${blockedIDs.has(item.id)}
+          selected=${item.id === selectedID}
+          bulkSelected=${bulkSelection.has(item.id)}
+        />`,
+      )}
       ${peers.length ? null : emptyStateTemplate('No work here')}
     </div>
   </details>`;
 }
-function registerDetailPane(pane) {
-  state.detailPane = pane;
+function selectBoard(current) {
+  return current.board;
 }
 function selectSelectedItem(current) {
   return current.selectedItemID;
 }
-function selectDetailState(current) {
-  return current.detailState;
+function selectDetail(current) {
+  return current.detail;
+}
+function selectBulkSelection(current) {
+  return current.bulkSelection;
+}
+// Escape in the detail pane closes it, unless a dialog owns Escape; menus
+// and fields inside the pane that own Escape stop it before it gets here.
+function closeDetailOnEscape(event) {
+  if (event.key !== 'Escape' || isEditorOpen()) return;
+  if (closeDetail()) event.preventDefault();
+  event.stopPropagation();
 }
 export function ListPresentation({ items }) {
-  useStore(selectSelectedItem);
-  useStore(selectDetailState);
-  pruneBulkSelection(items);
-  const detailOpen = !!(
-    state.detailState &&
-    state.detailState.pane === state.detailPane &&
-    state.selectedItemID
-  );
-  return html`<div class=${classNames({ 'list-detail-layout': true, 'has-detail': detailOpen })} data-content-view="list:board">
+  const board = useStore(selectBoard);
+  const selectedID = useStore(selectSelectedItem);
+  const detail = useStore(selectDetail);
+  const bulkSelection = useStore(selectBulkSelection);
+  const context = useRowContext();
+  const blockedIDs = useBlockedIDs(items);
+  const root = useRef(null);
+  const focus = useFocusRestore(root, 'list');
+  // Selection keeps to the shown, selectable cards.
+  useEffect(() => {
+    const next = prunedBulkSelection(state.bulkSelection, items);
+    if (next !== state.bulkSelection) setState({ bulkSelection: next });
+  }, [items, bulkSelection]);
+  const detailOpen = !!(detail && selectedID);
+  return html`<div class=${classNames({ 'list-detail-layout': true, 'has-detail': detailOpen })} data-content-view="list:board" ref=${root} ...${focus}>
     <div class="planning-list" data-content-view="planning-list">
-      ${bulkBarTemplate(items)}
+      <${BulkBar} items=${items} selection=${bulkSelection} role=${board.role} />
       <div class="list-table-head">
-        ${LIST_HEADINGS.map((label) => html`<span class="list-table-heading">${label}</span>`)}
+        ${LIST_HEADINGS.map((label) => html`<span key=${label} class="list-table-heading">${label}</span>`)}
       </div>
       <div class="list-sections">
-        ${keyedList(
-          state.board.columns,
-          (column) => column.id,
-          (column) => listSectionTemplate(column, items),
+        ${board.columns.map(
+          (column) => html`<${ListSection}
+            key=${column.id}
+            column=${column}
+            peers=${items.filter((item) => item.column_id === column.id)}
+            total=${board.items.filter((item) => !item.archived && item.column_id === column.id).length}
+            context=${context}
+            blockedIDs=${blockedIDs}
+            selectedID=${selectedID}
+            bulkSelection=${bulkSelection}
+          />`,
         )}
       </div>
     </div>
@@ -298,10 +299,7 @@ export function ListPresentation({ items }) {
       class="item-detail-pane"
       hidden=${!detailOpen}
       aria-label="Selected work item"
-      ref=${attach(registerDetailPane)}
-    ><${ItemDetailPane}
-      key=${detailOpen ? state.detailState.formKey : 'closed'}
-      detail=${detailOpen ? state.detailState : undefined}
-    /></aside>
+      onKeyDown=${closeDetailOnEscape}
+    >${detailOpen ? html`<${ItemDetailPane} key=${detail.formKey} detail=${detail} />` : null}</aside>
   </div>`;
 }

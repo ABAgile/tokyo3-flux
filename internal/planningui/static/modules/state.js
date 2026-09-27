@@ -1,6 +1,9 @@
-// Shared planning state for app.js and feature modules.
-// Controllers use the compatibility facade as `state.<name>` while components
-// subscribe to immutable top-level snapshots through the store API.
+// Shared planning state. Components subscribe with `useStore(selector)`; every
+// change is a `setState` patch that replaces top-level values. `state` is a
+// read-only view for event handlers and controllers.
+//
+// The store holds data only: no DOM nodes, functions or timers. Transient
+// browser resources live in component refs or module variables.
 import { createStore } from './store.js';
 
 const initialState = {
@@ -9,6 +12,9 @@ const initialState = {
   // it was issued for and discarded whenever the workspace changes.
   boardETag: '',
   boardETagRoot: '',
+  // Bumped whenever a modified board is loaded, so derived caches and views that
+  // reload with the board can key on it without watching every entity.
+  boardGeneration: 0,
   session: undefined,
   workspaces: [],
   board: undefined,
@@ -21,7 +27,6 @@ const initialState = {
   loading: false,
   planningChangeNotice: false,
   planningChangeText: 'Planning changed elsewhere · Refresh to review',
-  overdueTimer: undefined,
   dueDateNow: undefined,
   workspaceGate: 'loading',
   workspaceCreating: false,
@@ -30,28 +35,32 @@ const initialState = {
   workspaceCreateDraft: '',
   workspaceCreateStatus: '',
   workspaceCreateStatusError: false,
-  membershipPoll: false,
   pendingPlanningURLState: undefined,
+  // Planning URL parameters are written only after a workspace's URL state has
+  // been applied, so a reload keeps the filters and card it was opened with.
+  planningURLReady: false,
+  // Planning filters hold the accepted values of each filter; an empty list
+  // means "all" and the exclusive `none` means "no association".
+  filters: { project: [], assignee: [], label: [] },
+  projectFilters: { assignee: [], label: [] },
   projectSearch: '',
-  projectFilterIDs: undefined,
   selectedItemID: '',
-  detailPane: undefined,
-  detailState: undefined,
+  // The List detail pane: { itemID, formKey, item, itemRevision, draft,
+  // originFocusKey, dirty, focusNonce }. `item` is the snapshot being edited.
+  detail: undefined,
   detailError: '',
   // The open card is URL state: `item` names the card whose details are on
   // screen, so the address bar is always a shareable link to the current card.
   sharedItemID: '',
-  sharedItemSync: false,
   editorItemID: '',
-  attachmentTooltipTarget: undefined,
-  attachmentTooltipSource: undefined,
-  attachmentTooltipText: '',
-  attachmentTooltipGeometry: 0,
-  observationTooltipTarget: undefined,
+  // The attachment tooltip shown by a tile link: { owner, text, anchor, target, inDialog }.
+  attachmentTooltip: undefined,
+  // Loaded attachment metadata by item id. A fresh board drops these lists and
+  // the next viewer reloads them.
+  attachmentLists: {},
   history: [],
   historyBefore: 0,
   historyMore: false,
-  loadGeneration: 0,
   // Archived work is paged from its own endpoint; the board payload carries only
   // the live working set plus archived items still referenced by scope or dependencies.
   archiveItems: [],
@@ -64,49 +73,29 @@ const initialState = {
   bulkSelection: new Set(),
   undoOffer: undefined,
   undoText: '',
-  undoTimer: undefined,
   integrationFormOpen: false,
   integrationDraft: undefined,
   integrationConsent: false,
   integrationSubmitting: false,
   integrationFormError: '',
-  integrationCatalog: [],
-  integrationCatalogLoaded: false,
-  integrationCatalogError: '',
-  integrationCatalogLoading: false,
-  integrationCatalogRequest: 0,
-  burndownData: new Map(),
-  burndownRequests: new Map(),
-  burndownErrors: new Map(),
   burndownExpanded: new Set(),
-  burndownGeneration: 0,
+  // Burn-down requests in flight; the active content body is busy while any load.
+  burndownPending: 0,
   searchQuery: '',
   searchInput: '',
-  searchDebounce: undefined,
-  searchIndexGeneration: 0,
   noticeText: 'Loading planning data…',
   errorText: '',
-  shortcutChord: 0,
-  // The busy flag belongs to the region that is actually rebuilt, so the filter
-  // bar and the summaries above it stay available while work loads.
-  contentBusy: true,
-  drag: undefined,
-  dragPreview: undefined,
+  // A drag is in progress, and the drop zone currently marked: { key, mark }.
+  dragging: false,
+  dropTarget: undefined,
   // One upload at a time per browser, so a card drop and the editor picker
   // cannot race each other onto the same item.
   uploadBusy: false,
-  editorReturn: undefined,
-  // The control that opened the editor dialog, for focus return after a rebuild.
-  editorOpener: undefined,
+  // The open editor dialog: { type, props, key, revision, returnFocusKey }.
   editorDialog: undefined,
-  editorSaveText: 'Save changes',
   editorError: '',
-  observationPoll: false,
-  observationDigest: '',
-  observationReadAt: 0,
+  shortcutsOpen: false,
 };
 
-// Compatibility view for existing domain controllers. New component code reads
-// snapshots with useStore and writes top-level patches with setState.
-const { state, setState, useStore } = createStore(initialState);
-export { state, setState, useStore };
+const { state, getState, setState, subscribe, useStore } = createStore(initialState);
+export { state, getState, setState, subscribe, useStore };

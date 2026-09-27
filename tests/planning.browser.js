@@ -1300,12 +1300,14 @@ async function run(page) {
     }),
     'attachment hover description is clipped, above the attachment, or outside the editor layer',
   );
-  await attachments.evaluate((section) => {
+  await attachments.evaluate(async (section) => {
     const data = new DataTransfer();
     data.items.add(new File(['dropped attachment'], 'dropped.txt', { type: 'text/plain' }));
     section.dispatchEvent(
       new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: data }),
     );
+    // The drop target is component state, rendered on the next update.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     if (!section.classList.contains('attachment-drop-active'))
       throw new Error('attachment drop target did not activate');
     section.dispatchEvent(

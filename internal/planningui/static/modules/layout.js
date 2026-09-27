@@ -82,7 +82,7 @@ function filterControlID(title) {
 function filterSelectTemplate(title, entries, id, onChange) {
   return html`<label for=${id}
     >${title}<select id=${id} data-focus-key=${`filter:${id}`} aria-label=${title} value="all" onChange=${onChange}>
-      ${entries.map(([value, text]) => html`<option value=${value}>${text}</option>`)}
+      ${entries.map(([value, text]) => html`<option key=${value} value=${value}>${text}</option>`)}
     </select></label
   >`;
 }
@@ -205,14 +205,20 @@ function maintenanceListTemplate(className, rows) {
 }
 // One row shape for Projects, Members and Labels: identity on the left,
 // optional actions on the right.
-function maintenanceRowTemplate({ tag = 'div', className = '', content = [], actions = [] } = {}) {
+function maintenanceRowTemplate({
+  tag = 'div',
+  className = '',
+  content = [],
+  actions = [],
+  key,
+} = {}) {
   const classes = `setup-row maintenance-row${className ? ` ${className}` : ''}`;
   const visible = actions.filter(Boolean);
   const body = html`<div class="maintenance-row-info">${content.filter(Boolean)}</div>
     ${visible.length ? html`<div class="actions">${visible}</div>` : null}`;
   return tag === 'article'
-    ? html`<article class=${classes}>${body}</article>`
-    : html`<div class=${classes}>${body}</div>`;
+    ? html`<article key=${key} class=${classes}>${body}</article>`
+    : html`<div key=${key} class=${classes}>${body}</div>`;
 }
 
 export {
