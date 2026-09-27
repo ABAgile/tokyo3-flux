@@ -18,8 +18,15 @@ func TestNativeAssets(t *testing.T) {
 		if w.Code != 200 || w.Body.Len() == 0 {
 			t.Fatalf("%s: %d", path, w.Code)
 		}
-		if path == "/" && !strings.Contains(w.Body.String(), "Sprint") {
-			t.Fatal("planning shell missing")
+		// The shell is an empty body; the App module renders the whole page.
+		if path == "/" {
+			body := w.Body.String()
+			for _, want := range []string{"<title>Flux · Planning</title>", `href="/styles.css"`,
+				`<script src="/app.js" type="module"></script>`, "<body></body>"} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("planning shell missing %s", want)
+				}
+			}
 		}
 	}
 	for _, path := range []string{"/missing", "/static/", "/index.html",
