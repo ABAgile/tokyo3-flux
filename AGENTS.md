@@ -77,6 +77,8 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   html`${peers.map((item) => html`<${Card} key=${item.id} item=${item} context=${context} />`)}`;
   ```
 
+- Naming says what may subscribe: PascalCase components may read the store with `useStore`, while `*Template` functions (56 of them) are pure and take everything they render as arguments; the `pure-templates` lint rule enforces this.
+  A template that needs store data gets it from the component that calls it, or becomes a component.
 - Render helpers take the data they read; they never read the store.
   Name, label, project, sprint, column and participant resolution takes the board lookups from `selectLookups` (`modules/lookups.js`), which keep their identity until an indexed list changes.
   Cards and List rows receive them in the row context, so a memoized row re-renders exactly when something it can show changes.
