@@ -102,9 +102,17 @@ async function run(page) {
   await firstListRow.focus();
   await page.keyboard.press('Enter');
   await page.locator('.item-detail-pane').waitFor();
+  const detailTitle = page.locator('.item-detail-pane').getByLabel('Title', { exact: true });
+  check((await detailTitle.count()) === 1, 'list selection did not open the detail pane');
   check(
-    (await page.locator('.item-detail-pane').getByLabel('Title', { exact: true }).count()) === 1,
-    'list selection did not open the detail pane',
+    await detailTitle.evaluate((input) => input === document.activeElement),
+    'opening the detail pane did not focus its title after rendering',
+  );
+  check(
+    await page
+      .locator('.list-detail-layout')
+      .evaluate((layout) => layout.classList.contains('has-detail')),
+    'detail pane layout state is not rendered from the store',
   );
   check(
     await page
@@ -136,9 +144,15 @@ async function run(page) {
     await firstListRow.evaluate((row) => row === document.activeElement),
     'detail close did not return focus to its originating row',
   );
-  await page.waitForFunction(
-    () => !document.querySelector('.list-row.is-selected[aria-current="true"]'),
-  );
+  await page.waitForFunction(() => {
+    const pane = document.querySelector('.item-detail-pane');
+    const layout = document.querySelector('.list-detail-layout');
+    return (
+      !document.querySelector('.list-row.is-selected[aria-current="true"]') &&
+      pane?.hidden &&
+      !layout?.classList.contains('has-detail')
+    );
+  });
   check(
     (await firstListRow.getAttribute('aria-current')) === null &&
       !(await firstListRow.evaluate((row) => row.classList.contains('is-selected'))),

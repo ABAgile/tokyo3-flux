@@ -12,16 +12,6 @@ import { setSharedItem } from './url-state.js';
 import { reconcileItemLinks } from './item-links.js';
 import { itemEditorDraft, refreshEditorDueBadge, buildItemEditor } from './item-editor.js';
 
-export function updateDetailPaneVisibility() {
-  if (!state.detailPane) return;
-  const open =
-    !!state.detailState &&
-    state.detailState.pane === state.detailPane &&
-    !!state.selectedItemID &&
-    state.detailState.form?.isConnected;
-  state.detailPane.hidden = !open;
-  state.detailPane.parentElement?.classList.toggle('has-detail', open);
-}
 function detailDraftIsDirty(state) {
   if (!state?.form?.isConnected) return false;
   let current;
@@ -48,7 +38,6 @@ export function closeDetail({ force = false, focus = true } = {}) {
   if (!state.detailState) {
     state.selectedItemID = '';
     state.detailPane?.removeAttribute('data-item');
-    updateDetailPaneVisibility();
     return true;
   }
   if (!force && !detailDiscardAllowed()) return false;
@@ -56,11 +45,7 @@ export function closeDetail({ force = false, focus = true } = {}) {
   state.detailState = undefined;
   state.selectedItemID = '';
   setSharedItem('');
-  if (detail.pane) {
-    detail.pane.hidden = true;
-    replaceContent(detail.pane);
-    detail.pane.parentElement?.classList.remove('has-detail');
-  }
+  if (detail.pane) replaceContent(detail.pane);
   if (focus) {
     const target = detail.origin?.isConnected
       ? detail.origin
@@ -137,7 +122,6 @@ export function openItemDetail(item, draft, origin) {
   const cancel = footer.querySelector('.detail-cancel');
   const save = footer.querySelector('[type="submit"]');
   replaceContent(state.detailPane, form);
-  state.detailPane.hidden = false;
   const context = { mode: 'detail', form, footer, origin };
   const refreshEditor = buildItemEditor(fields, item, draft, readOnly, context, title);
   if (readOnly) {
@@ -163,6 +147,7 @@ export function openItemDetail(item, draft, origin) {
     pane: state.detailPane,
     origin,
     dirty: false,
+    focusOnOpen: true,
     initialDraft: null,
   };
   const detail = state.detailState;
@@ -173,7 +158,6 @@ export function openItemDetail(item, draft, origin) {
   form.addEventListener('input', updateDirty);
   form.addEventListener('change', updateDirty);
   detail.initialDraft = itemEditorDraft(form);
-  updateDetailPaneVisibility();
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (readOnly || state.busy || state.detailState !== detail) return;
@@ -236,6 +220,4 @@ export function openItemDetail(item, draft, origin) {
       }
     }
   });
-  const titleInput = form.querySelector('[name="title"]');
-  if (titleInput) titleInput.focus({ preventScroll: true });
 }

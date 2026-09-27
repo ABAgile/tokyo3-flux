@@ -16,11 +16,11 @@ import {
 import { attachDrag, dropZone } from './drag.js';
 import { writable } from './permissions.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
-import { updateDetailPaneVisibility, selectItem } from './item-detail.js';
+import { selectItem } from './item-detail.js';
 import { pruneBulkSelection, bulkBarTemplate } from './bulk.js';
 
-// Rows are Preact templates like board cards. The selected item ID is store-
-// subscribed here; the detail pane's content and visibility remain controller-owned.
+// Rows and detail-pane visibility are store-backed; item-detail retains
+// controller ownership of the uncontrolled form snapshot inside the pane.
 const LIST_HEADINGS = ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'];
 function listCellTemplate(label, className, content) {
   return html`<div class=${`list-cell ${className}`} data-label=${label}>
@@ -266,13 +266,26 @@ function registerDetailPane(pane) {
 function selectSelectedItem(current) {
   return current.selectedItemID;
 }
+function selectDetailState(current) {
+  return current.detailState;
+}
 export function ListPresentation({ items }) {
   useStore(selectSelectedItem);
+  useStore(selectDetailState);
   pruneBulkSelection(items);
+  const detailOpen = !!(
+    state.detailState &&
+    state.detailState.pane === state.detailPane &&
+    state.selectedItemID &&
+    state.detailState.form?.isConnected
+  );
   useLayoutEffect(() => {
-    updateDetailPaneVisibility();
+    const detail = state.detailState;
+    if (!detail?.focusOnOpen) return;
+    detail.focusOnOpen = false;
+    detail.form.querySelector('[name="title"]')?.focus({ preventScroll: true });
   });
-  return html`<div class="list-detail-layout" data-content-view="list:board">
+  return html`<div class=${classNames({ 'list-detail-layout': true, 'has-detail': detailOpen })} data-content-view="list:board">
     <div class="planning-list" data-content-view="planning-list">
       ${bulkBarTemplate(items)}
       <div class="list-table-head">
@@ -288,7 +301,7 @@ export function ListPresentation({ items }) {
     </div>
     <aside
       class="item-detail-pane"
-      hidden
+      hidden=${!detailOpen}
       aria-label="Selected work item"
       ref=${attach(registerDetailPane)}
     ></aside>
