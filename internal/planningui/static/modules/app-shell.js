@@ -11,7 +11,7 @@ import { filteredItems, planningFilterChipsTemplate, singleFilterValue } from '.
 import { labelOptionColors } from './items.js';
 import { WorkspaceSelection, WorkspaceCreation } from './gate-components.js';
 import { ProjectsPage } from './view-projects.js';
-import { SprintsPage, SprintSummary } from './view-sprints.js';
+import { SprintsPage, SprintSummary, sprintResults as getSprintResults } from './view-sprints.js';
 import { MembersPage } from './view-members.js';
 import { LabelsPage } from './view-labels.js';
 import { HistoryPage } from './view-history.js';
@@ -57,6 +57,7 @@ function selectShell(state) {
     busy: state.busy,
     loading: state.loading,
     integrationFormOpen: state.integrationFormOpen,
+    searchQuery: state.searchQuery,
     undoOffer: state.undoOffer,
     undoText: state.undoText,
     editorDialog: state.editorDialog,
@@ -99,6 +100,7 @@ function PageContent({
   onWorkspaceCreate,
   onWorkspaceSubmit,
   onWorkspaceBack,
+  sprintResults,
 }) {
   if (!board) {
     if (workspaceGate === 'select')
@@ -119,7 +121,10 @@ function PageContent({
     history: HistoryPage,
   };
   const Page = pages[view];
-  return Page ? html`<div class="page-stack" data-content-view=${view}><${Page} /></div>` : nothing;
+  if (!Page) return nothing;
+  const content =
+    view === 'sprints' ? html`<${SprintsPage} results=${sprintResults} />` : html`<${Page} />`;
+  return html`<div class="page-stack" data-content-view=${view}>${content}</div>`;
 }
 
 function PlanningContent({ board, view, presentation, busy, loading, integrationFormOpen, items }) {
@@ -171,6 +176,7 @@ function PlanningBody({
 function PlanningArea({
   showPageRoot,
   pageContent,
+  sprintResults,
   contentBusy,
   board,
   view,
@@ -189,12 +195,15 @@ function PlanningArea({
   const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
   const showLabelFilter = !['sprints', 'history'].includes(view);
   const items = board && ['board', 'archive'].includes(view) ? filteredItems() : [];
-  const count =
-    !board || !['board', 'archive'].includes(view)
-      ? ''
-      : view === 'archive'
-        ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
-        : `${items.length} items · workspace revision ${board.workspace.revision}`;
+  const count = !board
+    ? ''
+    : view === 'sprints'
+      ? `${sprintResults?.matches?.length || 0} ${sprintResults?.matches?.length === 1 ? 'sprint' : 'sprints'}`
+      : !['board', 'archive'].includes(view)
+        ? ''
+        : view === 'archive'
+          ? `${items.length} archived${state.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
+          : `${items.length} items · workspace revision ${board.workspace.revision}`;
   const focusKey = useRef('');
   const focusRoute = `${showPageRoot ? 'page' : view}:${view === 'board' ? presentation : ''}`;
   const previousRoute = useRef(focusRoute);
@@ -340,6 +349,7 @@ export function App({
     busy,
     loading,
     integrationFormOpen,
+    searchQuery,
   } = shell;
   const currentWorkspace =
     board?.workspace?.id ||
@@ -349,6 +359,8 @@ export function App({
     '';
   const disabled = busy || loading || integrationFormOpen;
   const canWrite = !!board && board.role !== 'viewer' && !disabled;
+  const sprintResults =
+    board && view === 'sprints' ? getSprintResults(board, searchQuery) : undefined;
   return html`<${Fragment}>
     <a class="skip" href="#main">Skip to planning</a>
     <aside class="sidebar">
@@ -394,6 +406,7 @@ export function App({
           !board || ['projects', 'sprints', 'members', 'labels', 'history'].includes(view)
         }
         contentBusy=${shell.contentBusy}
+        sprintResults=${sprintResults}
         board=${board}
         view=${view}
         presentation=${presentation}
@@ -411,6 +424,7 @@ export function App({
           onWorkspaceCreate=${onWorkspaceCreate}
           onWorkspaceSubmit=${onWorkspaceSubmit}
           onWorkspaceBack=${onWorkspaceBack}
+          sprintResults=${sprintResults}
         />`}
         onPresentation=${onPresentation}
         onScopeChange=${onScopeChange}

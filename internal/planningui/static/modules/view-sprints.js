@@ -162,14 +162,16 @@ function sprintPanelTemplate(s, items = scopeItems(s)) {
     ${expanded ? burndownTemplate(s) : nothing}
   </article>`;
 }
-function sprintRowsTemplate() {
-  const search = $('search').value.trim();
-  const query = state.searchQuery;
-  const filtered = state.board.sprints.filter(sprintMatchesFilters);
+export function sprintResults(board, query) {
+  const filtered = (board?.sprints || []).filter(sprintMatchesFilters);
   const matches = filtered.filter(
     (sprint) => !query || `${sprint.name || ''} ${sprint.goal || ''}`.toLowerCase().includes(query),
   );
-  $('count').textContent = `${matches.length} ${matches.length === 1 ? 'sprint' : 'sprints'}`;
+  return { filtered, matches };
+}
+function sprintRowsTemplate({ filtered, matches }) {
+  const search = $('search').value.trim();
+  const query = state.searchQuery;
   if (!matches.length) {
     const message = !state.board.sprints.length
       ? 'No sprints yet. Create a goal and time box, then add work from the backlog.'
@@ -262,7 +264,7 @@ function selectSprintPage(current) {
 function sameSprintPage(left, right) {
   return SPRINT_PAGE_KEYS.every((key) => Object.is(left[key], right[key]));
 }
-export function SprintsPage() {
+export function SprintsPage({ results }) {
   useStore(selectSprintPage, sameSprintPage);
   useLayoutEffect(() => {
     placeFilters($('sprint-filter-slot'));
@@ -278,7 +280,7 @@ export function SprintsPage() {
           }),
         )}
         <div class="filter-slot" id="sprint-filter-slot"></div>
-        <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate()}</div>
+        <div class="sprints" data-content-view="sprint-page-list">${sprintRowsTemplate(results)}</div>
       </section>
       ${sprintHistoryTemplate()}`;
 }
