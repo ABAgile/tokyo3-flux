@@ -1,5 +1,4 @@
 // Sprint panels, the Sprints page, sprint history and sprint dialogs.
-import { uid } from './dom.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import {
   fieldTemplate,
@@ -12,7 +11,7 @@ import {
 } from './layout.js';
 import { classNames } from './dom.js';
 import { html, shallowEqual } from './vdom.js';
-import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 
 import { setState, state, useStore } from './state.js';
 import {
@@ -37,7 +36,7 @@ import { sprintVelocityTemplate } from './view-velocity.js';
 // The sprint goal measures its rendered height to decide whether to offer
 // "Show more". Until the first measurement the goal stays inert.
 function SprintGoal({ value }) {
-  const [contentID] = useState(() => uid('sprint-goal'));
+  const contentID = `sprint-goal-${useId()}`;
   const [expanded, setExpanded] = useState(false);
   const [clipped, setClipped] = useState();
   const content = useRef();

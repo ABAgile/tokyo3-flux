@@ -4,7 +4,14 @@ import { workspaceSignal } from './workspace-session.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from './vendor-preact.js';
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from './vendor-preact.js';
 
 import { setState, state, useStore } from './state.js';
 import { usePermissions, writable } from './permissions.js';
@@ -314,7 +321,7 @@ function attachmentsReducer(current, action) {
 // store data. The file input's value remains native form state. Keyed by
 // workspace root and item, so a switch remounts it and aborts its writes.
 function ItemAttachments({ root, item, readOnly }) {
-  const [inputID] = useState(() => `attachment-file-${requestKey()}`);
+  const inputID = `attachment-file-${useId()}`;
   const [local, dispatch] = useReducer(attachmentsReducer, {
     status: '',
     error: false,

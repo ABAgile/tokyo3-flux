@@ -2,8 +2,7 @@
 // attachment tooltip is one layer rendering `{ text, anchor, target }` from the
 // pointer store, and observation icons position their own CSS tooltip.
 import { html } from './vdom.js';
-import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
-import { uid } from './dom.js';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 import { pointer, setPointer, usePointer } from './pointer-state.js';
 import { useEventListener } from './ui-hooks.js';
 
@@ -49,7 +48,7 @@ export function hideAttachmentTooltip() {
 // The trigger `ref` and the `anchorRef` the tooltip aligns with. Resize and
 // scroll listeners are installed only while this trigger's tooltip is shown.
 export function useAttachmentTooltip(text) {
-  const [owner] = useState(() => uid('attachment-tooltip-owner'));
+  const owner = useId();
   const ref = useRef(null);
   const anchorRef = useRef(null);
   const active = usePointer((current) => current.attachmentTooltip?.owner === owner);

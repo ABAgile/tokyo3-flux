@@ -14,7 +14,6 @@
 //           └── body: .panel / .maintenance-list / .empty
 //
 // Every component is a Preact template (`*Template`).
-import { uid } from './dom.js';
 import { html } from './vdom.js';
 // A bordered surface. Variants add their own padding and inner layout.
 function panelTemplate(className, content, tag = 'section') {
@@ -77,10 +76,10 @@ function filterBarTemplate(controls, count = '') {
   </div>`;
 }
 // Filter controls are standalone page state, never form data, so they are
-// identified by a unique id rather than a submitted name. Ids are generated
-// once per control and passed in, so a re-render keeps them.
-function filterControlID(title) {
-  return uid(`filter-${controlSlug(title)}`);
+// identified by a unique id rather than a submitted name. `base` is the owning
+// component's useId, so a re-render keeps the id.
+function filterControlID(title, base) {
+  return `filter-${controlSlug(title)}-${base}`;
 }
 // Add-a-filter select: it adds one value and returns to its All entry.
 function filterSelectTemplate(title, entries, id, onChange) {

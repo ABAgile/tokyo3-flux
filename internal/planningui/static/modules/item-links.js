@@ -1,8 +1,7 @@
 // Adding and reconciling GitLab links on a work item.
-import { uid } from './dom.js';
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useRef, useState } from './vendor-preact.js';
+import { useId, useRef, useState } from './vendor-preact.js';
 import { state, useStore } from './state.js';
 import { workspaceSignal } from './workspace-session.js';
 import { gitLabWritable, usePermissions } from './permissions.js';
@@ -116,7 +115,7 @@ async function attachItemGitLabLink(item, link, origin) {
 // enclosing editor's current input, so a reopened card keeps it. Keyed by
 // workspace root, so a switch remounts it and aborts a pending resolve.
 function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }) {
-  const [inputID] = useState(() => uid('gitlab-mr-url'));
+  const inputID = `gitlab-mr-url-${useId()}`;
   const [status, setStatus] = useState({ text: '', error: false });
   const input = useRef(null);
   const writes = useMutation();

@@ -85,6 +85,7 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   html`${item.labels.map((name) => labelBadgeTemplate(lookups, name))}`;
   ```
 
+- Element ids a control needs without a form name come from `useId()` in the owning component, prefixed by purpose (`multi-select-${id}`), so the modal editor and the detail pane never collide and a re-render keeps them.
 - Native form drafts stay uncontrolled (`defaultValue`) unless the UI owns the changing value; widgets report committed changes with `useCommittedChange`.
 - Document and window listeners, timers, observers and focus lookups live in `modules/ui-hooks.js` effects (`useEventListener`, `useDismiss`, `useFocusRestore`, `focusKey`); every resource needs cleanup.
 - Focus moves are state, never scheduled callbacks.

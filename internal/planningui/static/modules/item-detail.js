@@ -1,10 +1,9 @@
 // The List detail pane for the selected work item.
 import { html } from './vdom.js';
-import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useId, useLayoutEffect, useRef } from './vendor-preact.js';
 import { requestKey } from './api.js';
 import { itemPayloadFromForm } from './item-command.js';
 import { state, setState, useStore } from './state.js';
-import { uid } from './dom.js';
 import { notice } from './notices.js';
 import { change } from './commands.js';
 import { reconcileItemLinks } from './item-links.js';
@@ -44,7 +43,7 @@ export function ItemDetailPane({ detail }) {
   const busy = useStore(selectBusy);
   const error = useStore(selectDetailError);
   const role = useStore(selectRole);
-  const [dueBadgeID] = useState(() => uid('item-title-overdue'));
+  const dueBadgeID = `item-title-overdue-${useId()}`;
   const item = detail.item;
   const readOnly = !role || role === 'viewer' || !!item.archived;
   useLayoutEffect(() => {

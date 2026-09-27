@@ -2,10 +2,8 @@
 // templates whose text parts Preact writes as text, never as markup, so item and
 // comment bodies cannot inject HTML. Link targets are filtered through
 // markdownURL.
-import { uid } from './dom.js';
-import { requestKey } from './api.js';
 import { html } from './vdom.js';
-import { useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
@@ -169,10 +167,10 @@ function markdownTable(header, alignments, rows) {
     </tbody>
   </table>`;
 }
-function markdownTask(checked, content) {
+function MarkdownTask({ checked, content }) {
   return html`<li class="markdown-task">
     <input
-      id=${uid('markdown-task')}
+      id=${`markdown-task-${useId()}`}
       type="checkbox"
       checked=${checked}
       disabled
@@ -273,7 +271,10 @@ function markdownTemplate(source) {
         const task = /^\[([ xX])\]\s+(.+)$/.exec(item[1]);
         items.push(
           task
-            ? markdownTask(task[1].toLowerCase() === 'x', markdownInline(task[2]))
+            ? html`<${MarkdownTask}
+                checked=${task[1].toLowerCase() === 'x'}
+                content=${markdownInline(task[2])}
+              />`
             : html`<li>${markdownInline(item[1])}</li>`,
         );
         index++;
@@ -381,7 +382,7 @@ function MarkdownEditor({
   previewByDefault = false,
   settings = {},
 }) {
-  const [inputID] = useState(() => `markdown-${requestKey()}`);
+  const inputID = `markdown-${useId()}`;
   const [previewing, setPreviewing] = useState(!!previewByDefault);
   const [previewSource, setPreviewSource] = useState(previewByDefault ? value : null);
   const ownInput = useRef();

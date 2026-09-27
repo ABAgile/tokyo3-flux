@@ -1,8 +1,6 @@
 // Multi-select fields, the label color picker and help popovers.
-import { uid } from './dom.js';
-import { requestKey } from './api.js';
 import { html } from './vdom.js';
-import { useLayoutEffect, useReducer, useRef, useState } from './vendor-preact.js';
+import { useId, useLayoutEffect, useReducer, useRef, useState } from './vendor-preact.js';
 import { useCommittedChange, useDismiss } from './ui-hooks.js';
 
 const LABEL_PALETTE = Object.freeze([
@@ -73,7 +71,7 @@ const LABEL_PALETTE = Object.freeze([
 ]);
 // A help popover toggles its tooltip and closes on Escape or an outside click.
 function HelpPopover({ text, name }) {
-  const [contentID] = useState(() => `help-${requestKey()}`);
+  const contentID = `help-${useId()}`;
   const [open, setOpen] = useState(false);
   const wrapper = useRef();
   const trigger = useRef();
@@ -157,8 +155,9 @@ export function MultiSelect({
   footer = null,
   filterMaxLength,
 }) {
-  const [menuID] = useState(() => `multi-select-${requestKey()}`);
-  const [filterID] = useState(() => uid('multi-select-filter'));
+  const id = useId();
+  const menuID = `multi-select-${id}`;
+  const filterID = `multi-select-filter-${id}`;
   const list = uniqueEntries(entries || []);
   const controlled = value !== undefined;
   const [local, dispatch] = useReducer(pickerReducer, undefined, () => ({

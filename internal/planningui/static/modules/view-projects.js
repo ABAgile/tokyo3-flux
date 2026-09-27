@@ -15,7 +15,7 @@ import {
   maintenanceRowTemplate,
 } from './layout.js';
 import { html, shallowEqual } from './vdom.js';
-import { useReducer, useState } from './vendor-preact.js';
+import { useId, useReducer } from './vendor-preact.js';
 
 import { setState, useStore } from './state.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -230,11 +230,12 @@ export function ProjectsPage() {
   const board = page.board;
   const approvedIDs = board.integration?.projects || [];
   // Filter controls keep one generated id each for the life of the page.
-  const [ids] = useState(() => ({
-    assignee: filterControlID('Assignee'),
-    label: filterControlID('Label'),
-    search: filterControlID('Search'),
-  }));
+  const idBase = useId();
+  const ids = {
+    assignee: filterControlID('Assignee', idBase),
+    label: filterControlID('Label', idBase),
+    search: filterControlID('Search', idBase),
+  };
   // Project names come from the connector's catalog: for approved projects in
   // the summary, and for every visible project while the form is open, which
   // reloads it.

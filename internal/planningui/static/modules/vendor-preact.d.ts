@@ -53,6 +53,7 @@ export function useLayoutEffect(effect: EffectCallback, inputs?: Inputs): void;
 export function useCallback<T extends Function>(callback: T, inputs: Inputs): T;
 export function useMemo<T>(factory: () => T, inputs: Inputs | undefined): T;
 export function useContext<T>(context: Context<T>): T;
+export function useId(): string;
 export function useErrorBoundary(
   callback?: (error: any, errorInfo: { componentStack?: string }) => Promise<void> | void,
 ): [any, () => void];

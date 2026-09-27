@@ -9,5 +9,6 @@ export {
   useReducer,
   useMemo,
   useErrorBoundary,
+  useId,
 } from 'preact/hooks';
 export { default as htm } from 'htm';

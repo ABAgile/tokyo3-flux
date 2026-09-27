@@ -1,11 +1,10 @@
 // The work-item editor fields, its modal dialog and the archive dialog.
-import { uid } from './dom.js';
 import { itemPayloadFromForm } from './item-command.js';
 import { labelForeground } from './format.js';
 import { markdownEditorTemplate } from './markdown.js';
 import { fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
 import { state, useStore } from './state.js';
 import { usePermissions, writable } from './permissions.js';
 import { itemProjectIDs, labelInfo, blocked } from './items.js';
@@ -55,7 +54,7 @@ const DATE_FIELDS = [
 // The date inputs are controlled by the field, and chips summarise them.
 // Committed changes are reported through `onChange`.
 function DatesField({ item, draft, readOnly, onChange }) {
-  const [inputsID] = useState(() => uid('item-dates'));
+  const inputsID = `item-dates-${useId()}`;
   const [editing, setEditing] = useState(false);
   const [values, setValues] = useState(() =>
     Object.fromEntries(
@@ -492,7 +491,7 @@ export function ItemFooterActions({ item, readOnly, mode }) {
 /** @param {Flux.DialogProps['item.edit']} props */
 export function ItemEditorDialog({ item, draft, readOnly }) {
   const existing = !!item.id;
-  const [dueBadgeID] = useState(() => uid('item-title-overdue'));
+  const dueBadgeID = `item-title-overdue-${useId()}`;
   const form = useRef(null);
   const desiredLinkIDs = useRef([]);
   const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
