@@ -40,7 +40,12 @@ function mergeEntities(previous = [], next = [], key) {
   });
   return changed ? merged : previous;
 }
-function mergeBoardData(previous, next) {
+/**
+ * @param {Flux.Board | undefined} previous
+ * @param {Flux.Board} next
+ * @returns {Flux.Board}
+ */
+export function mergeBoardData(previous, next) {
   if (!previous) return next;
   const list = (name) => (sameValue(previous[name], next[name]) ? previous[name] : next[name]);
   return {

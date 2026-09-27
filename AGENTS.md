@@ -166,6 +166,9 @@ Each file holds one feature, including its media queries; a feature's responsive
 - After editing Markdown, run `make fmt-md`.
 - Before handing off, run `make check-web test-web`.
 - Any Go change (for example `web.go`) needs `make check` with `FLUX_TEST_DATABASE_URL` set to a disposable database.
+- `tests/unit/*.test.mjs` run in Node with `node:test` as part of `make test-web`: store semantics, filter rules, optimistic placement and undo, board merging, URL restore, lookups and workspace cancellation.
+  Test pure logic there first; `tests/unit/dom.mjs` is just enough DOM for Preact to render hooks.
+  Keep such logic in functions that take the state they read, so it runs without a browser.
 - Browser scripts in `tests/*.browser.js` run through Playwright `run-code` against disposable, seeded workspaces only.
   `tests/style-snapshot.browser.js` returns a JSON style snapshot; save it outside the repository and diff two runs made on the same day.
   `tests/rendering.browser.js` checks store-driven identity and cross-column focus/disclosure preservation.

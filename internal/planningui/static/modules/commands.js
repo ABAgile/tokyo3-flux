@@ -66,8 +66,13 @@ export async function change(command, key = requestKey()) {
 // the exact previous placement rather than left silently applied.
 const OPTIMISTIC_KINDS = new Set(['item.move', 'item.rank', 'item.archive', 'item.restore']);
 // Returns the store patch for the optimistic placement, or undefined.
-function optimisticPatch(command) {
-  const board = state.board;
+/**
+ * @param {Readonly<Flux.State>} current
+ * @param {Flux.Command} command
+ * @returns {Partial<Flux.State> | undefined}
+ */
+export function optimisticPatch(current, command) {
+  const board = current.board;
   if (!board || !OPTIMISTIC_KINDS.has(command.kind)) return undefined;
   if (command.kind === 'item.archive') {
     if (!board.items.some((value) => value.id === command.target)) return undefined;
@@ -76,8 +81,8 @@ function optimisticPatch(command) {
     };
   }
   if (command.kind === 'item.restore') {
-    if (!state.archiveItems.some((value) => value.id === command.target)) return undefined;
-    return { archiveItems: state.archiveItems.filter((value) => value.id !== command.target) };
+    if (!current.archiveItems.some((value) => value.id === command.target)) return undefined;
+    return { archiveItems: current.archiveItems.filter((value) => value.id !== command.target) };
   }
   const index = board.items.findIndex((value) => value.id === command.target);
   if (index < 0) return undefined;
@@ -107,7 +112,7 @@ function optimisticPatch(command) {
 // Applies the optimistic patch and returns its rollback: the exact previous
 // values, restored only while the optimistic ones are still current.
 function optimisticApply(command) {
-  const patch = optimisticPatch(command);
+  const patch = optimisticPatch(state, command);
   if (!patch) return undefined;
   const previous = Object.fromEntries(Object.keys(patch).map((key) => [key, state[key]]));
   setState(patch);
@@ -115,17 +120,23 @@ function optimisticApply(command) {
     if (Object.entries(patch).every(([key, value]) => state[key] === value)) setState(previous);
   };
 }
-function itemTitle(id) {
-  return findItem(id, state)?.title || 'work item';
+function itemTitle(current, id) {
+  return findItem(id, current)?.title || 'work item';
 }
 // The inverse must be read before the command is applied, because a move undo
 // is expressed as the anchor the card currently sits in front of.
-function undoableInverse(command) {
+/**
+ * @param {Readonly<Flux.State>} current
+ * @param {Flux.Command} command
+ * @returns {{ text: string, commands: Flux.Command[] } | undefined}
+ */
+export function undoableInverse(current, command) {
+  const board = current.board;
   switch (command.kind) {
     case 'item.archive': {
-      const item = findItem(command.target, state);
+      const item = findItem(command.target, current);
       return {
-        text: `Archived “${itemTitle(command.target)}”`,
+        text: `Archived “${itemTitle(current, command.target)}”`,
         commands: [
           {
             kind: 'item.restore',
@@ -137,14 +148,14 @@ function undoableInverse(command) {
     }
     case 'item.restore':
       return {
-        text: `Restored “${itemTitle(command.target)}”`,
+        text: `Restored “${itemTitle(current, command.target)}”`,
         commands: [{ kind: 'item.archive', target: command.target }],
       };
     case 'item.move':
     case 'item.rank': {
-      const index = state.board.items.findIndex((value) => value.id === command.target);
+      const index = board.items.findIndex((value) => value.id === command.target);
       if (index < 0) return undefined;
-      const item = state.board.items[index];
+      const item = board.items[index];
       return {
         text: `Moved “${item.title}”`,
         commands: [
@@ -152,7 +163,7 @@ function undoableInverse(command) {
             kind: 'item.move',
             target: item.id,
             destination: item.column_id,
-            before: state.board.items[index + 1]?.id || '',
+            before: board.items[index + 1]?.id || '',
           },
         ],
       };
@@ -165,7 +176,7 @@ function undoableInverse(command) {
 export async function quick(command) {
   const full = { revision: state.board.workspace.revision, ...command };
   const allowed = writable();
-  const undo = allowed ? undoableInverse(full) : undefined;
+  const undo = allowed ? undoableInverse(state, full) : undefined;
   const rollback = allowed ? optimisticApply(full) : undefined;
   try {
     await change(full);

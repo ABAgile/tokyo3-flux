@@ -258,7 +258,11 @@ export function openProject(project) {
 export function viewSprintScope(sprint) {
   setState({ view: 'board', scope: sprint.id });
 }
-function toggled(set, id) {
+/**
+ * @param {Set<string>} set
+ * @param {string} id
+ */
+export function toggled(set, id) {
   const next = new Set(set);
   if (next.has(id)) next.delete(id);
   else next.add(id);
