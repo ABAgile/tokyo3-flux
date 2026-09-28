@@ -324,6 +324,63 @@ declare namespace Flux {
   }
   type DialogType = keyof DialogProps;
 
+  // ── Shared widget props ───────────────────────────────────────────────────
+  // HTM templates are not type-checked, so modules render these widgets with
+  // `h(Widget, props)` and the checker verifies each call against its props.
+  type SelectValue = string | number;
+  interface MultiSelectProps {
+    name: string;
+    title: string;
+    // [value, text] pairs; duplicate values keep their first entry.
+    entries: readonly (readonly SelectValue[])[] | undefined;
+    // Controlled selection; `defaultValue` seeds an uncontrolled one.
+    value?: readonly SelectValue[];
+    defaultValue?: readonly SelectValue[];
+    onChange?: (values: string[]) => void;
+    onQuery?: (query: string) => void;
+    onOpenChange?: (open: boolean, query: string) => void;
+    status?: string;
+    single?: boolean;
+    // The value that excludes every other choice, such as "No project".
+    emptyValue?: string;
+    disabled?: boolean;
+    decorate?: (
+      value: string,
+      text: string,
+    ) => { className?: string; style?: Record<string, string> } | undefined;
+    helpText?: string;
+    headingAction?: (actions: { select: (value: SelectValue) => boolean }) => unknown;
+    footer?: unknown;
+    filterMaxLength?: number;
+  }
+  interface FormDialogProps {
+    title: string;
+    titleExtra?: unknown;
+    titleBadge?: unknown;
+    saveText?: string;
+    readOnly?: boolean;
+    hideSave?: boolean;
+    className?: string;
+    footerAction?: unknown;
+    // A thrown error is shown on the form's error line; the input is kept.
+    onSubmit?: (data: FormData, form: HTMLFormElement) => unknown;
+    onInput?: (event: Event) => void;
+    formRef?: { current: HTMLFormElement | null };
+    children?: unknown;
+  }
+  interface CommandDialogProps extends Omit<FormDialogProps, 'onSubmit'> {
+    // Builds the command from the form; the dialog adds its opening revision.
+    command: (data: FormData) => Command;
+    afterSave?: (command: Command) => unknown;
+  }
+  interface CardProps {
+    item: Item;
+    context: RowContext;
+    isBlocked: boolean;
+    attachmentsOpen: boolean;
+    onAttachmentsToggle: (id: string, open: boolean) => void;
+  }
+
   // ── The store ─────────────────────────────────────────────────────────────
   interface State {
     boardETag: string;

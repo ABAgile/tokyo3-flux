@@ -16,7 +16,14 @@ export function shallowEqual(left, right) {
 // Core Preact has no memo. The class boundary skips a subtree whose props are
 // shallow-equal; the wrapped function component keeps its own hooks and still
 // updates from its store subscriptions.
+/**
+ * @template P
+ * @param {(props: P) => unknown} render
+ * @param {(left: P, right: P) => boolean} [equal]
+ * @returns {import('./vendor-preact.js').ComponentType<P>}
+ */
 export function memo(render, equal = shallowEqual) {
+  /** @extends {Component<P>} */
   class Memo extends Component {
     shouldComponentUpdate(next) {
       return !equal(this.props, next);

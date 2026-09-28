@@ -1,6 +1,6 @@
 // Card lists outside the board columns: the Archive view and its paging.
 import { emptyStateTemplate } from './layout.js';
-import { Fragment, useRef } from './vendor-preact.js';
+import { Fragment, useRef, h } from './vendor-preact.js';
 import { html } from './vdom.js';
 
 import { useStore } from './state.js';
@@ -33,15 +33,15 @@ export function CardListContent({ items, view, archiveMore, disabled }) {
       : 'No matching work.';
   return html`<${Fragment}>
     <div class="list" data-content-view=${`list:${view}`} ref=${root} ...${focus}>
-      ${items.map(
-        (item) => html`<${Card}
-          key=${item.id}
-          item=${item}
-          context=${context}
-          isBlocked=${blockedIDs.has(item.id)}
-          attachmentsOpen=${expanded.has(item.id)}
-          onAttachmentsToggle=${toggle}
-        />`,
+      ${items.map((item) =>
+        h(Card, {
+          key: item.id,
+          item,
+          context,
+          isBlocked: blockedIDs.has(item.id),
+          attachmentsOpen: expanded.has(item.id),
+          onAttachmentsToggle: toggle,
+        }),
       )}
       ${items.length ? null : emptyStateTemplate(empty)}
     </div>

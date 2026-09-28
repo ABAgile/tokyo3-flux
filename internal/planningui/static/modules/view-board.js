@@ -8,7 +8,7 @@ import {
 } from './layout.js';
 import { classNames } from './dom.js';
 import { html, memo } from './vdom.js';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from './vendor-preact.js';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, h } from './vendor-preact.js';
 
 import { state, useStore, requireBoard } from './state.js';
 import { usePermissions, accessButtonTemplate } from './permissions.js';
@@ -277,10 +277,7 @@ function CardAttachments({ root, item, total, list, open, onToggle }) {
     </div>
   </details>`;
 }
-/**
- * @param {{ item: Flux.Item, context: Flux.RowContext, isBlocked: boolean,
- *   attachmentsOpen: boolean, onAttachmentsToggle: (id: string, open: boolean) => void }} props
- */
+/** @param {Flux.CardProps} props */
 function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsToggle }) {
   const { lookups, now, canWrite, writeDisabled, sprintName } = context;
   const list = useAttachmentList(item.id);
@@ -396,15 +393,15 @@ function Column({ column, peers, total, context, blockedIDs, expanded, onAttachm
       <h3>${column.name}</h3>
       <small>${`${peers.length} shown · ${columnWIPLabel(column, total)}`}</small>
     </div>
-    ${peers.map(
-      (item) => html`<${Card}
-        key=${item.id}
-        item=${item}
-        context=${context}
-        isBlocked=${blockedIDs.has(item.id)}
-        attachmentsOpen=${expanded.has(item.id)}
-        onAttachmentsToggle=${onAttachmentsToggle}
-      />`,
+    ${peers.map((item) =>
+      h(Card, {
+        key: item.id,
+        item,
+        context,
+        isBlocked: blockedIDs.has(item.id),
+        attachmentsOpen: expanded.has(item.id),
+        onAttachmentsToggle,
+      }),
     )}
     ${peers.length ? null : emptyStateTemplate('No work here')}
   </section>`;
@@ -439,58 +436,66 @@ export function ColumnDialog({ column }) {
   const existing = !!column;
   /** @type {Partial<Flux.Column>} */
   const value = column || { name: '', category: 'todo', wip: 0 };
-  return html`<${CommandDialog}
-    title=${existing ? 'Edit board column' : 'Add board column'}
-    command=${(data) => ({
-      kind: 'column.save',
-      target: value.id || '',
-      column: {
-        ...value,
-        name: data.get('name').trim(),
-        category: data.get('category'),
-        wip: Number(data.get('wip')),
-      },
-    })}
-  >
-    ${fieldTemplate('name', 'Column name', value.name, 'text', undefined, {
-      required: true,
-      maxLength: 80,
-    })}
-    ${fieldTemplate('category', 'Lifecycle category', value.category, 'text', [
-      ['todo', 'To do'],
-      ['doing', 'In progress'],
-      ['done', 'Done'],
-    ])}
-    ${fieldTemplate(
-      'wip',
-      'WIP limit · 0 means unlimited',
-      String(value.wip),
-      'number',
-      undefined,
-      {
-        min: 0,
-        max: 1000,
+  return h(
+    CommandDialog,
+    {
+      title: existing ? 'Edit board column' : 'Add board column',
+      command: (data) => ({
+        kind: 'column.save',
+        target: value.id || '',
+        column: {
+          ...value,
+          name: String(data.get('name') || '').trim(),
+          category: String(data.get('category') || ''),
+          wip: Number(data.get('wip')),
+        },
+      }),
+    },
+    html`
+      ${fieldTemplate('name', 'Column name', value.name, 'text', undefined, {
         required: true,
-      },
-    )}
-    ${helpTextTemplate(
-      'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.',
-    )}
-  </${CommandDialog}>`;
+        maxLength: 80,
+      })}
+      ${fieldTemplate('category', 'Lifecycle category', value.category, 'text', [
+        ['todo', 'To do'],
+        ['doing', 'In progress'],
+        ['done', 'Done'],
+      ])}
+      ${fieldTemplate(
+        'wip',
+        'WIP limit · 0 means unlimited',
+        String(value.wip),
+        'number',
+        undefined,
+        {
+          min: 0,
+          max: 1000,
+          required: true,
+        },
+      )}
+      ${helpTextTemplate(
+        'WIP counts all non-archived cards in this column, across sprints and backlog. A limit cannot be lowered below current occupancy.',
+      )}
+    `,
+  );
 }
 /** @param {Flux.DialogProps['column.remove']} props */
 export function RemoveColumnDialog({ column, destinations }) {
-  return html`<${CommandDialog}
-    title="Remove column & move cards"
-    command=${(data) => ({
-      kind: 'column.delete',
-      target: column.id,
-      destination: data.get('destination'),
-    })}
-  >
-    <p>${`All cards in ${column.name}, including archived ones, must move to another column.`}</p>
-    ${fieldTemplate('destination', 'Destination column', '', 'text', destinations)}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Remove column & move cards',
+      command: (data) => ({
+        kind: 'column.delete',
+        target: column.id,
+        destination: String(data.get('destination') || ''),
+      }),
+    },
+    html`
+      <p>${`All cards in ${column.name}, including archived ones, must move to another column.`}</p>
+      ${fieldTemplate('destination', 'Destination column', '', 'text', destinations)}
+    `,
+  );
 }
 async function moveColumnLeft(columns, column, index) {
   await quick({ kind: 'column.rank', target: column.id, before: columns[index - 1].id });
@@ -501,7 +506,10 @@ async function moveColumnLeft(columns, column, index) {
 /** @param {Flux.DialogProps['board.setup']} props */
 export function BoardSetupDialog({ columns }) {
   const action = (text, fn) => accessButtonTemplate(text, fn, { tracked: false });
-  return html`<${FormDialog} title="Board setup" readOnly=${true}>
+  return h(
+    FormDialog,
+    { title: 'Board setup', readOnly: true },
+    html`
     ${helpTextTemplate(
       'Configure columns, lifecycle categories, ordering, and WIP policy. All changes are revision checked.',
     )}
@@ -529,7 +537,8 @@ export function BoardSetupDialog({ columns }) {
       className: 'primary',
       tracked: false,
     })}
-  </${FormDialog}>`;
+  `,
+  );
 }
 export function setupBoard() {
   if (!state.board) return;

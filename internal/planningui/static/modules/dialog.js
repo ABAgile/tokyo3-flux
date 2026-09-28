@@ -1,7 +1,14 @@
 // The editor dialog: a native modal whose content is the dialog component the
 // App's dialog map names, and the shared form layout every dialog uses.
 import { html } from './vdom.js';
-import { createContext, useContext, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import {
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useRef,
+  useState,
+  h,
+} from './vendor-preact.js';
 import { requestKey } from './api.js';
 import { setState, state, useStore } from './state.js';
 import { focusKey } from './ui-hooks.js';
@@ -130,6 +137,7 @@ function selectEditorError(current) {
 }
 // The one dialog layout. `onSubmit(data, form)` receives the native form data;
 // a thrown error is shown on the form's error line and the input is retained.
+/** @param {Flux.FormDialogProps} props */
 export function FormDialog({
   title,
   titleExtra = null,
@@ -197,6 +205,7 @@ export function FormDialog({
 // A dialog that saves one revision-checked planning command. `command(data)`
 // builds it from the form; the dialog's opening revision is presented, and a
 // retried save of the same command reuses its idempotency key.
+/** @param {Flux.CommandDialogProps} props */
 export function CommandDialog({ command, afterSave, ...props }) {
   const dialog = useDialog();
   /** @type {{ current: { serialized: string | undefined, key: string | undefined } }} */
@@ -216,5 +225,5 @@ export function CommandDialog({ command, afterSave, ...props }) {
       );
     }
   }
-  return html`<${FormDialog} ...${props} onSubmit=${onSubmit} />`;
+  return h(FormDialog, { ...props, onSubmit });
 }

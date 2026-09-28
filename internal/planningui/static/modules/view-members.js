@@ -8,7 +8,7 @@ import {
   maintenanceRowTemplate,
 } from './layout.js';
 import { html } from './vdom.js';
-import { useRef, useState } from './vendor-preact.js';
+import { useRef, useState, h } from './vendor-preact.js';
 
 import { useStore, requireBoard, requireRoot } from './state.js';
 import { adminIconTemplate, adminWritable, accessButtonTemplate } from './permissions.js';
@@ -50,25 +50,33 @@ function memberIdentityTemplate(member, session) {
 }
 /** @param {Flux.DialogProps['member.edit']} props */
 export function MemberDialog({ member }) {
-  return html`<${CommandDialog}
-    title="Edit workspace member"
-    saveText="Save member"
-    command=${(data) => ({
-      kind: 'member.save',
-      target: member.subject,
-      member: { subject: member.subject, name: data.get('name').trim(), role: data.get('role') },
-    })}
-  >
-    ${fieldTemplate('subject', 'GitLab subject', member.subject, 'text', undefined, {
-      readOnly: true,
-    })}
-    ${fieldTemplate('name', 'Workspace name', member.name || '', 'text', undefined, {
-      maxLength: 120,
-      placeholder: 'Optional admin-maintained name',
-    })}
-    ${fieldTemplate('role', 'Workspace role', member.role, 'text', MEMBER_ROLE_ENTRIES)}
-    ${helpTextTemplate('Leave the workspace name blank to use the available GitLab profile name.')}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Edit workspace member',
+      saveText: 'Save member',
+      command: (data) => ({
+        kind: 'member.save',
+        target: member.subject,
+        member: {
+          subject: member.subject,
+          name: String(data.get('name') || '').trim(),
+          role: String(data.get('role') || ''),
+        },
+      }),
+    },
+    html`
+      ${fieldTemplate('subject', 'GitLab subject', member.subject, 'text', undefined, {
+        readOnly: true,
+      })}
+      ${fieldTemplate('name', 'Workspace name', member.name || '', 'text', undefined, {
+        maxLength: 120,
+        placeholder: 'Optional admin-maintained name',
+      })}
+      ${fieldTemplate('role', 'Workspace role', member.role, 'text', MEMBER_ROLE_ENTRIES)}
+      ${helpTextTemplate('Leave the workspace name blank to use the available GitLab profile name.')}
+    `,
+  );
 }
 function editMember(member) {
   if (adminWritable()) openDialog('member.edit', { member });
@@ -79,21 +87,25 @@ function selectSession(current) {
 /** @param {Flux.DialogProps['member.remove']} props */
 export function RemoveMemberDialog({ member, assigned }) {
   const session = useStore(selectSession);
-  return html`<${CommandDialog}
-    title="Remove workspace member"
-    saveText="Remove member"
-    command=${() => ({ kind: 'member.delete', target: member.subject })}
-  >
-    ${memberIdentityTemplate(member, session)}
-    <p>${`Remove ${memberListingInfo(member, session).name} from this workspace? Workspace history is retained.`}</p>
-    ${
-      assigned
-        ? helpTextTemplate(
-            `This member is assigned to ${assigned} card${assigned === 1 ? '' : 's'}. Reassign those cards before removing the member.`,
-          )
-        : null
-    }
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Remove workspace member',
+      saveText: 'Remove member',
+      command: () => ({ kind: 'member.delete', target: member.subject }),
+    },
+    html`
+      ${memberIdentityTemplate(member, session)}
+      <p>${`Remove ${memberListingInfo(member, session).name} from this workspace? Workspace history is retained.`}</p>
+      ${
+        assigned
+          ? helpTextTemplate(
+              `This member is assigned to ${assigned} card${assigned === 1 ? '' : 's'}. Reassign those cards before removing the member.`,
+            )
+          : null
+      }
+    `,
+  );
 }
 function removeMember(member) {
   if (!adminWritable()) return;
@@ -107,7 +119,7 @@ function removeMember(member) {
 export function AddMemberDialog({ root, connector }) {
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState([]);
+  const [selected, setSelected] = useState(/** @type {string[]} */ ([]));
   const [name, setName] = useState('');
   const nameEdited = useRef(false);
   const users = useRef(new Map());
@@ -129,76 +141,81 @@ export function AddMemberDialog({ root, connector }) {
         ? 'No available GitLab users match this search.'
         : '';
   const subject = selected[0] || '';
-  return html`<${CommandDialog}
-    title="Add workspace member"
-    saveText="Add member"
-    command=${(data) => {
-      const value = String(data.get('gitlab_user') || '').trim();
-      if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
-        throw new Error('Select an available GitLab user.');
-      return {
-        kind: 'member.save',
-        member: {
-          subject: value,
-          role: data.get('role'),
-          name: String(data.get('name') || '').trim(),
+  return h(
+    CommandDialog,
+    {
+      title: 'Add workspace member',
+      saveText: 'Add member',
+      command: (data) => {
+        const value = String(data.get('gitlab_user') || '').trim();
+        if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
+          throw new Error('Select an available GitLab user.');
+        return {
+          kind: 'member.save',
+          member: {
+            subject: value,
+            role: String(data.get('role') || ''),
+            name: String(data.get('name') || '').trim(),
+          },
+        };
+      },
+    },
+    html`
+      ${helpTextTemplate(
+        'Search active users from the configured GitLab instance. Adding a user grants access to this workspace only; it does not change GitLab permissions.',
+      )}
+      ${h(MultiSelect, {
+        name: 'gitlab_user',
+        title: 'GitLab user',
+        entries,
+        value: selected,
+        status,
+        single: true,
+        helpText:
+          'Only users returned by the configured server-side GitLab connector can be added. Existing workspace members are omitted.',
+        onQuery: setQuery,
+        onOpenChange: (next) => {
+          if (next) setOpened(true);
         },
-      };
-    }}
-  >
-    ${helpTextTemplate(
-      'Search active users from the configured GitLab instance. Adding a user grants access to this workspace only; it does not change GitLab permissions.',
-    )}
-    <${MultiSelect}
-      name="gitlab_user"
-      title="GitLab user"
-      entries=${entries}
-      value=${selected}
-      status=${status}
-      single=${true}
-      helpText="Only users returned by the configured server-side GitLab connector can be added. Existing workspace members are omitted."
-      onQuery=${setQuery}
-      onOpenChange=${(next) => {
-        if (next) setOpened(true);
-      }}
-      onChange=${(values) => {
-        setSelected(values);
-        if (!nameEdited.current) setName(users.current.get(String(values[0] || ''))?.name || '');
-      }}
-    />
-    <label
-      >GitLab subject<input
-        name="subject"
-        type="text"
-        autocomplete="off"
-        required
-        readonly
-        aria-readonly="true"
-        placeholder="Select a GitLab user"
-        value=${subject}
-    /></label>
-    <label
-      >Workspace name<input
-        name="name"
-        type="text"
-        autocomplete="off"
-        maxlength="120"
-        placeholder="Defaults to the GitLab profile name"
-        value=${name}
-        onInput=${(event) => {
-          nameEdited.current = true;
-          setName(event.currentTarget.value);
-        }}
-    /></label>
-    ${fieldTemplate('role', 'Workspace role', 'member', 'text', MEMBER_ROLE_ENTRIES)}
-    ${
-      connector
-        ? null
-        : helpTextTemplate(
-            'A GitLab read connector is not configured. Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN.',
-          )
-    }
-  </${CommandDialog}>`;
+        onChange: (values) => {
+          setSelected(values);
+          if (!nameEdited.current) setName(users.current.get(String(values[0] || ''))?.name || '');
+        },
+      })}
+      <label
+        >GitLab subject<input
+          name="subject"
+          type="text"
+          autocomplete="off"
+          required
+          readonly
+          aria-readonly="true"
+          placeholder="Select a GitLab user"
+          value=${subject}
+      /></label>
+      <label
+        >Workspace name<input
+          name="name"
+          type="text"
+          autocomplete="off"
+          maxlength="120"
+          placeholder="Defaults to the GitLab profile name"
+          value=${name}
+          onInput=${(event) => {
+            nameEdited.current = true;
+            setName(event.currentTarget.value);
+          }}
+      /></label>
+      ${fieldTemplate('role', 'Workspace role', 'member', 'text', MEMBER_ROLE_ENTRIES)}
+      ${
+        connector
+          ? null
+          : helpTextTemplate(
+              'A GitLab read connector is not configured. Ask the operator to set FLUX_GITLAB_URL and FLUX_GITLAB_SERVICE_TOKEN.',
+            )
+      }
+    `,
+  );
 }
 function addMember() {
   if (!adminWritable()) return;

@@ -4,7 +4,7 @@ import { labelForeground } from './format.js';
 import { markdownEditorTemplate } from './markdown.js';
 import { fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useEffect, useId, useLayoutEffect, useRef, useState, h } from './vendor-preact.js';
 import { state, useStore, requireBoard } from './state.js';
 import { usePermissions, writable } from './permissions.js';
 import { itemProjectIDs, labelInfo, blocked } from './items.js';
@@ -345,77 +345,84 @@ export function ItemEditorFields({
         ${item.id ? itemCommentsTemplate(item, onChange) : null}
       </div>
       <div class="item-editor-controls">
-        <${MultiSelect}
-          name="assignee"
-          title="Assignee"
-          entries=${[['', 'Unassigned'], ...board.members.map((m) => [m.subject, memberName(lookups, m.subject)])]}
-          defaultValue=${[draft?.assignee ?? item.assignee]}
-          single=${true}
-          disabled=${readOnly}
-          headingAction=${assignMe}
-          onChange=${onChange}
-        />
-        <${MultiSelect}
-          name="labels"
-          title="Labels"
-          entries=${board.labels.map((label) => [label.name, label.name])}
-          defaultValue=${draft?.labels ?? item.labels}
-          decorate=${labelChip}
-          helpText="Use Edit to add labels and × to remove them. Manage available labels from the Labels view."
-          disabled=${readOnly}
-          onChange=${onChange}
-        />
-        <${MultiSelect}
-          name="project_id"
-          title="Project"
-          entries=${[['', 'No project'], ...board.projects.map((p) => [p.id, p.name])]}
-          defaultValue=${selectedProjects.length ? selectedProjects : ['']}
-          helpText="Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified."
-          emptyValue=""
-          disabled=${readOnly}
-          onChange=${onChange}
-        />
+        ${h(MultiSelect, {
+          name: 'assignee',
+          title: 'Assignee',
+          entries: [
+            ['', 'Unassigned'],
+            ...board.members.map((m) => [m.subject, memberName(lookups, m.subject)]),
+          ],
+          defaultValue: [draft?.assignee ?? item.assignee],
+          single: true,
+          disabled: readOnly,
+          headingAction: assignMe,
+          onChange,
+        })}
+        ${h(MultiSelect, {
+          name: 'labels',
+          title: 'Labels',
+          entries: board.labels.map((label) => [label.name, label.name]),
+          defaultValue: draft?.labels ?? item.labels,
+          decorate: labelChip,
+          helpText:
+            'Use Edit to add labels and × to remove them. Manage available labels from the Labels view.',
+          disabled: readOnly,
+          onChange,
+        })}
+        ${h(MultiSelect, {
+          name: 'project_id',
+          title: 'Project',
+          entries: [['', 'No project'], ...board.projects.map((p) => [p.id, p.name])],
+          defaultValue: selectedProjects.length ? selectedProjects : [''],
+          helpText:
+            'Choose one or more projects to classify this work item. Leave No project selected to keep it unclassified.',
+          emptyValue: '',
+          disabled: readOnly,
+          onChange,
+        })}
         <${DatesField} item=${item} draft=${draft} readOnly=${readOnly} onChange=${onChange} />
-        <${MultiSelect}
-          name="sprint_ids"
-          title="Open sprints"
-          entries=${board.sprints.filter((s) => s.state !== 'closed').map((s) => [s.id, `${s.name} (${s.state})`])}
-          defaultValue=${draft?.sprint_ids ?? item.sprint_ids}
-          helpText="Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards."
-          disabled=${readOnly}
-          onChange=${onChange}
-        />
+        ${h(MultiSelect, {
+          name: 'sprint_ids',
+          title: 'Open sprints',
+          entries: board.sprints
+            .filter((s) => s.state !== 'closed')
+            .map((s) => [s.id, `${s.name} (${s.state})`]),
+          defaultValue: draft?.sprint_ids ?? item.sprint_ids,
+          helpText:
+            'Select no open sprint to keep unfinished work in the backlog. One item may span several sprints without creating duplicate cards.',
+          disabled: readOnly,
+          onChange,
+        })}
         ${closed.length ? helpTextTemplate(`Closed sprint history (read-only): ${closed.join(', ')}`) : null}
-        <${MultiSelect}
-          name="dependencies"
-          title="Depends on"
-          entries=${board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title])}
-          defaultValue=${draft?.dependencies ?? item.dependencies}
-          disabled=${readOnly}
-          onChange=${onChange}
-        />
+        ${h(MultiSelect, {
+          name: 'dependencies',
+          title: 'Depends on',
+          entries: board.items.filter((i) => i.id !== item.id).map((i) => [i.id, i.title]),
+          defaultValue: draft?.dependencies ?? item.dependencies,
+          disabled: readOnly,
+          onChange,
+        })}
         ${
           item.id
-            ? html`<${MultiSelect}
-                name="link_ids"
-                title="GitLab links"
-                entries=${board.links.map((link) => [link.id, linkDisplayName(link)])}
-                defaultValue=${draft?.link_ids ?? itemLinks.map((link) => link.id)}
-                helpText="Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed."
-                footer=${
-                  readOnly
-                    ? null
-                    : html`<${GitLabPaste}
+            ? html`${h(MultiSelect, {
+                name: 'link_ids',
+                title: 'GitLab links',
+                entries: board.links.map((link) => [link.id, linkDisplayName(link)]),
+                defaultValue: draft?.link_ids ?? itemLinks.map((link) => link.id),
+                helpText:
+                  'Select registered merge requests to associate with this card. Paste a new MR URL below or use Add link when it is not listed.',
+                footer: readOnly
+                  ? null
+                  : html`<${GitLabPaste}
                         item=${item}
                         readOnly=${readOnly}
                         mode=${mode}
                         getDraft=${getDraft}
                         originFocusKey=${originFocusKey}
-                      />`
-                }
-                disabled=${readOnly}
-                onChange=${onChange}
-              />${linkActions}`
+                      />`,
+                disabled: readOnly,
+                onChange,
+              })}${linkActions}`
             : null
         }
         <hr class="item-editor-divider" />
@@ -494,52 +501,64 @@ export function ItemEditorDialog({ item, draft, readOnly }) {
   const existing = !!item.id;
   const dueBadgeID = `item-title-overdue-${useId()}`;
   const form = useRef(null);
-  const desiredLinkIDs = useRef([]);
+  const desiredLinkIDs = useRef(/** @type {FormDataEntryValue[]} */ ([]));
   const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
-  return html`<${CommandDialog}
-    title=${existing ? 'Work item' : 'Create work item'}
-    className="item-editor-form"
-    formRef=${form}
-    readOnly=${readOnly}
-    titleExtra=${existing ? itemEditorTitleExtrasTemplate(item) : null}
-    titleBadge=${html`<${EditorDueBadge} item=${item} id=${dueBadgeID} />`}
-    footerAction=${html`<${ItemFooterActions} item=${item} readOnly=${readOnly} mode="modal" />`}
-    command=${(data) => {
-      if (existing) desiredLinkIDs.current = data.getAll('link_ids');
-      return {
-        kind: existing ? 'item.update' : 'item.create',
-        target: item.id || '',
-        item: itemPayloadFromForm(data, item),
-      };
-    }}
-    afterSave=${existing ? () => reconcileItemLinks(item.id, desiredLinkIDs.current) : undefined}
-  ><${ItemEditorFields}
+  return h(
+    CommandDialog,
+    {
+      title: existing ? 'Work item' : 'Create work item',
+      className: 'item-editor-form',
+      formRef: form,
+      readOnly,
+      titleExtra: existing ? itemEditorTitleExtrasTemplate(item) : null,
+      titleBadge: html`<${EditorDueBadge} item=${item} id=${dueBadgeID} />`,
+      footerAction: html`<${ItemFooterActions} item=${item} readOnly=${readOnly} mode="modal" />`,
+      command: (data) => {
+        if (existing) desiredLinkIDs.current = data.getAll('link_ids');
+        return {
+          kind: existing ? 'item.update' : 'item.create',
+          target: item.id || '',
+          item: itemPayloadFromForm(data, item),
+        };
+      },
+      afterSave: existing ? () => reconcileItemLinks(item.id, desiredLinkIDs.current) : undefined,
+    },
+    html`<${ItemEditorFields}
     item=${item}
     draft=${draft}
     readOnly=${readOnly}
     mode="modal"
     dueBadgeID=${dueBadgeID}
     getDraft=${getDraft}
-  /></${CommandDialog}>`;
+  />`,
+  );
 }
 /** @param {Flux.DialogProps['item.archive']} props */
 export function ArchiveItemDialog({ item, mode }) {
-  return html`<${CommandDialog}
-    title="Archive work item"
-    saveText="Archive item"
-    command=${(data) => ({ kind: 'item.archive', target: item.id, reason: data.get('reason') })}
-    afterSave=${() => {
-      offerUndo(`Archived “${item.title}” · undo is available for ${UNDO_TTL / 1000} seconds`, {
-        kind: 'item.restore',
+  return h(
+    CommandDialog,
+    {
+      title: 'Archive work item',
+      saveText: 'Archive item',
+      command: (data) => ({
+        kind: 'item.archive',
         target: item.id,
-        restore_sprint_ids: [...(item.sprint_ids || [])],
-      });
-      if (mode === 'detail') closeDetail({ force: true, focus: true });
-    }}
-  >
-    <p>${`Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`}</p>
-    ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
-      maxLength: 4000,
-    })}
-  </${CommandDialog}>`;
+        reason: String(data.get('reason') || ''),
+      }),
+      afterSave: () => {
+        offerUndo(`Archived “${item.title}” · undo is available for ${UNDO_TTL / 1000} seconds`, {
+          kind: 'item.restore',
+          target: item.id,
+          restore_sprint_ids: [...(item.sprint_ids || [])],
+        });
+        if (mode === 'detail') closeDetail({ force: true, focus: true });
+      },
+    },
+    html`
+      <p>${`Archive “${item.title}” and remove it from all open sprints? History is retained and the item can be restored. Unsaved editor changes will not be applied.`}</p>
+      ${fieldTemplate('reason', 'Archive rationale (optional)', '', 'textarea', undefined, {
+        maxLength: 4000,
+      })}
+    `,
+  );
 }

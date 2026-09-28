@@ -136,6 +136,7 @@ function pickerReducer(current, action) {
 // hear the typed filter through `onQuery(query)` and the menu state through
 // `onOpenChange(open, query)`. `headingAction({ select })` renders beside the
 // title; `footer` renders below the picker.
+/** @param {Flux.MultiSelectProps} props */
 export function MultiSelect({
   name,
   title,

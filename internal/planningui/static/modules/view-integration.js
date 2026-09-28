@@ -1,7 +1,7 @@
 // The GitLab integration form on the Projects page.
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useRef } from './vendor-preact.js';
+import { useEffect, useRef, h } from './vendor-preact.js';
 import { setState, state, useStore, requireBoard } from './state.js';
 import { notice } from './notices.js';
 import { MultiSelect } from './multi-select.js';
@@ -90,15 +90,16 @@ export function IntegrationForm({ board, catalog, loading, error, onRetry }) {
   >
     ${helpTextTemplate(`Operator-configured instance: ${board.connector_instance || 'Not configured'}`)}
     ${helpTextTemplate(`Existing approval: ${board.integration.instance || 'None'}`)}
-    <${MultiSelect}
-      name="projects"
-      title="Approved GitLab projects"
-      entries=${integrationProjectEntries(catalog, selected)}
-      defaultValue=${selected}
-      helpText="Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader."
-      disabled=${disabled}
-      onChange=${(values) => setState({ integrationDraft: values })}
-    />
+    ${h(MultiSelect, {
+      name: 'projects',
+      title: 'Approved GitLab projects',
+      entries: integrationProjectEntries(catalog, selected),
+      defaultValue: selected,
+      helpText:
+        'Choose projects visible to the configured server-side read connector. The selected projects and their engineering metadata are shared with every workspace reader.',
+      disabled,
+      onChange: (values) => setState({ integrationDraft: values }),
+    })}
     ${loading ? helpTextTemplate('Loading available GitLab projects…') : null}
     ${catalogNote}
     ${helpTextTemplate(

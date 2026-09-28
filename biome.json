@@ -10,7 +10,8 @@
     "./tools/lint/no-store-import-alias.grit",
     "./tools/lint/no-store-writes.grit",
     "./tools/lint/pure-board-helpers.grit",
-    "./tools/lint/pure-templates.grit"
+    "./tools/lint/pure-templates.grit",
+    "./tools/lint/typed-widgets.grit"
   ],
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {

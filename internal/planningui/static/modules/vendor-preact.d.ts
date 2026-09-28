@@ -5,7 +5,22 @@ export type VNode = { type: unknown; props: Record<string, unknown>; key?: unkno
 export type ComponentChildren = unknown;
 export type Ref<T> = { current: T };
 
-export function h(type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]): VNode;
+// `key` is accepted by every element but is not a component prop.
+export type Attributes = { key?: unknown };
+export type FunctionComponent<P> = (props: P) => ComponentChildren;
+export type ComponentType<P> = FunctionComponent<P> | (new (props: P) => Component<P, any>);
+// A component's props are checked against its declared props, as in preact's
+// own typings; HTM templates are not, so shared widgets are called through `h`.
+export function h(
+  type: string,
+  props?: Record<string, unknown> | null,
+  ...children: ComponentChildren[]
+): VNode;
+export function h<P>(
+  type: ComponentType<P>,
+  props: (Attributes & P) | null,
+  ...children: ComponentChildren[]
+): VNode;
 export const Fragment: (props: { children?: ComponentChildren }) => ComponentChildren;
 export class Component<P = Record<string, unknown>, S = Record<string, unknown>> {
   constructor(props?: P);

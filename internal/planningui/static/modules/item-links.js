@@ -1,7 +1,7 @@
 // Adding and reconciling GitLab links on a work item.
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useId, useRef, useState } from './vendor-preact.js';
+import { useId, useRef, useState, h } from './vendor-preact.js';
 import { state, useStore, requireBoard, requireRoot } from './state.js';
 import { workspaceSignal } from './workspace-session.js';
 import { gitLabWritable, usePermissions } from './permissions.js';
@@ -218,122 +218,128 @@ function GitLabLinkPicker({ root, project, scope, value, onChange }) {
             ? ''
             : 'No matching merge requests.'
           : 'Open the merge-request picker to load results.';
-  return html`<${MultiSelect}
-    name="merge_request"
-    title="Merge request"
-    entries=${mergeRequestEntries(result.data || [], value)}
-    value=${value}
-    status=${status}
-    single=${true}
-    filterMaxLength=${120}
-    helpText="After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID."
-    onChange=${onChange}
-    onQuery=${setQuery}
-    onOpenChange=${(next) => {
+  return h(MultiSelect, {
+    name: 'merge_request',
+    title: 'Merge request',
+    entries: mergeRequestEntries(result.data || [], value),
+    value,
+    status,
+    single: true,
+    filterMaxLength: 120,
+    helpText:
+      'After trying a quick scope, search by title or IID. Results are ordered by GitLab update time; selecting one stores only its project-scoped IID.',
+    onChange,
+    onQuery: setQuery,
+    onOpenChange: (next) => {
       if (next) setOpened(true);
-    }}
-  />`;
+    },
+  });
 }
 /** @param {Flux.DialogProps['link.add']} props */
 export function AddLinkDialog({ item, root }) {
   const catalog = useRequest((signal) => loadGitLabProjects(root, signal), [root]);
   const [project, setProject] = useState('');
   const [scope, setScope] = useState('recent');
-  const [mergeRequest, setMergeRequest] = useState([]);
+  const [mergeRequest, setMergeRequest] = useState(/** @type {string[]} */ ([]));
   const [manualIID, setManualIID] = useState('');
   const projects = catalog.data || [];
   const catalogError = catalog.error?.message || '';
-  return html`<${CommandDialog}
-    title="Add link"
-    titleExtra=${html` ${helpPopoverTemplate(
-      'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
-      'GitLab links',
-    )}`}
-    command=${(data) => {
-      const rawProject = String(data.get('project') || '');
-      const selectedMR = String(data.get('merge_request') || '');
-      const manual = String(data.get('manual_mr_iid') || '');
-      const rawNumber = selectedMR || manual;
-      if (!/^[1-9][0-9]*$/.test(rawProject) || !Number.isSafeInteger(Number(rawProject)))
-        throw new Error('Choose an approved GitLab project.');
-      if (selectedMR && manual)
-        throw new Error('Select a merge request or enter its IID manually, not both.');
-      if (!/^[1-9][0-9]*$/.test(rawNumber) || !Number.isSafeInteger(Number(rawNumber)))
-        throw new Error('Select a merge request or enter a positive MR IID.');
-      return {
-        kind: 'link.attach',
-        target: item.id,
-        link: { project: Number(rawProject), kind: 'mr', number: Number(rawNumber) },
-      };
-    }}
-  >
-    ${
-      catalogError
-        ? errorLineTemplate(
-            `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
-          )
-        : null
-    }
-    <${MultiSelect}
-      name="project"
-      title="Approved GitLab project"
-      entries=${approvedGitLabProjectEntries(projects)}
-      single=${true}
-      helpText="Choose one approved project. The project list is provided by the configured GitLab connector and is searchable."
-      onChange=${(values) => {
-        setProject(values[0] || '');
-        setMergeRequest([]);
-        setManualIID('');
-      }}
-    />
-    ${fieldTemplate(
-      'scope',
-      'Quick scope',
-      'recent',
-      'text',
-      [
-        ['recent', 'Recent merge requests'],
-        ['assigned_to_me', 'Assigned to me'],
-        ['board_members', 'Assigned to board members'],
-      ],
-      {
-        onChange: (event) => {
-          setScope(event.currentTarget.value);
-          setMergeRequest([]);
-        },
+  return h(
+    CommandDialog,
+    {
+      title: 'Add link',
+      titleExtra: html` ${helpPopoverTemplate(
+        'Choose an approved project and use a quick scope or merge-request search. Enter an MR IID only as a final fallback. Flux retrieves the latest pipeline status from the linked MR.',
+        'GitLab links',
+      )}`,
+      command: (data) => {
+        const rawProject = String(data.get('project') || '');
+        const selectedMR = String(data.get('merge_request') || '');
+        const manual = String(data.get('manual_mr_iid') || '');
+        const rawNumber = selectedMR || manual;
+        if (!/^[1-9][0-9]*$/.test(rawProject) || !Number.isSafeInteger(Number(rawProject)))
+          throw new Error('Choose an approved GitLab project.');
+        if (selectedMR && manual)
+          throw new Error('Select a merge request or enter its IID manually, not both.');
+        if (!/^[1-9][0-9]*$/.test(rawNumber) || !Number.isSafeInteger(Number(rawNumber)))
+          throw new Error('Select a merge request or enter a positive MR IID.');
+        return {
+          kind: 'link.attach',
+          target: item.id,
+          link: { project: Number(rawProject), kind: 'mr', number: Number(rawNumber) },
+        };
       },
-    )}
-    <${GitLabLinkPicker}
-      key=${`${project}\u0000${scope}`}
-      root=${root}
-      project=${project}
-      scope=${scope}
-      value=${mergeRequest}
-      onChange=${(values) => {
-        setMergeRequest(values);
-        if (values.length) setManualIID('');
-      }}
-    />
-    <label
-      >MR IID (optional fallback)<input
-        name="manual_mr_iid"
-        type="number"
-        autocomplete="off"
-        min="1"
-        max=${Number.MAX_SAFE_INTEGER}
-        step="1"
-        value=${manualIID}
-        onInput=${(event) => setManualIID(event.currentTarget.value)}
-    /></label>
-    ${
-      !projects.length &&
-      !catalogError &&
-      !catalog.loading &&
-      !requireBoard().integration.projects.length
-        ? helpTextTemplate('No approved GitLab projects are available for linking.')
-        : null
-    }
-  </${CommandDialog}>`;
+    },
+    html`
+      ${
+        catalogError
+          ? errorLineTemplate(
+              `Could not load the GitLab project list. ${catalogError} Approved project IDs remain available so this link is not blocked by a temporary catalog failure.`,
+            )
+          : null
+      }
+      ${h(MultiSelect, {
+        name: 'project',
+        title: 'Approved GitLab project',
+        entries: approvedGitLabProjectEntries(projects),
+        single: true,
+        helpText:
+          'Choose one approved project. The project list is provided by the configured GitLab connector and is searchable.',
+        onChange: (values) => {
+          setProject(values[0] || '');
+          setMergeRequest([]);
+          setManualIID('');
+        },
+      })}
+      ${fieldTemplate(
+        'scope',
+        'Quick scope',
+        'recent',
+        'text',
+        [
+          ['recent', 'Recent merge requests'],
+          ['assigned_to_me', 'Assigned to me'],
+          ['board_members', 'Assigned to board members'],
+        ],
+        {
+          onChange: (event) => {
+            setScope(event.currentTarget.value);
+            setMergeRequest([]);
+          },
+        },
+      )}
+      <${GitLabLinkPicker}
+        key=${`${project}\u0000${scope}`}
+        root=${root}
+        project=${project}
+        scope=${scope}
+        value=${mergeRequest}
+        onChange=${(values) => {
+          setMergeRequest(values);
+          if (values.length) setManualIID('');
+        }}
+      />
+      <label
+        >MR IID (optional fallback)<input
+          name="manual_mr_iid"
+          type="number"
+          autocomplete="off"
+          min="1"
+          max=${Number.MAX_SAFE_INTEGER}
+          step="1"
+          value=${manualIID}
+          onInput=${(event) => setManualIID(event.currentTarget.value)}
+      /></label>
+      ${
+        !projects.length &&
+        !catalogError &&
+        !catalog.loading &&
+        !requireBoard().integration.projects.length
+          ? helpTextTemplate('No approved GitLab projects are available for linking.')
+          : null
+      }
+    `,
+  );
 }
 AddLinkDialog.onClose = returnToCard;
 export async function reconcileItemLinks(itemID, desiredIDs) {

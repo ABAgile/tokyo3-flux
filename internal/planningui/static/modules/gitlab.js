@@ -2,7 +2,7 @@
 import { requestKey } from './api.js';
 import { helpTextTemplate, emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect, useState } from './vendor-preact.js';
+import { useEffect, useState, h } from './vendor-preact.js';
 import { state, useStore, requireBoard } from './state.js';
 import { writable } from './permissions.js';
 import { change } from './commands.js';
@@ -275,23 +275,27 @@ export function showLinks(item) {
 }
 /** @param {Flux.DialogProps['links.show']} props */
 export function LinksDialog({ item, links, instance, refreshSeconds, ready }) {
-  return html`<${FormDialog} title="Linked GitLab observations" readOnly=${true}>
-    ${helpTextTemplate(`${item.title} · ${instance || 'No approved integration'}`)}
-    ${helpTextTemplate(
-      `Engineering observations only. Refresh does not move cards or change sprint scope. ${refreshSeconds ? `Background refresh: about every ${refreshSeconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
-    )}
-    ${
-      links.length
-        ? null
-        : emptyStateTemplate('Unlinked. Add an approved MR; never infer links from card titles.')
-    }
-    ${links.map((link) => html`<${LinkObservation} key=${link.id} item=${item} link=${link} />`)}
-    ${
-      ready
-        ? null
-        : helpTextTemplate(
-            'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
-          )
-    }
-  </${FormDialog}>`;
+  return h(
+    FormDialog,
+    { title: 'Linked GitLab observations', readOnly: true },
+    html`
+      ${helpTextTemplate(`${item.title} · ${instance || 'No approved integration'}`)}
+      ${helpTextTemplate(
+        `Engineering observations only. Refresh does not move cards or change sprint scope. ${refreshSeconds ? `Background refresh: about every ${refreshSeconds} seconds, with backoff on failures. Webhook hints can request an earlier refresh.` : 'Automatic refresh is disabled; use manual refresh.'} Observations older than five minutes or awaiting refresh are stale. This dialog is a snapshot; reopen to see background results.`,
+      )}
+      ${
+        links.length
+          ? null
+          : emptyStateTemplate('Unlinked. Add an approved MR; never infer links from card titles.')
+      }
+      ${links.map((link) => html`<${LinkObservation} key=${link.id} item=${item} link=${link} />`)}
+      ${
+        ready
+          ? null
+          : helpTextTemplate(
+              'Connector unavailable or instance approval needs updating. An admin can review Projects settings.',
+            )
+      }
+    `,
+  );
 }

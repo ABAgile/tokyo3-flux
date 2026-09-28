@@ -3,7 +3,7 @@
 // comment bodies cannot inject HTML. Link targets are filtered through
 // markdownURL.
 import { html } from './vdom.js';
-import { useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useId, useLayoutEffect, useRef, useState, h } from './vendor-preact.js';
 
 function markdownURL(value) {
   const raw = String(value || '').trim();
@@ -347,6 +347,15 @@ function markdownPreview(source, emptyText) {
 // The Markdown editor keeps preview mode in component state. By default the
 // native textarea owns its draft for the lifetime of the enclosing form; with
 // `settings.onValueChange` the caller owns `value` and the field is controlled.
+/**
+ * @param {string} name
+ * @param {string} title
+ * @param {string | undefined} value
+ * @param {number} maxLength
+ * @param {boolean} readOnly
+ * @param {boolean} previewByDefault
+ * @param {MarkdownEditorSettings} [settings]
+ */
 function markdownEditorTemplate(
   name,
   title,
@@ -356,15 +365,7 @@ function markdownEditorTemplate(
   previewByDefault,
   settings = {},
 ) {
-  return html`<${MarkdownEditor}
-    name=${name}
-    title=${title}
-    value=${value}
-    maxLength=${maxLength}
-    readOnly=${readOnly}
-    previewByDefault=${previewByDefault}
-    settings=${settings}
-  />`;
+  return h(MarkdownEditor, { name, title, value, maxLength, readOnly, previewByDefault, settings });
 }
 /**
  * @typedef {{ inputRef?: { current: HTMLTextAreaElement | null },

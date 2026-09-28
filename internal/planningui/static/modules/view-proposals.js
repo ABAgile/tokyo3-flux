@@ -7,7 +7,7 @@ import {
   helpTextTemplate,
 } from './layout.js';
 import { html } from './vdom.js';
-import { useState } from './vendor-preact.js';
+import { useState, h } from './vendor-preact.js';
 import { writable, accessButtonTemplate } from './permissions.js';
 import { refresh } from './sync.js';
 import { openDialog } from './dialog-state.js';
@@ -25,7 +25,10 @@ export function ProposalsDialog({ root }) {
     [root, before],
   );
   const rows = page.data || [];
-  return html`<${FormDialog} title="Planning proposals" readOnly=${true}>
+  return h(
+    FormDialog,
+    { title: 'Planning proposals', readOnly: true },
+    html`
     ${helpTextTemplate(
       'Agent output is an unverified suggestion. Importing creates a draft only; a human must review the exact diff before any planning changes.',
     )}
@@ -57,41 +60,46 @@ export function ProposalsDialog({ root }) {
         : null
     }
     ${before ? html`<button type="button" onClick=${() => setBefore(0)}>Newest proposals</button>` : null}
-  </${FormDialog}>`;
+  `,
+  );
 }
 function importProposal(document) {
   openDialog('proposal.import', { document, id: requestKey() });
 }
 /** @param {Flux.DialogProps['proposal.import']} props */
 export function ProposalImportDialog({ document, id }) {
-  return html`<${CommandDialog}
-    title="Import proposal draft"
-    saveText="Save draft only"
-    command=${(data) => {
-      const parsed = JSON.parse(data.get('document'));
-      if (parsed.unresolved?.length)
-        throw new Error('Resolve all import mappings before creating a draft.');
-      return {
-        kind: 'proposal.import',
-        target: id,
-        proposal: parsed.document || parsed,
-        reason: data.get('reason').trim(),
-      };
-    }}
-  >
-    ${helpTextTemplate(
-      'Paste a version-1 proposal or the document/report from flux import. This saves a draft, not planning changes. Source identity and agent provenance are not verified.',
-    )}
-    ${fieldTemplate(
-      'document',
-      'Proposal JSON',
-      document ? JSON.stringify(document, null, 2) : '',
-      'textarea',
-      undefined,
-      { required: true, maxLength: 60000 },
-    )}
-    ${fieldTemplate('reason', 'Import rationale', '', 'textarea', undefined, { required: true })}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Import proposal draft',
+      saveText: 'Save draft only',
+      command: (data) => {
+        const parsed = JSON.parse(String(data.get('document')));
+        if (parsed.unresolved?.length)
+          throw new Error('Resolve all import mappings before creating a draft.');
+        return {
+          kind: 'proposal.import',
+          target: id,
+          proposal: parsed.document || parsed,
+          reason: String(data.get('reason') || '').trim(),
+        };
+      },
+    },
+    html`
+      ${helpTextTemplate(
+        'Paste a version-1 proposal or the document/report from flux import. This saves a draft, not planning changes. Source identity and agent provenance are not verified.',
+      )}
+      ${fieldTemplate(
+        'document',
+        'Proposal JSON',
+        document ? JSON.stringify(document, null, 2) : '',
+        'textarea',
+        undefined,
+        { required: true, maxLength: 60000 },
+      )}
+      ${fieldTemplate('reason', 'Import rationale', '', 'textarea', undefined, { required: true })}
+    `,
+  );
 }
 function reviewProposal(root, id) {
   openDialog('proposal.review', { root, id });
@@ -110,30 +118,33 @@ async function loadProposalReview(root, id, signal) {
 export function ProposalReviewDialog({ root, id }) {
   const result = useRequest((signal) => loadProposalReview(root, id, signal), [root, id]);
   if (!result.data)
-    return html`<${FormDialog} title="Review planning proposal" readOnly=${true}>
-      ${
-        result.error
-          ? errorLineTemplate(result.error.message)
-          : emptyStateTemplate('Loading proposal…')
-      }
-    </${FormDialog}>`;
+    return h(
+      FormDialog,
+      { title: 'Review planning proposal', readOnly: true },
+      result.error
+        ? errorLineTemplate(result.error.message)
+        : emptyStateTemplate('Loading proposal…'),
+    );
   const { preview, canAccept } = result.data;
   const v = preview.proposal;
-  return html`<${CommandDialog}
-    title="Review planning proposal"
-    saveText="Accept exact diff"
-    readOnly=${!canAccept}
-    command=${(data) => {
-      if (!data.get('consent')) throw new Error('Explicit approval is required.');
-      return {
-        kind: 'proposal.accept',
-        target: v.id,
-        revision: v.document.revision,
-        name: preview.digest,
-        reason: data.get('reason').trim(),
-      };
-    }}
-  >
+  return h(
+    CommandDialog,
+    {
+      title: 'Review planning proposal',
+      saveText: 'Accept exact diff',
+      readOnly: !canAccept,
+      command: (data) => {
+        if (!data.get('consent')) throw new Error('Explicit approval is required.');
+        return {
+          kind: 'proposal.accept',
+          target: v.id,
+          revision: v.document.revision,
+          name: preview.digest,
+          reason: String(data.get('reason') || '').trim(),
+        };
+      },
+    },
+    html`
     <h3 class="proposal-text">${v.document.title}</h3>
     <p class="proposal-text">${v.document.rationale}</p>
     ${helpTextTemplate(`Claimed provenance (unverified): ${v.document.provenance}`, 'proposal-text')}
@@ -192,7 +203,8 @@ export function ProposalReviewDialog({ root, id }) {
           )}`
         : null
     }
-  </${CommandDialog}>`;
+  `,
+  );
 }
 async function rejectProposal(id) {
   if (!(await refresh())) return;
@@ -200,11 +212,17 @@ async function rejectProposal(id) {
 }
 /** @param {Flux.DialogProps['proposal.reject']} props */
 export function ProposalRejectDialog({ id }) {
-  return html`<${CommandDialog}
-    title="Reject planning proposal"
-    saveText="Reject proposal"
-    command=${(data) => ({ kind: 'proposal.reject', target: id, reason: data.get('reason').trim() })}
-  >
-    ${fieldTemplate('reason', 'Rejection rationale', '', 'textarea', undefined, { required: true })}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Reject planning proposal',
+      saveText: 'Reject proposal',
+      command: (data) => ({
+        kind: 'proposal.reject',
+        target: id,
+        reason: String(data.get('reason') || '').trim(),
+      }),
+    },
+    fieldTemplate('reason', 'Rejection rationale', '', 'textarea', undefined, { required: true }),
+  );
 }

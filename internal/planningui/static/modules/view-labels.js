@@ -1,4 +1,5 @@
 // The Labels page and label dialogs.
+import { h } from './vendor-preact.js';
 import {
   fieldTemplate,
   sectionHeadTemplate,
@@ -19,24 +20,28 @@ import { CommandDialog } from './dialog.js';
 
 /** @param {Flux.DialogProps['label.edit']} props */
 export function LabelDialog({ name = '', color = '#dcefe4' }) {
-  return html`<${CommandDialog}
-    title=${name ? 'Rename label' : 'Create label'}
-    command=${(data) => ({
-      kind: 'label.save',
-      target: name,
-      name: data.get('name').trim(),
-      color: data.get('color') || color,
-    })}
-  >
-    ${fieldTemplate('name', 'Label name', name, 'text', undefined, {
-      required: true,
-      maxLength: 60,
-    })}
-    ${labelColorPickerTemplate(color)}
-    ${helpTextTemplate(
-      'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
-    )}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: name ? 'Rename label' : 'Create label',
+      command: (data) => ({
+        kind: 'label.save',
+        target: name,
+        name: String(data.get('name') || '').trim(),
+        color: String(data.get('color') || color),
+      }),
+    },
+    html`
+      ${fieldTemplate('name', 'Label name', name, 'text', undefined, {
+        required: true,
+        maxLength: 60,
+      })}
+      ${labelColorPickerTemplate(color)}
+      ${helpTextTemplate(
+        'Use optional scope::value names such as type::bug or priority::high. Choose from the fixed 64-swatch palette. Renaming updates every assigned card, including archived work.',
+      )}
+    `,
+  );
 }
 function editLabel(label) {
   const name = typeof label === 'string' ? label : label?.name || '';
@@ -48,13 +53,17 @@ function editLabel(label) {
 }
 /** @param {Flux.DialogProps['label.delete']} props */
 export function DeleteLabelDialog({ label, count }) {
-  return html`<${CommandDialog}
-    title="Delete label"
-    saveText="Delete label"
-    command=${() => ({ kind: 'label.delete', target: label.name })}
-  >
-    <p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Delete label',
+      saveText: 'Delete label',
+      command: () => ({ kind: 'label.delete', target: label.name }),
+    },
+    html`
+      <p>${`Remove “${label.name}” from the workspace and all ${count} assigned cards, including archived work? Historical audit is retained.`}</p>
+    `,
+  );
 }
 function deleteLabel(label) {
   const count = requireBoard().items.filter((i) => i.labels.includes(label.name)).length;

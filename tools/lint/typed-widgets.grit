@@ -1,0 +1,14 @@
+language js
+
+// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// HTM templates are not type-checked, so shared widgets are rendered with
+// h(Widget, props), which the checker verifies against their declared props.
+
+JsTemplateElement(expression=or { `MultiSelect`, `MarkdownEditor`, `FormDialog`, `CommandDialog`, `Card` }) as $element where {
+  $filename <: r".*/internal/planningui/static/.*",
+  register_diagnostic(
+    span=$element,
+    message="Render shared widgets with h(Widget, props) so their props are type-checked.",
+    severity="error"
+  )
+}

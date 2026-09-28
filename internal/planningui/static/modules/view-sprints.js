@@ -11,7 +11,7 @@ import {
 } from './layout.js';
 import { classNames } from './dom.js';
 import { html, shallowEqual } from './vdom.js';
-import { useId, useLayoutEffect, useRef, useState } from './vendor-preact.js';
+import { useId, useLayoutEffect, useRef, useState, h } from './vendor-preact.js';
 
 import { setState, state, useStore, requireBoard } from './state.js';
 import {
@@ -307,45 +307,49 @@ export function SprintDialog({ sprint }) {
     start: new Date().toISOString().slice(0, 10),
     end: new Date(Date.now() + 13 * 86400000).toISOString().slice(0, 10),
   };
-  return html`<${CommandDialog}
-    title=${existing ? 'Edit sprint' : 'Plan a sprint'}
-    command=${(data) => {
-      const goal = String(data.get('goal') || '').trim();
-      if (!goal) throw new Error('Sprint goal is required.');
-      return {
-        kind: 'sprint.save',
-        target: value.id || '',
-        sprint: {
-          ...value,
-          name: data.get('name').trim(),
-          goal,
-          start: data.get('start'),
-          end: data.get('end'),
-        },
-      };
-    }}
-  >
-    ${fieldTemplate('name', 'Sprint name', value.name, 'text', undefined, {
-      required: true,
-      maxLength: 120,
-    })}
-    ${markdownEditorTemplate(
-      'goal',
-      'Sprint goal · what outcome matters?',
-      value.goal,
-      4000,
-      false,
-      false,
-      { subject: 'sprint goal' },
-    )}
-    <div class="form-grid">
-      ${fieldTemplate('start', 'Start date', value.start, 'date', undefined, { required: true })}
-      ${fieldTemplate('end', 'End date', value.end, 'date', undefined, { required: true })}
-    </div>
-    ${helpTextTemplate(
-      'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
-    )}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: existing ? 'Edit sprint' : 'Plan a sprint',
+      command: (data) => {
+        const goal = String(data.get('goal') || '').trim();
+        if (!goal) throw new Error('Sprint goal is required.');
+        return {
+          kind: 'sprint.save',
+          target: value.id || '',
+          sprint: {
+            ...value,
+            name: String(data.get('name') || '').trim(),
+            goal,
+            start: String(data.get('start') || ''),
+            end: String(data.get('end') || ''),
+          },
+        };
+      },
+    },
+    html`
+      ${fieldTemplate('name', 'Sprint name', value.name, 'text', undefined, {
+        required: true,
+        maxLength: 120,
+      })}
+      ${markdownEditorTemplate(
+        'goal',
+        'Sprint goal · what outcome matters?',
+        value.goal,
+        4000,
+        false,
+        false,
+        { subject: 'sprint goal' },
+      )}
+      <div class="form-grid">
+        ${fieldTemplate('start', 'Start date', value.start, 'date', undefined, { required: true })}
+        ${fieldTemplate('end', 'End date', value.end, 'date', undefined, { required: true })}
+      </div>
+      ${helpTextTemplate(
+        'Add or remove scope by editing an item’s sprint membership. Sprints belong to the workspace and can span projects. Multiple sprints can be active.',
+      )}
+    `,
+  );
 }
 function closeSprint(sprint) {
   const items = scopeItems(requireBoard(), sprint);
@@ -361,40 +365,48 @@ function closeSprint(sprint) {
 }
 /** @param {Flux.DialogProps['sprint.close']} props */
 export function CloseSprintDialog({ sprint, scoped, unfinished, destinations }) {
-  return html`<${CommandDialog}
-    title="Close sprint & decide carry-over"
-    saveText="Close sprint"
-    command=${(data) => ({
-      kind: 'sprint.close',
-      target: sprint.id,
-      destination: data.get('destination'),
-      reason: data.get('reason').trim(),
-    })}
-  >
-    <p>${`${sprint.name}: ${scoped} items in scope; ${unfinished} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`}</p>
-    ${fieldTemplate('destination', 'Also assign unfinished work to', '', 'text', [
-      ['', 'No additional sprint'],
-      ...destinations,
-    ])}
-    ${helpTextTemplate(
-      'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
-    )}
-    ${fieldTemplate('reason', 'Closing decision / rationale', '', 'textarea', undefined, {
-      required: true,
-      maxLength: 4000,
-    })}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Close sprint & decide carry-over',
+      saveText: 'Close sprint',
+      command: (data) => ({
+        kind: 'sprint.close',
+        target: sprint.id,
+        destination: String(data.get('destination') || ''),
+        reason: String(data.get('reason') || '').trim(),
+      }),
+    },
+    html`
+      <p>${`${sprint.name}: ${scoped} items in scope; ${unfinished} unfinished. Closing freezes this sprint’s scope. Other sprint assignments remain unchanged; the card keeps its identity and column.`}</p>
+      ${fieldTemplate('destination', 'Also assign unfinished work to', '', 'text', [
+        ['', 'No additional sprint'],
+        ...destinations,
+      ])}
+      ${helpTextTemplate(
+        'No additional sprint returns an item to backlog only if it has no other open sprint membership. Existing memberships are never removed by closing another sprint.',
+      )}
+      ${fieldTemplate('reason', 'Closing decision / rationale', '', 'textarea', undefined, {
+        required: true,
+        maxLength: 4000,
+      })}
+    `,
+  );
 }
 /** @param {Flux.DialogProps['sprint.archive']} props */
 export function ArchiveSprintDialog({ sprint }) {
-  return html`<${CommandDialog}
-    title="Archive sprint"
-    saveText="Archive sprint"
-    command=${() => ({ kind: 'sprint.archive', target: sprint.id })}
-  >
-    <p>${`Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`}</p>
-    ${helpTextTemplate(
-      'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
-    )}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: 'Archive sprint',
+      saveText: 'Archive sprint',
+      command: () => ({ kind: 'sprint.archive', target: sprint.id }),
+    },
+    html`
+      <p>${`Archive “${sprint.name}”? The sprint will become immutable and leave the working sprint list. Its closure summary and metadata remain available in history.`}</p>
+      ${helpTextTemplate(
+        'Archiving does not delete cards or change their current columns. A closed sprint cannot be reopened after it is archived.',
+      )}
+    `,
+  );
 }

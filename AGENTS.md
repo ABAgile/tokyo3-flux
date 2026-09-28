@@ -15,6 +15,8 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   `strictNullChecks` is on: a DOM ref names its element, `useRef(/** @type {HTMLInputElement | null} */ (null))`, and an action the UI offers only while a workspace is open reads it through `requireBoard()`, `requireRoot()` and `sessionCSRF()` from `modules/state.js`, which throw when that precondition is broken; code that can run without a board checks `state.board` instead.
 - Import Preact runtime APIs directly from `modules/vendor-preact.js`; `modules/vdom.js` binds HTM's `html` tag to Preact's `h` and provides `memo` and `shallowEqual`.
   Use HTM templates, not JSX or raw HTML injection.
+  `tsc` does not check props inside `html` templates, so the shared widgets — `MultiSelect`, `MarkdownEditor`, `FormDialog`, `CommandDialog` and `Card` — are rendered with `h(Widget, props, children)`, which is checked against their `Flux.*Props`; the `typed-widgets` lint rule rejects them in templates.
+  A widget that other modules render gets a props type in `flux.d.ts` and joins that rule.
 - `tools/vendor/package-lock.json` pins the runtime and bundler; `make vendor-web` rebuilds the checked-in bundle.
   Never edit the generated bundle by hand; preserve the licenses in `tools/vendor/`.
 - One update path: components read with `useStore(selector)` and change state through actions that make one `setState` patch.
@@ -61,7 +63,7 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   ```js
   openDialog('label.delete', { label, count });
   export function DeleteLabelDialog({ label, count }) {
-    return html`<${CommandDialog} title="Delete label" command=${() => ({ kind: 'label.delete', target: label.name })}>…</${CommandDialog}>`;
+    return h(CommandDialog, { title: 'Delete label', command: () => ({ kind: 'label.delete', target: label.name }) }, html`…`);
   }
   ```
 
@@ -69,13 +71,13 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   `MultiSelect` is uncontrolled with `defaultValue` or controlled with `value` and `onChange`; remote pickers pass `entries`, `status`, `onQuery` and `onOpenChange`.
 
   ```js
-  html`<${MultiSelect} name="gitlab_user" title="GitLab user" entries=${entries} value=${selected} status=${status} single=${true} onQuery=${setQuery} onChange=${setSelected} />`;
+  h(MultiSelect, { name: 'gitlab_user', title: 'GitLab user', entries, value: selected, status, single: true, onQuery: setQuery, onChange: setSelected });
   ```
 
 - Anything with state, identity or list membership is a component with a stable domain `key` on its element; board cards and List rows are `memo` components.
 
   ```js
-  html`${peers.map((item) => html`<${Card} key=${item.id} item=${item} context=${context} />`)}`;
+  html`${peers.map((item) => h(Card, { key: item.id, item, context, isBlocked, attachmentsOpen, onAttachmentsToggle }))}`;
   ```
 
 - Naming says what may subscribe: PascalCase components may read the store with `useStore`, while `*Template` functions (56 of them) are pure and take everything they render as arguments; the `pure-templates` lint rule enforces this.
@@ -98,7 +100,7 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   Drag and drop are `useDraggable`/`useDropZone` props; tooltips are `useAttachmentTooltip`/`useObservationTooltip` props.
   Values that change at pointer-event rate live in `modules/pointer-state.js`, a separate store, so a drag-over or hover notifies only drop zones and tooltip triggers; text a user is typing stays component state until it is committed, as the search field does after its debounce.
   The guardrails are Biome GritQL plugins in `tools/lint/`, one rule per file (a combined rule defeats Biome's node prefilter and is several times slower), matched on the syntax tree so layout and nesting do not hide a violation.
-  They reject `$(`, document queries and `addEventListener` outside `ui-hooks.js` (and `api.js` for XHR progress), `document.activeElement` outside `ui-hooks.js` and `dialog-state.js`, writes to or aliases of the `state` and `pointer` views, `useState` capturing store state, store reads inside `*Template` functions, and store imports in `items.js`, `people.js` and `lookups.js`.
+  They reject `$(`, document queries and `addEventListener` outside `ui-hooks.js` (and `api.js` for XHR progress), `document.activeElement` outside `ui-hooks.js` and `dialog-state.js`, writes to or aliases of the `state` and `pointer` views, `useState` capturing store state, store reads inside `*Template` functions, store imports in `items.js`, `people.js` and `lookups.js`, and shared widgets inside `html` templates.
   GritQL regexes must not use capture groups, and plugins listed under Biome `overrides` are silently ignored.
 - The planning content, the List detail pane and the dialog host each render inside an `ErrorBoundary` (`modules/error-boundary.js`), keyed or reset by what they show, so a render failure replaces only that part with a Retry notice.
   A store selector that throws re-selects during render, so its error reaches the nearest boundary instead of interrupting `setState`.

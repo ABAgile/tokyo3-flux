@@ -1,4 +1,5 @@
 // Bulk selection and bulk actions in the List presentation.
+import { h } from './vendor-preact.js';
 import { labelForeground } from './format.js';
 import { emptyStateTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
@@ -41,17 +42,21 @@ async function runBulk(label, plan, undoFor) {
 // A bulk dialog plans one command per selected item from its form; the plan
 // is validated before the dialog closes and the sequence runs.
 function BulkDialog({ title, saveText, plan, label, undoFor, hideSave = false, children }) {
-  return html`<${FormDialog}
-    title=${title}
-    saveText=${saveText}
-    hideSave=${hideSave}
-    onSubmit=${async (data) => {
-      if (state.busy) return;
-      const apply = plan(data);
-      closeEditor();
-      await runBulk(label, apply, undoFor);
-    }}
-  >${children}</${FormDialog}>`;
+  return h(
+    FormDialog,
+    {
+      title,
+      saveText,
+      hideSave,
+      onSubmit: async (data) => {
+        if (state.busy) return;
+        const apply = plan(data);
+        closeEditor();
+        await runBulk(label, apply, undoFor);
+      },
+    },
+    children,
+  );
 }
 function count(n) {
   return `${n} selected work item${n === 1 ? '' : 's'}`;

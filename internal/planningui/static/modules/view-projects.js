@@ -15,7 +15,7 @@ import {
   maintenanceRowTemplate,
 } from './layout.js';
 import { html, shallowEqual } from './vdom.js';
-import { useId, useReducer } from './vendor-preact.js';
+import { useId, useReducer, h } from './vendor-preact.js';
 
 import { setState, useStore } from './state.js';
 import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
@@ -32,22 +32,26 @@ import { useRequest } from './ui-hooks.js';
 
 /** @param {Flux.DialogProps['project.edit']} props */
 export function ProjectDialog({ project }) {
-  return html`<${CommandDialog}
-    title=${project ? 'Edit project' : 'Create project'}
-    command=${(data) => ({
-      kind: 'project.save',
-      target: project?.id || '',
-      project: { ...(project || {}), name: data.get('name').trim() },
-    })}
-  >
-    ${fieldTemplate('name', 'Project name', project?.name || '', 'text', undefined, {
-      required: true,
-      maxLength: 120,
-    })}
-    ${helpTextTemplate(
-      'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.',
-    )}
-  </${CommandDialog}>`;
+  return h(
+    CommandDialog,
+    {
+      title: project ? 'Edit project' : 'Create project',
+      command: (data) => ({
+        kind: 'project.save',
+        target: project?.id || '',
+        project: { ...(project || {}), name: String(data.get('name') || '').trim() },
+      }),
+    },
+    html`
+      ${fieldTemplate('name', 'Project name', project?.name || '', 'text', undefined, {
+        required: true,
+        maxLength: 120,
+      })}
+      ${helpTextTemplate(
+        'Projects classify work in this workspace. Boards, sprint scope, WIP and permissions stay workspace-wide.',
+      )}
+    `,
+  );
 }
 function editProject(project) {
   openDialog('project.edit', { project });
