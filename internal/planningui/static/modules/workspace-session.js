@@ -15,6 +15,7 @@ export function beginWorkspaceSession() {
   return controller.signal;
 }
 // Work owned by both a caller and the workspace session stops when either ends.
+/** @param {AbortSignal | undefined} [signal] */
 export function withWorkspace(signal) {
   return signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
 }

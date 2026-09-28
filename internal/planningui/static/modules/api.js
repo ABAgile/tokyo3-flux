@@ -15,6 +15,7 @@ function sessionExpiredError() {
 function sessionExpired() {
   throw sessionExpiredError();
 }
+/** @param {Response} response */
 function isRedirectResponse(response) {
   return (
     response.type === 'opaqueredirect' ||
@@ -55,6 +56,7 @@ async function api(path, init = {}) {
  * @returns {Promise<{ modified: boolean, etag: string, data: any }>}
  */
 async function apiRevalidated(path, etag = '', { signal } = {}) {
+  /** @type {Record<string, string>} */
   const headers = { Accept: 'application/json' };
   if (etag) headers['If-None-Match'] = etag;
   const r = await fetch(path, { redirect: 'manual', headers, signal });
@@ -148,6 +150,7 @@ function apiUpload(path, { headers = {}, body, onProgress, signal } = {}) {
 }
 // A request cancelled through its AbortSignal: the caller moved on, so the
 // rejection is not a failure to report.
+/** @param {any} error */
 function isAbortError(error) {
   return error?.name === 'AbortError';
 }

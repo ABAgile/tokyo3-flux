@@ -1,5 +1,6 @@
 // Presentation formatting. Pure functions from planning values to display
 // strings; none of them read application state or touch the DOM.
+/** @param {string} name */
 function initials(name) {
   const words = name.trim().split(/\s+/).filter(Boolean);
   return words.length
@@ -10,6 +11,7 @@ function initials(name) {
         .toUpperCase()
     : '—';
 }
+/** @param {number} size */
 function attachmentSize(size) {
   if (!Number.isFinite(size) || size < 0) return 'unknown size';
   if (size < 1024) return `${size} B`;
@@ -22,6 +24,7 @@ function attachmentSize(size) {
   }
   return `${value >= 10 || Number.isInteger(value) ? Math.round(value) : value.toFixed(1)} ${units[index]}`;
 }
+/** @param {{ content_type?: string, name?: string }} attachment */
 function attachmentKind(attachment) {
   const type = String(attachment.content_type || '');
   if (type.startsWith('image/')) return 'IMG';
@@ -37,12 +40,14 @@ function attachmentKind(attachment) {
     .toUpperCase();
   return extension || 'FILE';
 }
+/** @param {{ content_type?: string, name?: string }} attachment */
 function attachmentTypeDescription(attachment) {
   const type = String(attachment.content_type || '').trim();
   return type
     ? `${attachmentKind(attachment)} file · ${type}`
     : `${attachmentKind(attachment)} file`;
 }
+/** @param {string | undefined} color */
 function labelForeground(color) {
   const match = /^#([0-9a-f]{6})$/i.exec(color || '');
   if (!match) return 'var(--ink)';
@@ -54,12 +59,14 @@ function labelForeground(color) {
   const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
   return luminance > 0.21 ? 'var(--label-ink)' : 'var(--label-contrast)';
 }
+/** @param {string} date */
 function burndownDateLabel(date) {
   const value = new Date(`${date}T00:00:00Z`);
   return Number.isNaN(value.getTime())
     ? date
     : value.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
+/** @param {unknown} value */
 function parseDateOnly(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
   if (!match) return undefined;
@@ -74,6 +81,7 @@ function parseDateOnly(value) {
     ? date
     : undefined;
 }
+/** @param {unknown} value */
 function formatDateOnly(value) {
   const date = parseDateOnly(value);
   return date
@@ -85,6 +93,11 @@ function formatDateOnly(value) {
       })
     : '';
 }
+/**
+ * @param {string} value
+ * @param {string | undefined} category
+ * @param {boolean | undefined} archived
+ */
 function dueDatePresentation(value, category, archived, now = new Date()) {
   const date = parseDateOnly(value);
   if (!date) return undefined;
@@ -97,12 +110,18 @@ function dueDatePresentation(value, category, archived, now = new Date()) {
   });
   return { label: overdue ? `⚠ Overdue · ${label}` : `Due · ${label}`, overdue };
 }
+/** @param {{ name: string }} workspace */
 function workspaceLabel(workspace) {
   return workspace.name;
 }
+/** @param {{ name: string, id: string }} workspace */
 function workspaceHistoryLabel(workspace) {
   return `${workspace.name} (${workspace.id})`;
 }
+/**
+ * @param {{ wip: number }} column
+ * @param {number} total
+ */
 function columnWIPLabel(column, total) {
   return column.wip ? `${total}/${column.wip} WIP` : 'No limit';
 }

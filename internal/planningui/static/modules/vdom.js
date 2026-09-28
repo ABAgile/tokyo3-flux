@@ -3,6 +3,10 @@ import { Component, h, htm } from './vendor-preact.js';
 
 export const html = htm.bind(h);
 
+/**
+ * @param {any} left
+ * @param {any} right
+ */
 export function shallowEqual(left, right) {
   if (Object.is(left, right)) return true;
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
@@ -17,7 +21,7 @@ export function shallowEqual(left, right) {
 // shallow-equal; the wrapped function component keeps its own hooks and still
 // updates from its store subscriptions.
 /**
- * @template P
+ * @template {object} P
  * @param {(props: P) => unknown} render
  * @param {(left: P, right: P) => boolean} [equal]
  * @returns {import('./vendor-preact.js').ComponentType<P>}
@@ -25,9 +29,11 @@ export function shallowEqual(left, right) {
 export function memo(render, equal = shallowEqual) {
   /** @extends {Component<P>} */
   class Memo extends Component {
+    /** @param {P} next */
     shouldComponentUpdate(next) {
       return !equal(this.props, next);
     }
+    /** @param {P} props */
     render(props) {
       return h(render, props);
     }

@@ -4,6 +4,14 @@ import { useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
 const UNSET = Symbol('unset');
 
 /**
+ * @param {object} value
+ * @param {PropertyKey} key
+ */
+function field(value, key) {
+  return /** @type {Record<PropertyKey, unknown>} */ (value)[key];
+}
+
+/**
  * @template {object} S
  * @param {S} initialState
  */
@@ -23,14 +31,15 @@ export function createStore(initialState) {
   function setState(update) {
     const patch = typeof update === 'function' ? update(current) : update;
     if (!patch || typeof patch !== 'object') return;
+    /** @type {Record<string, unknown> | undefined} */
     let next;
     for (const [key, value] of Object.entries(patch)) {
-      if (Object.is(current[key], value)) continue;
-      next ||= { ...current };
+      if (Object.is(field(current, key), value)) continue;
+      next ||= { .../** @type {Record<string, unknown>} */ (current) };
       next[key] = value;
     }
     if (!next) return;
-    current = next;
+    current = /** @type {S} */ (next);
     listeners.forEach((listener) => {
       listener();
     });
@@ -88,7 +97,7 @@ export function createStore(initialState) {
   /** @type {Readonly<S>} */
   const state = new Proxy(/** @type {S} */ ({}), {
     get(_target, property) {
-      return current[property];
+      return field(current, property);
     },
     set(_target, property) {
       throw new TypeError(`state.${String(property)} is read-only; use setState.`);

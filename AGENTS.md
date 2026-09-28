@@ -12,6 +12,7 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   Shared contracts live in `tools/types/flux.d.ts` as `Flux.*` — the store `State`, board entities, `Lookups`, `RowContext`, `Command` and every dialog's props in `DialogProps` — and modules refer to them in JSDoc.
   A new state key goes into `Flux.State` and a new dialog into `Flux.DialogProps` and the App's `DIALOGS` map; its component takes `@param {Flux.DialogProps['type']} props`.
   `modules/vendor-preact.d.ts` types the bundle's exports for the checker only; it is never served.
+  `tools/types/tsconfig.strict.json` adds `noImplicitAny` for the modules it lists; a module joins once it and every module it imports pass, so conversion proceeds in import order, and a new module whose imports are all listed joins it from the start.
   `strictNullChecks` is on: a DOM ref names its element, `useRef(/** @type {HTMLInputElement | null} */ (null))`, and an action the UI offers only while a workspace is open reads it through `requireBoard()`, `requireRoot()` and `sessionCSRF()` from `modules/state.js`, which throw when that precondition is broken; code that can run without a board checks `state.board` instead.
 - Import Preact runtime APIs directly from `modules/vendor-preact.js`; `modules/vdom.js` binds HTM's `html` tag to Preact's `h` and provides `memo` and `shallowEqual`.
   Use HTM templates, not JSX or raw HTML injection.
