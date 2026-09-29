@@ -498,7 +498,6 @@ Native form drafts remain uncontrolled where appropriate; busy controls, focus a
 For API-free browser regression tests, run `node tests/preact-fixture.mjs <private-host> 18195`, open that address with the configured remote `playwright-cli`, then use `run-code --filename=tests/preact.browser.js` (an absolute filename also works).
 The test covers escaping, safe Markdown, keyed identity/focus, native forms, reducer/store updates, store-driven live regions, aborted requests, component-effect cleanup, stale updates, outside-listener cleanup and light/dark responsive overflow under the existing CSP.
 Database-backed browser suites additionally exercise permissions, conflict recovery, uploads, comments, GitLab operations, proposals and keyboard workflows.
-See [the renderer comparison](docs/preact-comparison.md) for measured rendering costs, validation coverage and remaining architectural tradeoffs.
 The stylesheet is authored as ordered files under `internal/planningui/static/styles/` and served joined, in name order, as `/styles.css`.
 
 Use a disposable test DB; PostgreSQL tests skip without its URL.
