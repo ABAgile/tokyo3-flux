@@ -30,7 +30,8 @@ IMAGE_NAME ?= abagile/tokyo3-flux
 IMAGE_TAG  ?= $(VERSION)
 
 .PHONY: all build build-linux build-linux-amd64 build-darwin \
-        check fmt-web check-web \
+        check vendor-web fmt-web check-web \
+        _check-biome _check-types _check-markdown _check-node \
         docker-build docker-build-amd64 docker-push \
         docker-up docker-down install clean help
 
@@ -63,7 +64,6 @@ build-darwin: $(BIN_DIR)
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 
-.PHONY: vendor-web
 ## vendor-web: Rebuild the checked-in Preact/HTM runtime (versions in tools/vendor/package-lock.json)
 vendor-web:
 	cd tools/vendor && npm ci --ignore-scripts && npm run build
@@ -73,11 +73,21 @@ fmt-web:
 	$(BIOME) format --write .
 	$(RUMDL) check --fix .
 
-## check-web: Verify formatting, lint (warnings fail), types and Markdown without changes, then run the Node tests
+## check-web: Verify formatting, lint (warnings fail), types, Markdown and Node tests in parallel without changes
 check-web:
+	$(MAKE) -j4 --output-sync=target _check-biome _check-types _check-markdown _check-node
+
+# Internal jobs for check-web; intentionally omitted from make help.
+_check-biome:
 	$(BIOME) ci --error-on-warnings .
+
+_check-types:
 	$(TSC) -p tools/types/tsconfig.json
+
+_check-markdown:
 	$(RUMDL) check .
+
+_check-node:
 	node tests/extension.test.mjs
 	node tests/date-format.test.mjs
 	node --test "tests/unit/*.test.mjs"
