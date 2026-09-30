@@ -7,14 +7,16 @@ dialog > form.item-editor-form {
   min-height: 0;
   overflow: auto;
   margin-right: calc(-1 * var(--s4));
+  margin-left: calc(-1 * var(--s2));
   padding-right: var(--s4);
+  padding-left: var(--s2);
 }
 .item-editor-form .dialog-foot {
   margin-top: var(--s3);
   padding-top: var(--s3);
   border-top: 1px solid var(--line);
 }
-.item-editor-form .archive-footer {
+.item-editor-form #editor-footer-actions {
   margin-right: auto;
 }
 .item-editor-layout {
