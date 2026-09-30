@@ -31,7 +31,7 @@ import { useDebouncedValue, useMutation, useRequest } from './ui-hooks.js';
  * @param {readonly Flux.GitLabProject[]} projects
  * @returns {{ project: number, kind: string, number: number }}
  */
-function resolveGitLabMRURL(value, currentBoard, projects) {
+export function resolveGitLabMRURL(value, currentBoard, projects) {
   const raw = String(value || '').trim();
   if (!raw) throw new Error('Paste a GitLab merge-request URL first.');
   if (
@@ -63,9 +63,10 @@ function resolveGitLabMRURL(value, currentBoard, projects) {
     throw new Error('That URL is outside the configured GitLab instance.');
   const tail = projectPath.slice(prefix.length);
   const marker = '/-/merge_requests/';
-  const markerAt = tail.lastIndexOf(marker);
-  const iid = markerAt < 0 ? '' : tail.slice(markerAt + marker.length);
-  projectPath = markerAt > 0 ? projectPath.slice(prefix.length, prefix.length + markerAt) : '';
+  const markerAt = tail.indexOf(marker);
+  // Only `<project>/-/merge_requests/<iid>` matters; drop MR sub-pages such as /diffs.
+  const iid = markerAt < 0 ? '' : (tail.slice(markerAt + marker.length).split('/')[0] ?? '');
+  projectPath = markerAt > 0 ? tail.slice(0, markerAt) : '';
   if (markerAt <= 0 || !/^[1-9][0-9]*$/.test(iid) || !Number.isSafeInteger(Number(iid)))
     throw new Error('Use a canonical GitLab merge-request URL.');
   const approved = new Set(currentBoard.integration.projects.map(String));
