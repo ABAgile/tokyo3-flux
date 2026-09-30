@@ -43,17 +43,18 @@ func TestReadConnectorValidationBeforeDatabase(t *testing.T) {
 		t.Fatal("connector validation must precede DB startup", err)
 	}
 }
-func TestPlanningSeed(t *testing.T) {
+func testPlanningDatabaseURL(t *testing.T) string {
+	t.Helper()
 	dsn := os.Getenv("FLUX_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("set FLUX_TEST_DATABASE_URL for PostgreSQL seed integration")
+		t.Skip("set FLUX_TEST_DATABASE_URL for PostgreSQL integration")
 	}
 	ctx := context.Background()
 	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := "flux_seed_test_" + strings.ToLower(planning.NewID())
+	schema := "flux_cli_test_" + strings.ToLower(planning.NewID())
 	quoted := pgx.Identifier{schema}.Sanitize()
 	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
 		admin.Close()
@@ -72,7 +73,13 @@ func TestPlanningSeed(t *testing.T) {
 	query := databaseURL.Query()
 	query.Set("search_path", schema)
 	databaseURL.RawQuery = query.Encode()
-	s, err := store.Open(ctx, cli.DB{URL: databaseURL.String()})
+	return databaseURL.String()
+}
+
+func TestPlanningSeed(t *testing.T) {
+	dsn := testPlanningDatabaseURL(t)
+	ctx := context.Background()
+	s, err := store.Open(ctx, cli.DB{URL: dsn})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,13 +104,14 @@ func TestPlanningSeed(t *testing.T) {
 }
 
 func TestBlobCleanupCommand(t *testing.T) {
-	dsn := os.Getenv("FLUX_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("set FLUX_TEST_DATABASE_URL for PostgreSQL cleanup integration")
-	}
+	dsn := testPlanningDatabaseURL(t)
 	t.Setenv("FLUX_DATABASE_URL", dsn)
 	t.Setenv("FLUX_ADMIN_DATABASE_URL", dsn)
 	var out bytes.Buffer
+	if err := runPlan([]string{"migrate"}, &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
 	if err := runPlan([]string{"cleanup"}, &out, &out); err != nil {
 		t.Fatal(err)
 	}

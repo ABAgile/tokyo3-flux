@@ -502,7 +502,8 @@ The test covers escaping, safe Markdown, keyed identity/focus, native forms, red
 Database-backed browser suites additionally exercise permissions, conflict recovery, uploads, comments, GitLab operations, proposals and keyboard workflows.
 The stylesheet is authored as ordered files under `internal/planningui/static/styles/` and served joined, in name order, as `/styles.css`.
 
-Use a disposable test DB; PostgreSQL tests skip without its URL.
+Create a disposable test database before setting `FLUX_TEST_DATABASE_URL`; PostgreSQL tests skip without its URL.
+No manual migration is needed: the tests create, migrate and drop their own temporary schemas.
 Browser scripts in `tests/` mutate disposable workspaces: planning/proposals require fresh seeded workspaces, drag-labels requires an empty workspace.
 Their workspace must be first for the test identity.
 Verify light/dark at 1440, 768 and 390px and keyboard access.
