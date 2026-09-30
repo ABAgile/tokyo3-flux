@@ -41,7 +41,7 @@ function preloadedBoard(receipt) {
  * @param {Flux.ChangeReceipt | null | undefined} receipt
  * @param {number} fallback
  */
-export function receiptRevision(receipt, fallback) {
+function receiptRevision(receipt, fallback) {
   const board = preloadedBoard(receipt)?.board.workspace?.revision;
   if (board !== undefined && Number.isSafeInteger(board)) return board;
   const revision = receipt?.revision;

@@ -218,7 +218,7 @@ function itemHaystack(lookups, item, generation) {
   return text;
 }
 /** @param {unknown} value */
-export function normalizedSearch(value) {
+function normalizedSearch(value) {
   return String(value || '')
     .trim()
     .toLowerCase();

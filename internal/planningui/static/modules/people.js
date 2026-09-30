@@ -88,14 +88,14 @@ const PARTICIPANT_STACK_LIMIT = 4;
  * @param {Flux.Item} item
  * @returns {readonly Flux.Participant[]}
  */
-export function itemParticipants(lookups, item) {
+function itemParticipants(lookups, item) {
   return lookups.participantsByItem.get(item.id) || NO_PARTICIPANTS;
 }
 /**
  * @param {Flux.Lookups} lookups
  * @param {Flux.Participant} participant
  */
-export function participantInfo(lookups, participant) {
+function participantInfo(lookups, participant) {
   const { session } = lookups;
   const member = lookups.membersBySubject.get(participant.subject);
   // An admin-maintained workspace name wins over the provider's, so a card and
