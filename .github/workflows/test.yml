@@ -10,6 +10,20 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: flux
+          POSTGRES_PASSWORD: fixture-password
+          POSTGRES_DB: flux_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flux -d flux_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      FLUX_TEST_DATABASE_URL: postgres://flux:fixture-password@127.0.0.1:5432/flux_test?sslmode=disable
 
     steps:
       - uses: actions/checkout@v5
@@ -72,3 +86,48 @@ jobs:
           git diff --exit-code -- internal/planningui/static/modules/vendor-preact.js
 
       - run: make check-web BIOME=biome RUMDL=rumdl
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: flux
+          POSTGRES_PASSWORD: fixture-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flux -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      FLUX_BROWSER_PG: postgres://flux:fixture-password@127.0.0.1:5432/postgres?sslmode=disable
+      PLAYWRIGHT_CLI_SESSION: flux-ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install browser test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm install --global @playwright/cli@0.1.22
+          playwright-cli install-browser chromium --with-deps
+          echo "FLUX_BROWSER_OUT=$RUNNER_TEMP/flux-browser-results" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_CLI_CONFIG=$RUNNER_TEMP/flux-playwright.json" >> "$GITHUB_ENV"
+          printf '%s\n' '{"browser":{"browserName":"chromium","launchOptions":{"channel":"chromium","headless":true}}}' > "$RUNNER_TEMP/flux-playwright.json"
+      - name: Run disposable database-backed browser suites
+        run: tests/run-browser.sh rendering planning drag-labels
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-results
+          path: ${{ runner.temp }}/flux-browser-results
+          if-no-files-found: ignore
