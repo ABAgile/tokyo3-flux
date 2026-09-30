@@ -184,5 +184,5 @@ help:
 	  } else header[++h]=line; \
 	} END { \
 	  for (i=1; i<=h; i++) print header[i]; \
-	  for (i=1; i<=n; i++) printf "  %-22s %s\\n", names[i], docs[names[i]]; \
+	  for (i=1; i<=n; i++) printf "  %-22s %s\n", names[i], docs[names[i]]; \
 	}' $(MAKEFILE_LIST)
