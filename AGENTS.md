@@ -12,9 +12,10 @@ UI state lives in one store (`modules/state.js`), changes go through named actio
   Shared contracts live in `tools/types/flux.d.ts` as `Flux.*` — the store `State`, board entities, `Lookups`, `RowContext`, `Command` and every dialog's props in `DialogProps` — and modules refer to them in JSDoc.
   A new state key goes into `Flux.State` and a new dialog into `Flux.DialogProps` and the App's `DIALOGS` map; its component takes `@param {Flux.DialogProps['type']} props`.
   `modules/vendor-preact.d.ts` types the bundle's exports for the checker only; it is never served.
-  `noImplicitAny` is on: every parameter, destructured prop and module-level `let` carries a JSDoc type, reusing a `Flux.*` type before adding one; do not silence it with `@type {any}`.
+  `strict` is on, including `noImplicitAny`: every parameter, destructured prop and module-level `let` carries a JSDoc type, reusing a `Flux.*` type before adding one; do not silence it with `@type {any}`.
   `tsc` does not check the inside of `html` templates, so a handler written there names its event, `(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => …` when it reads `currentTarget`.
-  `strictNullChecks` is on: a DOM ref names its element, `useRef(/** @type {HTMLInputElement | null} */ (null))`, and an action the UI offers only while a workspace is open reads it through `requireBoard()`, `requireRoot()` and `sessionCSRF()` from `modules/state.js`, which throw when that precondition is broken; code that can run without a board checks `state.board` instead.
+  A caught error is `unknown`: read its text with `errorMessage(error)` from `modules/api.js`.
+  Under `strictNullChecks` a DOM ref names its element, `useRef(/** @type {HTMLInputElement | null} */ (null))`, and an action the UI offers only while a workspace is open reads it through `requireBoard()`, `requireRoot()` and `sessionCSRF()` from `modules/state.js`, which throw when that precondition is broken; code that can run without a board checks `state.board` instead.
 - Import Preact runtime APIs directly from `modules/vendor-preact.js`; `modules/vdom.js` binds HTM's `html` tag to Preact's `h` and provides `memo` and `shallowEqual`.
   Use HTM templates, not JSX or raw HTML injection.
   `tsc` does not check props inside `html` templates, so the shared widgets — `MultiSelect`, `MarkdownEditor`, `FormDialog`, `CommandDialog` and `Card` — are rendered with `h(Widget, props, children)`, which is checked against their `Flux.*Props`; the `typed-widgets` lint rule rejects them in templates.

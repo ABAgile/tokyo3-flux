@@ -1,7 +1,7 @@
 // The List detail pane for the selected work item.
 import { html } from './vdom.js';
 import { useId, useLayoutEffect, useRef } from './vendor-preact.js';
-import { requestKey } from './api.js';
+import { errorMessage, requestKey } from './api.js';
 import { itemPayloadFromForm } from './item-command.js';
 import { state, setState, useStore, requireBoard } from './state.js';
 import { notice } from './notices.js';
@@ -111,7 +111,7 @@ export function ItemDetailPane({ detail }) {
       if (current?.formKey === detail.formKey)
         setState({
           detail: { ...current, dirty: true },
-          detailError: `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
+          detailError: `${errorMessage(submitError)} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
         });
     }
   }

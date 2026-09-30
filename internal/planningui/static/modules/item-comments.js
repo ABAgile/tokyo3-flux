@@ -1,5 +1,5 @@
 // Item comments: list, paging and composer.
-import { api, requestKey } from './api.js';
+import { api, errorMessage, requestKey } from './api.js';
 import { initials } from './format.js';
 import { markdownTemplate, markdownEditorTemplate } from './markdown.js';
 import { panelHeadTemplate, helpTextTemplate } from './layout.js';
@@ -205,7 +205,7 @@ function ItemComments({ root, item, onDraftChange }) {
         setBefore(0);
         setReload((value) => value + 1);
       } catch (error) {
-        if (!signal.aborted) dispatch({ type: 'status', text: error.message, error: true });
+        if (!signal.aborted) dispatch({ type: 'status', text: errorMessage(error), error: true });
       }
     });
   }

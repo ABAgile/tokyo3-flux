@@ -154,10 +154,15 @@ function apiUpload(path, { headers = {}, body, onProgress, signal } = {}) {
 function isAbortError(error) {
   return error?.name === 'AbortError';
 }
+// The text of a caught failure: an Error's message, otherwise the value itself.
+/** @param {unknown} error */
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 function requestKey() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
     byte.toString(16).padStart(2, '0'),
   ).join('');
 }
 
-export { api, apiRevalidated, apiUpload, isAbortError, requestKey };
+export { api, apiRevalidated, apiUpload, errorMessage, isAbortError, requestKey };

@@ -1,5 +1,5 @@
 // GitLab links and cached observations on cards, rows and the observations dialog.
-import { requestKey } from './api.js';
+import { errorMessage, requestKey } from './api.js';
 import { helpTextTemplate, emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useState, h } from './vendor-preact.js';
@@ -231,7 +231,7 @@ async function refreshObservation(item, link, key) {
     if (latest) showLinks(latest);
   } catch (e) {
     setEditorError(
-      `${e.message} Refresh the board to see current status; cooldowns prevent duplicate requests.`,
+      `${errorMessage(e)} Refresh the board to see current status; cooldowns prevent duplicate requests.`,
     );
   }
 }

@@ -156,8 +156,10 @@ export function useDismiss(
  * @param {{ active?: boolean, capture?: boolean }} [options]
  */
 export function useEventListener(target, type, handler, { active = true, capture = false } = {}) {
-  const handlerRef = useRef(/** @type {(event: Event) => void} */ (handler));
-  handlerRef.current = handler;
+  // The listener receives the event named by `type`, which `handler` expects.
+  const untyped = /** @type {(event: Event) => void} */ (/** @type {unknown} */ (handler));
+  const handlerRef = useRef(untyped);
+  handlerRef.current = untyped;
   useEffect(() => {
     if (!active || !target) return undefined;
     const listener = (/** @type {Event} */ event) => handlerRef.current(event);

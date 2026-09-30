@@ -1,5 +1,5 @@
 // Card attachments: loading, uploads, drops and tiles.
-import { api, apiUpload, isAbortError, requestKey } from './api.js';
+import { api, apiUpload, errorMessage, isAbortError, requestKey } from './api.js';
 import { workspaceSignal } from './workspace-session.js';
 import { attachmentSize, attachmentKind, attachmentTypeDescription } from './format.js';
 import { emptyStateTemplate } from './layout.js';
@@ -90,7 +90,7 @@ export function ensureAttachments(itemID) {
         throw new Error('Attachment list is invalid. Refresh to retry.');
       setItemAttachments(itemID, data);
     } catch (error) {
-      if (current()) notice(error.message, true);
+      if (current()) notice(errorMessage(error), true);
     } finally {
       attachmentLoads.delete(loadKey);
     }
@@ -117,8 +117,10 @@ function uploadRequestKey(item, file) {
   const signature = uploadSignature(item, file);
   let key = uploadRequestKeys.get(signature);
   if (!key) {
-    if (uploadRequestKeys.size >= 1000)
-      uploadRequestKeys.delete(uploadRequestKeys.keys().next().value);
+    if (uploadRequestKeys.size >= 1000) {
+      const oldest = uploadRequestKeys.keys().next().value;
+      if (oldest !== undefined) uploadRequestKeys.delete(oldest);
+    }
     key = requestKey();
     uploadRequestKeys.set(signature, key);
   }
@@ -212,7 +214,7 @@ async function dropFilesOntoItem(item, files) {
           signal,
         );
       } catch (error) {
-        if (!isAbortError(error)) notice(error.message, true);
+        if (!isAbortError(error)) notice(errorMessage(error), true);
         break;
       }
       if (signal.aborted) break;
@@ -450,7 +452,7 @@ function ItemAttachments({ root, item, readOnly }) {
         setItemAttachments(item.id, next);
         setStatus(next.length ? 'Attachment removed.' : 'No attachments yet.');
       } catch (error) {
-        if (!signal.aborted) setStatus(error.message, true);
+        if (!signal.aborted) setStatus(errorMessage(error), true);
       }
     });
   }
@@ -492,7 +494,7 @@ function ItemAttachments({ root, item, readOnly }) {
           setStatus('Attachment uploaded.');
           uploaded++;
         } catch (error) {
-          if (!signal.aborted) setStatus(error.message, true);
+          if (!signal.aborted) setStatus(errorMessage(error), true);
           break;
         } finally {
           setState({ uploadBusy: false });

@@ -1,4 +1,5 @@
 // Adding and reconciling GitLab links on a work item.
+import { errorMessage } from './api.js';
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useId, useRef, useState, h } from './vendor-preact.js';
@@ -126,7 +127,7 @@ async function attachItemGitLabLink(item, link, origin) {
       const latest = state.board.items.find((value) => value.id === item.id);
       if (latest && origin.draft)
         reopenItemEditor(latest, origin.draft, origin.mode, origin.originFocusKey);
-      notice(error.message, true);
+      notice(errorMessage(error), true);
     }
     return;
   }
@@ -167,7 +168,7 @@ function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }
         await attachItemGitLabLink(item, link, { mode, draft: getDraft?.(), originFocusKey });
       } catch (error) {
         if (signal.aborted) return;
-        setStatus({ text: error.message, error: true });
+        setStatus({ text: errorMessage(error), error: true });
         input.current?.focus();
       }
     });

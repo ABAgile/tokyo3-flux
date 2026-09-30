@@ -32,8 +32,8 @@ import { html } from './vdom.js';
  *   step?: number | string,
  *   autocomplete?: string,
  *   defaultChecked?: boolean,
- *   onChange?: (event: Event) => void,
- *   onInput?: (event: Event) => void,
+ *   onChange?: Flux.EventHandler,
+ *   onInput?: Flux.EventHandler,
  * }} FieldOptions
  */
 // A bordered surface. Variants add their own padding and inner layout.
@@ -137,7 +137,7 @@ function filterControlID(title, base) {
  * @param {string} title
  * @param {SelectEntries} entries
  * @param {string} id
- * @param {(event: Event) => void} onChange
+ * @param {Flux.EventHandler} onChange
  */
 function filterSelectTemplate(title, entries, id, onChange) {
   return html`<label for=${id}
@@ -150,7 +150,7 @@ function filterSelectTemplate(title, entries, id, onChange) {
  * @param {string} title
  * @param {string} id
  * @param {{ value?: string, placeholder?: string, maxLength?: number }} options
- * @param {(event: Event) => void} onInput
+ * @param {Flux.EventHandler} onInput
  */
 function filterSearchTemplate(
   title,

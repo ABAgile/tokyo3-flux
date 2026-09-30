@@ -1,4 +1,5 @@
 // The GitLab integration form on the Projects page.
+import { errorMessage } from './api.js';
 import { errorLineTemplate, fieldTemplate, helpTextTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useRef, h } from './vendor-preact.js';
@@ -53,7 +54,7 @@ async function submitIntegration(event, readOnly, loading) {
   } catch (submitError) {
     setState({
       integrationFormOpen: true,
-      integrationFormError: `${submitError.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
+      integrationFormError: `${errorMessage(submitError)} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
     });
   } finally {
     setState({ integrationSubmitting: false });

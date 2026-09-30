@@ -41,7 +41,8 @@ export const options: Record<string, unknown> & {
 };
 export function render(vnode: ComponentChildren, parent: Element | DocumentFragment): void;
 export function htm(
-  this: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => unknown,
+  // Any hyperscript function: `never` parameters accept `h`'s overloads.
+  this: (type: never, props: never, ...children: never[]) => unknown,
   strings: TemplateStringsArray,
   ...values: unknown[]
 ): any;

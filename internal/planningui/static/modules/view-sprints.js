@@ -29,7 +29,7 @@ import { quick } from './commands.js';
 import { openDialog } from './dialog-state.js';
 import { CommandDialog } from './dialog.js';
 import { loadSprintHistory } from './page-data.js';
-import { isAbortError } from './api.js';
+import { errorMessage, isAbortError } from './api.js';
 import { toggleBurndown, viewSprintScope } from './actions.js';
 import { sprintVelocityTemplate } from './view-velocity.js';
 
@@ -193,7 +193,7 @@ async function loadOlderSprintHistory() {
   try {
     await loadSprintHistory();
   } catch (error) {
-    if (!isAbortError(error)) setState({ sprintHistoryError: error.message });
+    if (!isAbortError(error)) setState({ sprintHistoryError: errorMessage(error) });
   }
 }
 /** @param {{ record: Flux.SprintHistoryRecord }} props */

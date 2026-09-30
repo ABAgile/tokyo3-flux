@@ -392,6 +392,10 @@ declare namespace Flux {
   }
   type DialogType = keyof DialogProps;
 
+  // A handler for an element's events. It is declared as a method so that a
+  // handler naming a narrower event, such as `TargetEvent<HTMLInputElement>`,
+  // stays assignable under strictFunctionTypes.
+  type EventHandler<E extends Event = Event> = { bivarianceHack(event: E): void }['bivarianceHack'];
   // An event whose `currentTarget` is the element the handler is bound to.
   type TargetEvent<T extends Element, E extends Event = Event> = E & { currentTarget: T };
 

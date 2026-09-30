@@ -1,5 +1,5 @@
 // Planning changes: posting, optimistic apply, undo and sequences.
-import { api, requestKey } from './api.js';
+import { api, errorMessage, requestKey } from './api.js';
 import { state, setState, requireBoard, sessionCSRF } from './state.js';
 import { writable } from './permissions.js';
 import { notice, offerUndo, UNDO_TTL } from './notices.js';
@@ -212,7 +212,7 @@ export async function quick(command) {
       offerUndo(`${undo.text} · undo is available for ${UNDO_TTL / 1000} seconds`, undo.commands);
   } catch (e) {
     rollback?.();
-    notice(e.message, true);
+    notice(errorMessage(e), true);
   }
 }
 // Bulk edits are separate revision-checked commands applied in order. The
@@ -251,7 +251,7 @@ export async function runSequence(label, commands) {
         revision = receiptRevision(receipt, revision + 1);
         applied++;
       } catch (error) {
-        failure = error.message;
+        failure = errorMessage(error);
         break;
       }
     }

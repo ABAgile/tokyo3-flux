@@ -24,11 +24,11 @@ function endDrag() {
 }
 // Combines event props from several hooks; handlers run in argument order.
 /**
- * @param {...Record<string, (event: Event) => void>} list
- * @returns {Record<string, (event: Event) => void>}
+ * @param {...Record<string, Flux.EventHandler>} list
+ * @returns {Record<string, Flux.EventHandler>}
  */
 export function mergeEventProps(...list) {
-  /** @type {Record<string, (event: Event) => void>} */
+  /** @type {Record<string, Flux.EventHandler>} */
   const merged = {};
   for (const props of list)
     for (const [name, handler] of Object.entries(props)) {

@@ -9,7 +9,7 @@ import {
   useState,
   h,
 } from './vendor-preact.js';
-import { requestKey } from './api.js';
+import { errorMessage, requestKey } from './api.js';
 import { setState, state, useStore } from './state.js';
 import { focusKey } from './ui-hooks.js';
 import { clearFocusRequest } from './focus-request.js';
@@ -192,7 +192,7 @@ export function FormDialog({
     try {
       await onSubmit(new FormData(form), form);
     } catch (submitError) {
-      setEditorError(submitError.message);
+      setEditorError(errorMessage(submitError));
     } finally {
       submitting.current = false;
       setSaving(false);
@@ -246,7 +246,7 @@ export function CommandDialog({ command, afterSave, ...props }) {
       closeEditor();
     } catch (error) {
       setEditorError(
-        `${error.message} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
+        `${errorMessage(error)} Your input is retained. For a revision conflict, copy your changes, close, refresh, and reopen before retrying.`,
       );
     }
   }

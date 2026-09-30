@@ -1,6 +1,6 @@
 // Named UI actions. Each action validates against the current state and makes
 // one store update for everything it changes; components import them directly.
-import { api, isAbortError, requestKey } from './api.js';
+import { api, errorMessage, isAbortError, requestKey } from './api.js';
 import { beginWorkspaceSession, workspaceSignal } from './workspace-session.js';
 import { setState, state, requireBoard, sessionCSRF, requireRoot } from './state.js';
 import { notice, clearError, clearUndo, clearPlanningChangeNotice } from './notices.js';
@@ -235,8 +235,8 @@ export async function navigate(view) {
     if (!signal.aborted) setState(page);
   } catch (e) {
     if (signal.aborted || isAbortError(e)) return;
-    if (view === 'sprints') setState({ sprintHistoryError: e.message });
-    notice(e.message, true);
+    if (view === 'sprints') setState({ sprintHistoryError: errorMessage(e) });
+    notice(errorMessage(e), true);
   }
 }
 /** @param {Flux.State['presentation']} next */
@@ -389,7 +389,7 @@ async function refreshWorkspaceGate() {
     );
     return true;
   } catch (e) {
-    if (!load.signal.aborted) notice(e.message, true);
+    if (!load.signal.aborted) notice(errorMessage(e), true);
     return false;
   } finally {
     finishLoad(load);
@@ -483,7 +483,7 @@ export async function createWorkspace(value) {
     setState({
       workspaceGate: 'create',
       root: undefined,
-      workspaceCreateStatus: error.message,
+      workspaceCreateStatus: errorMessage(error),
       workspaceCreateStatusError: true,
     });
   } finally {
@@ -515,6 +515,6 @@ export async function startApp() {
     setState({ workspaceGate: 'select' });
     notice('Choose a workspace to continue.');
   } catch (e) {
-    notice(e.message, true);
+    notice(errorMessage(e), true);
   }
 }

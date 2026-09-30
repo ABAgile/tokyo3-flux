@@ -7,7 +7,7 @@ import { useStore } from './state.js';
 import { notice } from './notices.js';
 import { memberListingInfo } from './people.js';
 import { selectLookups } from './lookups.js';
-import { isAbortError } from './api.js';
+import { errorMessage, isAbortError } from './api.js';
 import { loadHistory } from './page-data.js';
 /**
  * @param {Flux.Lookups} lookups
@@ -27,7 +27,7 @@ async function loadOlderHistory() {
   try {
     await loadHistory();
   } catch (e) {
-    if (!isAbortError(e)) notice(e.message, true);
+    if (!isAbortError(e)) notice(errorMessage(e), true);
   }
 }
 /** @param {{ event: Flux.HistoryEvent, label: string, lookups: Flux.Lookups }} props */

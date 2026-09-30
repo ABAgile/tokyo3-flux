@@ -1,5 +1,5 @@
 // Board refresh and merging, the workspace gate, and the background polls.
-import { api, apiRevalidated } from './api.js';
+import { api, apiRevalidated, errorMessage } from './api.js';
 import { beginWorkspaceSession, withWorkspace, workspaceSignal } from './workspace-session.js';
 import { useEffect } from './vendor-preact.js';
 import { setState, state, requireBoard } from './state.js';
@@ -212,7 +212,7 @@ export async function refresh(preloaded) {
     notice('Up to date.');
     return true;
   } catch (e) {
-    if (!signal.aborted) notice(e.message, true);
+    if (!signal.aborted) notice(errorMessage(e), true);
     return false;
   } finally {
     finishLoad(load);
