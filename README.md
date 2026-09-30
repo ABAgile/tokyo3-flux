@@ -479,6 +479,12 @@ docker compose config -q
 It replaces the standalone `test`, `tidy`, `vet` and `lint` targets and ends with `make check-web`: pinned Biome and rumdl checks (any lint warning fails), the strict type check of `app.js` and every module, and the Node tests.
 Run `make fmt-web` after JS, CSS or Markdown edits and `make check-web` before handing off; [AGENTS.md](AGENTS.md) lists the frontend conventions.
 Keep them separate: `fmt-web` modifies files, while `check-web` verifies them without changes and runs all Node tests.
+`check-web` runs the Biome, type, Markdown and Node checks concurrently with grouped output; any failed task fails the target.
+GNU Make schedules four internal phony targets with `-j4 --output-sync=target`; these helpers are omitted from `make help`.
+
+CI provisions PostgreSQL for the Go database tests and runs the `rendering`, `planning` and `drag-labels` browser suites against throwaway databases in a separate job.
+`tests/fixtures/board.json` is a fully populated Go board checked against `Flux.Board`, including nested field names and value types, and reused by Node tests.
+After an intentional contract change, update the Go sample and frontend declarations, then regenerate it with `go test ./internal/planning -run '^TestBoardJSONContract$' -update-board-contract`.
 
 ### Preact + HTM experiment
 
@@ -490,6 +496,8 @@ This is a rendering migration, not a rewrite of the API or application state mod
 View/template boundaries from the `lit-html` experiment were reused where applicable so the comparison does not introduce unrelated layout or feature changes.
 
 The application still serves plain ES modules without an application build step, CDN access or relaxed CSP.
+At startup, Go precompresses the in-memory assets and adds same-origin module preloads to the shell to avoid serial import discovery.
+Clients accepting gzip receive the compressed representation with an encoding-specific ETag and `Vary: Accept-Encoding`; uncompressed delivery remains available and both representations retain `Cache-Control: no-cache` revalidation.
 Import maps are not used because browser import maps require inline script blocks, which conflict with the existing CSP and prohibition on inline scripts.
 The checked-in same-origin Preact/HTM bundle is rebuilt with `make vendor-web`; exact package versions and integrity hashes live in `tools/vendor/package-lock.json`, alongside the upstream licenses.
 Only rebuilding that bundle requires npm installation.
