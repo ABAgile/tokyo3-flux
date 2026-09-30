@@ -85,13 +85,23 @@ declare namespace Flux {
     avatar_url?: string;
   }
   interface Pipeline {
+    source_updated_at?: string;
+    current_head?: boolean;
     id: number;
     url?: string;
     state: string;
     sha?: string;
     provider_state?: string;
   }
+  interface Reviewer {
+    id: number;
+    name?: string;
+    username?: string;
+    avatar_url?: string;
+  }
   interface Observation {
+    source_updated_at?: string;
+    reviewers?: Reviewer[];
     url: string;
     title: string;
     mr_state: string;
@@ -138,7 +148,13 @@ declare namespace Flux {
     instance: string;
     projects: number[];
   }
+  interface ImportReceipt {
+    source: string;
+    item_id: string;
+    proposal_id: string;
+  }
   interface Board {
+    imported?: ImportReceipt[];
     workspace: Workspace;
     role: Role | string;
     refresh_seconds?: number;

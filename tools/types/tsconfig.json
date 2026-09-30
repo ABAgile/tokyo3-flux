@@ -9,6 +9,7 @@
     "moduleResolution": "bundler",
     "allowJs": true,
     "checkJs": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "strict": true,
     "skipLibCheck": true
@@ -17,7 +18,8 @@
     "../../internal/planningui/static/app.js",
     "../../internal/planningui/static/modules/*.js",
     "../../internal/planningui/static/modules/*.d.ts",
-    "./flux.d.ts"
+    "./flux.d.ts",
+    "./board-contract.ts"
   ],
   "exclude": ["../../internal/planningui/static/modules/vendor-preact.js"]
 }

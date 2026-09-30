@@ -1,0 +1,166 @@
+{
+  "imported": [
+    {
+      "source": "fixture",
+      "item_id": "item-one",
+      "proposal_id": "proposal-one"
+    }
+  ],
+  "refresh_seconds": 30,
+  "integration": {
+    "instance": "https://gitlab.example",
+    "projects": [
+      42
+    ]
+  },
+  "connector_instance": "https://gitlab.example",
+  "links": [
+    {
+      "refresh_pending": false,
+      "id": "link-one",
+      "project": 42,
+      "kind": "mr",
+      "number": 7,
+      "items": [
+        "item-one"
+      ],
+      "observation": {
+        "source_updated_at": "2026-09-10T12:00:00Z",
+        "url": "https://gitlab.example/team/project/-/merge_requests/7",
+        "title": "MR",
+        "mr_state": "opened",
+        "draft": false,
+        "review": "approved",
+        "head_sha": "head-a",
+        "pipeline": {
+          "source_updated_at": "2026-09-10T12:00:00Z",
+          "url": "https://gitlab.example/team/project/-/pipelines/12",
+          "id": 12,
+          "sha": "head-a",
+          "state": "success",
+          "provider_state": "success",
+          "current_head": true
+        },
+        "reviewers": [
+          {
+            "id": 42,
+            "name": "Reviewer",
+            "username": "reviewer",
+            "avatar_url": "https://gitlab.example/avatar/42.png"
+          }
+        ]
+      },
+      "last_success": "2026-09-10T12:00:00Z",
+      "last_attempt": "2026-09-10T12:00:00Z",
+      "outcome": "success",
+      "next_refresh": "2026-09-10T12:00:00Z"
+    }
+  ],
+  "labels": [
+    {
+      "name": "bug",
+      "color": "#ffcc00"
+    }
+  ],
+  "workspace": {
+    "id": "workspace-one",
+    "name": "Contract team",
+    "role": "admin",
+    "revision": 4
+  },
+  "projects": [
+    {
+      "id": "project-one",
+      "workspace_id": "workspace-one",
+      "name": "Project",
+      "revision": 1
+    }
+  ],
+  "role": "admin",
+  "columns": [
+    {
+      "id": "todo",
+      "name": "To do",
+      "category": "todo",
+      "position": 0,
+      "wip": 5
+    }
+  ],
+  "items": [
+    {
+      "id": "item-one",
+      "title": "Contract item",
+      "description": "**Shared** planning",
+      "start_date": "2026-09-10",
+      "end_date": "2026-09-20",
+      "due_date": "2026-09-18",
+      "column_id": "todo",
+      "project_id": "project-one",
+      "project_ids": [
+        "project-one"
+      ],
+      "sprint_ids": [
+        "sprint-one"
+      ],
+      "assignee": "7",
+      "rank": 0,
+      "revision": 2,
+      "archived": false,
+      "labels": [
+        "bug"
+      ],
+      "dependencies": [],
+      "attachments": [
+        {
+          "id": 1,
+          "item_id": "item-one",
+          "name": "notes.txt",
+          "content_type": "text/plain",
+          "size": 12,
+          "digest": "fixture-digest",
+          "uploader": "7",
+          "created_at": "2026-09-10T12:00:00Z"
+        }
+      ],
+      "attachment_count": 1
+    }
+  ],
+  "sprints": [
+    {
+      "id": "sprint-one",
+      "name": "Sprint",
+      "goal": "Verify contracts",
+      "start": "2026-09-10",
+      "end": "2026-09-20",
+      "state": "active",
+      "revision": 1
+    }
+  ],
+  "members": [
+    {
+      "name": "Team member",
+      "subject": "7",
+      "role": "admin",
+      "username": "member",
+      "avatar_url": "https://gitlab.example/avatar/7.png"
+    }
+  ],
+  "closed_scope": [
+    {
+      "sprint_id": "closed-sprint",
+      "item_id": "item-one"
+    }
+  ],
+  "participants": [
+    {
+      "item_id": "item-one",
+      "subject": "42",
+      "roles": [
+        "reviewer"
+      ],
+      "name": "Reviewer",
+      "username": "reviewer",
+      "avatar_url": "https://gitlab.example/avatar/42.png"
+    }
+  ]
+}

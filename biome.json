@@ -20,6 +20,7 @@
       "!internal/planningui/static/modules/vendor-preact.js",
       "tools/vendor/*.js",
       "tools/*.mjs",
+      "tools/types/board-contract.ts",
       "internal/planningui/static/**/*.css",
       "tests/**/*.js",
       "tests/**/*.mjs",
