@@ -16,15 +16,25 @@ import { selectLookups } from './lookups.js';
 import { useRequest, waitUntil } from './ui-hooks.js';
 import { usePermissions } from './permissions.js';
 
+/** @param {number | null} value @returns {value is number} */
+const isCount = (value) => Number.isFinite(value);
+/**
+ * @param {readonly Flux.BurndownPoint[]} points
+ * @param {'scope' | 'remaining'} key
+ * @param {(index: number) => number} x
+ * @param {(value: number) => number} y
+ */
 function burndownSegments(points, key, x, y) {
+  /** @type {string[]} */
   const segments = [];
+  /** @type {string[]} */
   let segment = [];
   const flush = () => {
     if (segment.length > 1) segments.push(segment.join(' '));
     segment = [];
   };
   points.forEach((point, index) => {
-    if (!Number.isFinite(point[key])) {
+    if (!isCount(point[key])) {
       flush();
       return;
     }
@@ -33,6 +43,7 @@ function burndownSegments(points, key, x, y) {
   flush();
   return segments;
 }
+/** @param {Flux.Burndown} data */
 function burndownSVG(data) {
   const width = 760,
     height = 220,
@@ -43,11 +54,11 @@ function burndownSVG(data) {
     plotWidth = width - left - right,
     plotHeight = height - top - bottom,
     points = data.points;
-  const values = points.flatMap((point) => [point.scope, point.remaining]).filter(Number.isFinite);
+  const values = points.flatMap((point) => [point.scope, point.remaining]).filter(isCount);
   const maximum = Math.max(1, ...values);
-  const x = (index) =>
+  const x = (/** @type {number} */ index) =>
     points.length > 1 ? left + (index / (points.length - 1)) * plotWidth : left + plotWidth / 2;
-  const y = (value) => top + ((maximum - value) / maximum) * plotHeight;
+  const y = (/** @type {number} */ value) => top + ((maximum - value) / maximum) * plotHeight;
   const title = `Burn down for ${data.sprint.name}`;
   const grid = [
     ...new Set(Array.from({ length: 5 }, (_, index) => Math.round(maximum * (1 - index / 4)))),
@@ -56,22 +67,19 @@ function burndownSVG(data) {
       html`<line class="burndown-grid" x1=${left} x2=${width - right} y1=${y(value)} y2=${y(value)}></line><text class="burndown-axis-label" x=${left - 8} y=${y(value) + 4} text-anchor="end">${String(value)}</text>`,
   );
   const first = points.findIndex((point) => Number.isFinite(point.remaining));
-  const idealStart =
-    first >= 0
-      ? Number.isFinite(points[first].scope)
-        ? points[first].scope
-        : points[first].remaining
-      : 0;
+  const idealStart = /** @type {number} */ (
+    first >= 0 ? (isCount(points[first].scope) ? points[first].scope : points[first].remaining) : 0
+  );
   const ideal =
     first >= 0
       ? html`<line class="burndown-ideal" x1=${x(first)} x2=${x(points.length - 1)} y1=${y(idealStart)} y2=${y(0)}></line>`
       : null;
-  const lines = (key, className) =>
+  const lines = (/** @type {'scope' | 'remaining'} */ key, /** @type {string} */ className) =>
     burndownSegments(points, key, x, y).map(
       (segment) => html`<polyline class=${className} points=${segment}></polyline>`,
     );
   const dots = points.map((point, index) =>
-    Number.isFinite(point.remaining)
+    isCount(point.remaining)
       ? html`<circle class="burndown-point" cx=${x(index)} cy=${y(point.remaining)} r="3"><title>${`${burndownDateLabel(point.date)} · ${point.remaining} remaining · ${point.scope} in scope`}</title></circle>`
       : null,
   );
@@ -89,12 +97,18 @@ function burndownSVG(data) {
     class="burndown-svg"
   ><title>${title}</title>${grid}${ideal}${lines('scope', 'burndown-scope')}${lines('remaining', 'burndown-actual')}${dots}${dates}</svg>`;
 }
+/**
+ * @param {string} className
+ * @param {string} text
+ */
 function burndownLegendItem(className, text) {
   return html`<span class="burndown-legend-item"
     ><span class=${`burndown-swatch ${className}`}></span><span>${text}</span></span
   >`;
 }
+/** @param {Flux.Burndown} data */
 function burndownTable(data) {
+  /** @type {[string, 'scope' | 'remaining'][]} */
   const rows = [
     ['In scope', 'scope'],
     ['Remaining', 'remaining'],
@@ -125,12 +139,26 @@ function burndownTable(data) {
     </div>
   </details>`;
 }
+/**
+ * @param {readonly Flux.BurndownPoint[]} points
+ * @param {'scope' | 'remaining'} key
+ */
 function latestBurndownPoint(points, key) {
   return [...points].reverse().find((point) => Number.isFinite(point[key]));
 }
+/**
+ * @param {readonly Flux.BurndownPoint[]} points
+ * @param {'scope' | 'remaining'} key
+ */
 function firstBurndownPoint(points, key) {
   return points.find((point) => Number.isFinite(point[key]));
 }
+/**
+ * @param {{ data: Flux.Burndown | undefined, error: { message: string } | undefined,
+ *   loading: boolean, reload: () => void }} result
+ * @param {(...extra: unknown[]) => unknown} context
+ * @param {boolean} busy
+ */
 function burndownBody(result, context, busy) {
   const { data, error, loading } = result;
   if (error)
@@ -146,8 +174,9 @@ function burndownBody(result, context, busy) {
     return html`${context()}${emptyStateTemplate(
       data.warning || 'No matching work is available for this sprint and filter.',
     )}`;
-  const first = firstBurndownPoint(data.points, 'remaining');
-  const latest = latestBurndownPoint(data.points, 'remaining');
+  // A point with a remaining count exists: the empty case returned above.
+  const first = /** @type {Flux.BurndownPoint} */ (firstBurndownPoint(data.points, 'remaining'));
+  const latest = /** @type {Flux.BurndownPoint} */ (latestBurndownPoint(data.points, 'remaining'));
   const metrics = metricListTemplate(
     [
       [firstBurndownPoint(data.points, 'scope')?.scope ?? first.remaining, 'Starting scope'],
@@ -167,6 +196,15 @@ function burndownBody(result, context, busy) {
     </div>
     ${burndownTable(data)}`;
 }
+/**
+ * @param {string} root
+ * @param {string} sprintID
+ * @param {string} project
+ * @param {string} assignee
+ * @param {number} revision
+ * @param {AbortSignal} signal
+ * @returns {Promise<Flux.Burndown>}
+ */
 async function loadBurndown(root, sprintID, project, assignee, revision, signal) {
   // Reads wait for a board refresh to settle, so they are checked against the
   // revision the refresh produces.
@@ -179,6 +217,7 @@ async function loadBurndown(root, sprintID, project, assignee, revision, signal)
     throw new Error('Planning changed while loading. Refresh to review.');
   return next;
 }
+/** @param {Flux.State} current */
 function selectBurndownInputs(current) {
   return [
     current.root,
@@ -190,6 +229,7 @@ function selectBurndownInputs(current) {
 // The chart reads the server's native planning history for the sprint and the
 // single project and assignee filter. Each revision or filter change is a new
 // request; while any chart loads, the content body is busy.
+/** @param {{ sprint: Flux.Sprint }} props */
 function BurndownPanel({ sprint }) {
   const inputs = useStore(selectBurndownInputs);
   const filters = useStore((current) => current.filters);
@@ -210,7 +250,7 @@ function BurndownPanel({ sprint }) {
     <p class="muted">${`Project: ${selectedFilterText(lookups, 'project', filters)}`}</p>
     <p class="muted">${`Assignee: ${selectedFilterText(lookups, 'assignee', filters)}`}</p>
   </div>`;
-  const context = (...extra) => html`<div class="burndown-context">
+  const context = (/** @type {unknown[]} */ ...extra) => html`<div class="burndown-context">
     ${panelHeadTemplate('Remaining work', {
       id: headingID,
       description: filterCondition,
@@ -223,6 +263,7 @@ function BurndownPanel({ sprint }) {
     aria-labelledby=${headingID}
   >${burndownBody(result, context, busy)}</section>`;
 }
+/** @param {Flux.Sprint} sprint */
 export function burndownTemplate(sprint) {
   return html`<${BurndownPanel} key=${sprint.id} sprint=${sprint} />`;
 }

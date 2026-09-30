@@ -10,13 +10,19 @@ import { openDialog, setEditorError } from './dialog-state.js';
 import { FormDialog } from './dialog.js';
 import { useObservationTooltip } from './tooltip.js';
 
+/**
+ * @param {Flux.Link} link
+ * @param {boolean} [includeTitle]
+ */
 export function linkDisplayName(link, includeTitle = true) {
   const name = `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number} · project ${link.project}`;
   return includeTitle && link.observation?.title ? `${name} · ${link.observation.title}` : name;
 }
+/** @param {Flux.Link} link */
 function linkLabel(link) {
   return `${link.kind === 'mr' ? 'MR !' : 'Pipeline #'}${link.number}`;
 }
+/** @param {Flux.Link} link */
 function mergeRequestLinkURL(link) {
   if (typeof link.observation?.url === 'string' && link.observation.url)
     return link.observation.url;
@@ -35,6 +41,10 @@ function mergeRequestLinkURL(link) {
     return '';
   }
 }
+/**
+ * @param {Flux.Link} link
+ * @param {string} [focusKey]
+ */
 export function cardLinkTemplate(link, focusKey) {
   const url = link.kind === 'mr' ? mergeRequestLinkURL(link) : link.observation?.url;
   const key = focusKey || `link:${link.id}`;
@@ -58,6 +68,10 @@ export function cardLinkTemplate(link, focusKey) {
     rel="noopener noreferrer"
   >${linkLabel(link)}</a>`;
 }
+/**
+ * @param {Flux.Link} link
+ * @param {Flux.Pipeline | null | undefined} pipeline
+ */
 function pipelineLinkURL(link, pipeline) {
   if (typeof pipeline?.url === 'string' && pipeline.url) return pipeline.url;
   const source = link.observation?.url;
@@ -76,6 +90,7 @@ function pipelineLinkURL(link, pipeline) {
     return '';
   }
 }
+/** @param {Flux.Link} link */
 function pipelineLinkTemplate(link) {
   const pipeline = link.observation?.pipeline;
   if (!pipeline) return null;
@@ -88,7 +103,9 @@ function pipelineLinkTemplate(link) {
       >`
     : html`<span class="card-link" title=${title}>${text}</span>`;
 }
+/** @param {Flux.Link} link */
 function observationOutcomeText(link) {
+  /** @type {Record<string, string>} */
   const outcomes = {
     unobserved: 'Not observed',
     ok: 'Observed',
@@ -104,12 +121,14 @@ function observationOutcomeText(link) {
   };
   return outcomes[link.outcome] || 'Observation unavailable';
 }
+/** @param {Flux.Link} link */
 function observationIsStale(link) {
   if (link.refresh_pending || link.outcome === 'refreshing') return true;
   if (!link.last_success) return false;
   const timestamp = Date.parse(link.last_success);
   return Number.isNaN(timestamp) || Date.now() - timestamp > 5 * 60 * 1000 || link.outcome !== 'ok';
 }
+/** @param {Flux.Link} link */
 function observationTooltip(link) {
   const observation = link.observation;
   const parts = [];
@@ -122,6 +141,7 @@ function observationTooltip(link) {
   parts.push(observationTiming(link));
   return `${linkLabel(link)} · ${parts.join(' · ')}`;
 }
+/** @param {Flux.Link} link */
 function observationIconState(link) {
   if (link.refresh_pending || link.outcome === 'refreshing')
     return { symbol: '↻', status: 'pending', stale: true };
@@ -144,6 +164,7 @@ function observationIconState(link) {
   if (state === 'opened') return { symbol: '●', status: 'open', stale: observationIsStale(link) };
   return { symbol: '?', status: 'unknown', stale: observationIsStale(link) };
 }
+/** @param {{ link: Flux.Link, focusKey?: string }} props */
 function ObservationIcon({ link, focusKey }) {
   const icon = observationIconState(link);
   const text = observationTooltip(link);
@@ -164,17 +185,23 @@ function ObservationIcon({ link, focusKey }) {
     ...${tooltip.props}
   >${icon.symbol}</span>`;
 }
+/**
+ * @param {Flux.Link} link
+ * @param {string} [focusKey]
+ */
 export function cardObservationIconTemplate(link, focusKey) {
   return html`<${ObservationIcon} key=${`observation:${link.id}`} link=${link} focusKey=${focusKey} />`;
 }
+/** @param {Flux.Link} link */
 function observationTiming(link) {
-  const timestamp = (value) => {
+  const timestamp = (/** @type {string | null | undefined} */ value) => {
     if (!value) return 'none yet';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'unavailable' : date.toLocaleString();
   };
   return `Last successful refresh: ${timestamp(link.last_success)} · Latest refresh attempt: ${timestamp(link.last_attempt)}`;
 }
+/** @type {Record<string, string>} */
 const LINK_OUTCOMES = {
   unobserved: 'Not refreshed',
   ok: 'Last attempt succeeded',
@@ -188,6 +215,11 @@ const LINK_OUTCOMES = {
   outdated: 'Older provider version ignored; cached data retained',
   refreshing: 'Refresh requested; retry after cooldown if interrupted',
 };
+/**
+ * @param {Flux.Item} item
+ * @param {Flux.Link} link
+ * @param {string} key
+ */
 async function refreshObservation(item, link, key) {
   if (!writable()) return;
   try {
@@ -203,6 +235,7 @@ async function refreshObservation(item, link, key) {
     );
   }
 }
+/** @param {{ item: Flux.Item, link: Flux.Link }} props */
 function LinkObservation({ item, link }) {
   const board = useStore((current) => current.board);
   const busy = useStore((current) => current.busy);
@@ -263,6 +296,7 @@ function LinkObservation({ item, link }) {
 }
 // The observations dialog is a snapshot of the card's links when it opened;
 // refresh controls follow the live board and busy state.
+/** @param {Flux.Item} item */
 export function showLinks(item) {
   const board = requireBoard();
   openDialog('links.show', {

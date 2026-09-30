@@ -12,6 +12,7 @@ export function workspaceURLState() {
 export function workspacePreference() {
   return workspaceURLState() || localStorage.getItem('flux-plan-workspace') || '';
 }
+/** @param {string | undefined} id */
 export function persistWorkspaceURL(id) {
   const url = new URL(window.location.href);
   if (id) {
@@ -79,6 +80,7 @@ export function planningPatchFromURL(urlState, board) {
 }
 // Filters serialize as comma-separated values so a multi-value planning view
 // stays shareable as a URL.
+/** @param {Pick<Flux.State, 'presentation' | 'filters' | 'scope' | 'sharedItemID'>} current */
 function planningURL(current) {
   const url = new URL(window.location.href);
   url.searchParams.set('mode', current.presentation);
@@ -101,12 +103,14 @@ export function restorePlanningURL() {
 // from one card to another closes and opens within the same task; the URL
 // effect sees only the final card, so Back does not stop at an intermediate state.
 let pushSharedItem = false;
+/** @param {string | undefined} id */
 export function setSharedItem(id) {
   const next = String(id || '');
   if (next === state.sharedItemID) return;
   pushSharedItem = true;
   setState({ sharedItemID: next });
 }
+/** @param {Flux.State} current */
 function selectPlanningURL(current) {
   return {
     ready: !!current.board && current.planningURLReady,
@@ -136,6 +140,7 @@ export function usePlanningURL() {
 // A shared link carries only the workspace and the card. Filters are deliberately
 // dropped: a reader must never receive a link whose active scope hides the very
 // card it points at.
+/** @param {string} itemID */
 function cardShareURL(itemID) {
   const url = new URL(window.location.href);
   url.hash = '';
@@ -144,6 +149,7 @@ function cardShareURL(itemID) {
   url.searchParams.set('item', itemID);
   return url.href;
 }
+/** @param {Flux.Item} item */
 export async function copyCardLink(item) {
   const link = cardShareURL(item.id);
   try {
@@ -162,6 +168,11 @@ export async function copyCardLink(item) {
 // A card link resolves against the board first and falls back to the single-card
 // read, which answers for archived cards too. Archive pages are never walked:
 // the card is found by identity regardless of how much history exists.
+/**
+ * @param {string} itemID
+ * @param {AbortSignal} signal
+ * @returns {Promise<Flux.Item | undefined>}
+ */
 export async function resolveSharedItem(itemID, signal) {
   const local = requireBoard().items.find((value) => value.id === itemID);
   if (local) return local;

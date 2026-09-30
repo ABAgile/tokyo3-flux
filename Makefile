@@ -93,10 +93,9 @@ fmt-web:
 lint-web:
 	$(BIOME) lint .
 
-## typecheck-web: Type-check the frontend modules against their JSDoc and tools/types/flux.d.ts, and the converted ones without implicit any
+## typecheck-web: Type-check the frontend modules against their JSDoc and tools/types/flux.d.ts
 typecheck-web:
 	$(TSC) -p tools/types/tsconfig.json
-	$(TSC) -p tools/types/tsconfig.strict.json
 
 ## fmt-md: Reflow Markdown docs to one sentence per line
 fmt-md:
@@ -106,7 +105,6 @@ fmt-md:
 check-web:
 	$(BIOME) ci --diagnostic-level=error .
 	$(TSC) -p tools/types/tsconfig.json
-	$(TSC) -p tools/types/tsconfig.strict.json
 	$(RUMDL) check .
 
 ## test-web: Syntax-check browser modules and run the Node tests, including the store and planning-logic unit tests

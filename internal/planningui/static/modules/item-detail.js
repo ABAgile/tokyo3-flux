@@ -16,19 +16,23 @@ import {
 import { EditorDueBadge } from './due-dates.js';
 import { closeDetail, setDetailDirty } from './actions.js';
 
+/** @param {HTMLFormElement | null} form */
 function draftSignature(form) {
   try {
-    return JSON.stringify(itemEditorDraft(form));
+    return JSON.stringify(itemEditorDraft(/** @type {HTMLFormElement} */ (form)));
   } catch {
     return '';
   }
 }
+/** @param {Flux.State} current */
 function selectBusy(current) {
   return current.busy;
 }
+/** @param {Flux.State} current */
 function selectDetailError(current) {
   return current.detailError;
 }
+/** @param {Flux.State} current */
 function selectRole(current) {
   return current.board?.role;
 }
@@ -60,7 +64,7 @@ export function ItemDetailPane({ detail }) {
     setDetailDirty(detail.formKey, draftSignature(node) !== initial.current || !!comment);
   };
   const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
-  async function onSubmit(event) {
+  async function onSubmit(/** @type {SubmitEvent} */ event) {
     event.preventDefault();
     const node = form.current;
     if (readOnly || state.busy || state.detail?.formKey !== detail.formKey || !node) return;

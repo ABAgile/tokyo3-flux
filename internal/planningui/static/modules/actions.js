@@ -80,6 +80,11 @@ export function closeDetail({ force = false, focus = true } = {}) {
   setSharedItem('');
   return true;
 }
+/**
+ * @param {Flux.Item} item
+ * @param {Flux.ItemDraft} [draft]
+ * @param {string} [originFocusKey]
+ */
 function openItemDetail(item, draft, originFocusKey) {
   if (!listPresentation()) return;
   setState({
@@ -134,6 +139,10 @@ export function setDetailDirty(formKey, dirty) {
 
 // ── Item editor ─────────────────────────────────────────────────────────────
 
+/**
+ * @param {Flux.Item} [item]
+ * @param {Flux.ItemDraft} [draft]
+ */
 function editItemModal(item, draft) {
   const existing = !!item;
   const readOnly = requireBoard().role === 'viewer' || !!item?.archived;

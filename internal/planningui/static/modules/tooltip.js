@@ -13,11 +13,16 @@ function spacing() {
     edge: Number.parseFloat(rootStyle.getPropertyValue('--s4')) || 16,
   };
 }
+/**
+ * @param {Element} element
+ * @returns {Flux.Box}
+ */
 function box(element) {
   const { left, top, right, bottom, width, height } = element.getBoundingClientRect();
   return { left, top, right, bottom, width, height };
 }
 // Hover and focus state for a trigger; `onChange(active)` hears transitions.
+/** @param {(active: boolean) => void} onChange */
 function useHoverFocus(onChange) {
   const hovered = useRef(false);
   const focused = useRef(false);
@@ -47,6 +52,7 @@ export function hideAttachmentTooltip() {
 }
 // The trigger `ref` and the `anchorRef` the tooltip aligns with. Resize and
 // scroll listeners are installed only while this trigger's tooltip is shown.
+/** @param {string} text */
 export function useAttachmentTooltip(text) {
   const owner = useId();
   const ref = useRef(/** @type {HTMLElement | null} */ (null));
@@ -83,14 +89,16 @@ export function useAttachmentTooltip(text) {
   );
   return { ref, anchorRef, active, props };
 }
+/** @param {Flux.PointerState} current */
 function selectAttachmentTooltip(current) {
   return current.attachmentTooltip;
 }
 // Rendered once at the body and once inside the editor dialog, whose top layer
 // would otherwise cover it.
+/** @param {{ inDialog?: boolean }} props */
 export function AttachmentTooltip({ inDialog = false }) {
   const tooltip = usePointer(selectAttachmentTooltip);
-  const node = useRef();
+  const node = useRef(/** @type {HTMLElement | null} */ (null));
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const shown = !!tooltip && tooltip.inDialog === inDialog;
   useLayoutEffect(() => {

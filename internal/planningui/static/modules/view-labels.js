@@ -43,6 +43,7 @@ export function LabelDialog({ name = '', color = '#dcefe4' }) {
     `,
   );
 }
+/** @param {string | Flux.Label} [label] */
 function editLabel(label) {
   const name = typeof label === 'string' ? label : label?.name || '';
   const color =
@@ -65,10 +66,16 @@ export function DeleteLabelDialog({ label, count }) {
     `,
   );
 }
+/** @param {Flux.Label} label */
 function deleteLabel(label) {
   const count = requireBoard().items.filter((i) => i.labels.includes(label.name)).length;
   openDialog('label.delete', { label, count });
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Label} label
+ * @param {readonly Flux.Item[]} items
+ */
 function labelRowTemplate(lookups, label, items) {
   const usage = items.filter((item) => item.labels.includes(label.name)).length;
   return maintenanceRowTemplate({
@@ -85,6 +92,7 @@ function labelRowTemplate(lookups, label, items) {
     ],
   });
 }
+/** @param {Flux.State} current */
 function selectLabelPage(current) {
   return {
     labels: current.board?.labels || [],
@@ -92,6 +100,10 @@ function selectLabelPage(current) {
     lookups: selectLookups(current),
   };
 }
+/**
+ * @param {ReturnType<typeof selectLabelPage>} left
+ * @param {ReturnType<typeof selectLabelPage>} right
+ */
 function sameLabelPage(left, right) {
   return (
     left.labels === right.labels && left.items === right.items && left.lookups === right.lookups

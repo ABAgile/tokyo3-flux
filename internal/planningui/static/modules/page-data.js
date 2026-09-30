@@ -5,6 +5,7 @@ import { api } from './api.js';
 import { setState, state } from './state.js';
 import { workspaceSignal } from './workspace-session.js';
 
+/** @param {unknown} data */
 function validWorkspaceList(data) {
   return (
     Array.isArray(data) &&
@@ -20,17 +21,24 @@ function validWorkspaceList(data) {
     )
   );
 }
+/** @param {unknown} workspace */
 export function validWorkspace(workspace) {
   return validWorkspaceList([workspace]);
 }
+/** @param {readonly Flux.Workspace[]} list */
 export function workspaceListSignature(list) {
   return JSON.stringify(
     list.map((workspace) => [workspace.id, workspace.name, workspace.role, workspace.revision]),
   );
 }
+/** @param {string} id */
 export function workspaceRoot(id) {
   return `/api/v2/workspaces/${encodeURIComponent(id)}`;
 }
+/**
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Flux.Workspace[]>}
+ */
 export async function loadWorkspaces(signal) {
   const next = await api('/api/v2/workspaces', { signal });
   if (!validWorkspaceList(next)) throw new Error('Workspace list is invalid. Refresh to retry.');
@@ -40,6 +48,10 @@ export async function loadWorkspaces(signal) {
 
 export const EMPTY_HISTORY = { history: [], historyBefore: 0, historyMore: false };
 // Each page read returns a store patch; `load*` applies it directly.
+/**
+ * @param {boolean} reset
+ * @param {AbortSignal} signal
+ */
 async function historyPage(reset, signal) {
   const before = !reset && state.historyBefore ? `?before=${state.historyBefore}` : '';
   const events = await api(`${state.root}/history${before}`, { signal });
@@ -56,6 +68,10 @@ export async function loadHistory(reset = false, signal = workspaceSignal()) {
 
 const ARCHIVE_PAGE = 50;
 export const EMPTY_ARCHIVE = { archiveItems: [], archiveOffset: 0, archiveMore: false };
+/**
+ * @param {boolean} reset
+ * @param {AbortSignal} signal
+ */
 async function archivePage(reset, signal) {
   const offset = reset ? 0 : state.archiveOffset;
   const page = await api(`${state.root}/archive?offset=${offset}&limit=${ARCHIVE_PAGE}`, {
@@ -80,6 +96,9 @@ export const EMPTY_SPRINT_HISTORY = {
   sprintHistoryMore: false,
   sprintHistoryError: '',
 };
+/**
+ * @param {{ records: Flux.SprintHistoryRecord[], total: number, next_offset?: number } | null | undefined} page
+ */
 function validSprintHistoryPage(page) {
   return (
     page &&
@@ -99,6 +118,10 @@ function validSprintHistoryPage(page) {
       (Number.isSafeInteger(page.next_offset) && page.next_offset >= 0))
   );
 }
+/**
+ * @param {boolean} reset
+ * @param {AbortSignal} signal
+ */
 async function sprintHistoryPage(reset, signal) {
   const offset = reset ? 0 : state.sprintHistoryOffset;
   const page = await api(
@@ -120,6 +143,10 @@ export async function loadSprintHistory(reset = false, signal = workspaceSignal(
 }
 // The reset first page of a view's own paged data, for a view change or a
 // board reload that commits it together with the board.
+/**
+ * @param {string} view
+ * @param {AbortSignal} signal
+ */
 export async function viewPage(view, signal) {
   if (view === 'history') return historyPage(true, signal);
   if (view === 'archive') return archivePage(true, signal);

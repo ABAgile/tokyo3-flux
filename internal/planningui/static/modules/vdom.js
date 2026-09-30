@@ -4,16 +4,19 @@ import { Component, h, htm } from './vendor-preact.js';
 export const html = htm.bind(h);
 
 /**
- * @param {any} left
- * @param {any} right
+ * @template T
+ * @param {T} left
+ * @param {T} right
  */
 export function shallowEqual(left, right) {
   if (Object.is(left, right)) return true;
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
-  const keys = Object.keys(left);
+  const a = /** @type {Record<string, unknown>} */ (left);
+  const b = /** @type {Record<string, unknown>} */ (right);
+  const keys = Object.keys(a);
   return (
-    keys.length === Object.keys(right).length &&
-    keys.every((key) => Object.hasOwn(right, key) && Object.is(left[key], right[key]))
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.hasOwn(b, key) && Object.is(a[key], b[key]))
   );
 }
 

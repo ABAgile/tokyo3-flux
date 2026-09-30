@@ -8,6 +8,10 @@ import { useEventListener } from './ui-hooks.js';
 
 // `now` is the store's due-date clock; callers that render subscribe to it.
 // The item's column category comes from the board lookups.
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ */
 function columnCategory(lookups, item) {
   return lookups.columnsById.get(item.column_id)?.category || '';
 }
@@ -44,9 +48,11 @@ export function dueDateBadgeTemplate(lookups, item, now, extraClass = '', id) {
     data-due-archived=${String(!!item.archived)}
   >${status.label}</span>`;
 }
+/** @param {Flux.State} current */
 export function selectDueDateNow(current) {
   return current.dueDateNow;
 }
+/** @param {{ item: Flux.Item, id?: string }} props */
 export function EditorDueBadge({ item, id }) {
   const now = useStore(selectDueDateNow);
   const lookups = useStore(selectLookups);
@@ -58,6 +64,7 @@ export function EditorDueBadge({ item, id }) {
 // visible again; both only move the store's clock.
 export function useDueDateClock() {
   useEffect(() => {
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
     let timer;
     const schedule = () => {
       const now = new Date();

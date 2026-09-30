@@ -53,9 +53,15 @@ export function ProjectDialog({ project }) {
     `,
   );
 }
+/** @param {Flux.Project} [project] */
 function editProject(project) {
   openDialog('project.edit', { project });
 }
+/**
+ * @param {Flux.Board} board
+ * @param {Flux.Project} project
+ * @param {Flux.ProjectFilters} filters
+ */
 function projectMatchesFilters(board, project, filters) {
   if (!filters.assignee.length && !filters.label.length) return true;
   return board.items.some((item) =>
@@ -66,6 +72,10 @@ function projectMatchesFilters(board, project, filters) {
         matchesFilter(filters.label, item.labels || []),
   );
 }
+/**
+ * @param {readonly (string | number)[]} projectIDs
+ * @param {readonly Flux.GitLabProject[]} projects
+ */
 function integrationProjectChipsTemplate(projectIDs, projects) {
   const catalog = new Map(projects.map((project) => [String(project.id), project]));
   return html`<div class="tags integration-project-chips" aria-label="Approved GitLab projects">
@@ -76,8 +86,22 @@ function integrationProjectChipsTemplate(projectIDs, projects) {
     })}
   </div>`;
 }
+/**
+ * @typedef {{
+ *   data: readonly Flux.GitLabProject[] | undefined,
+ *   error: { message: string } | undefined,
+ *   loading: boolean,
+ *   reload: () => void,
+ * }} ProjectCatalog
+ */
+/**
+ * @param {ProjectsPageData} page
+ * @param {readonly number[]} approvedIDs
+ * @param {ProjectCatalog} catalog
+ */
 function integrationTemplate(page, approvedIDs, catalog) {
-  const head = (...actions) => sectionHeadTemplate('GitLab integration', ...actions);
+  const head = (/** @type {unknown[]} */ ...actions) =>
+    sectionHeadTemplate('GitLab integration', ...actions);
   const projects = catalog.data || [];
   const error = catalog.error?.message || '';
   if (page.integrationFormOpen) {
@@ -115,6 +139,12 @@ function integrationTemplate(page, approvedIDs, catalog) {
     }`,
   );
 }
+/**
+ * @param {ProjectsPageData} page
+ * @param {Flux.Project[]} matches
+ * @param {Flux.Project[]} filtered
+ * @param {string} search
+ */
 function projectRowsTemplate(page, matches, filtered, search) {
   if (!matches.length) {
     const narrowed = filtered.length !== page.board.projects.length;
@@ -141,6 +171,11 @@ function projectRowsTemplate(page, matches, filtered, search) {
     }),
   );
 }
+/**
+ * @param {ProjectsPageData} page
+ * @param {{ assignee: string, label: string, search: string }} ids
+ * @param {() => void} rerender
+ */
 function projectsTemplate(page, ids, rerender) {
   const search = page.projectSearch.trim();
   const query = search.toLowerCase();
@@ -150,16 +185,18 @@ function projectsTemplate(page, ids, rerender) {
   );
   const matches = filtered.filter((project) => project.name.toLowerCase().includes(query));
   // Each select adds one value and returns to its "any" entry.
-  const addFilter = (name) => (event) => {
-    const value = event.currentTarget.value;
-    setState((current) => ({
-      projectFilters: {
-        ...current.projectFilters,
-        [name]: withFilterValue(current.projectFilters[name], value),
-      },
-    }));
-    rerender();
-  };
+  const addFilter =
+    (/** @type {keyof Flux.ProjectFilters} */ name) =>
+    (/** @type {Flux.TargetEvent<HTMLSelectElement>} */ event) => {
+      const value = event.currentTarget.value;
+      setState((current) => ({
+        projectFilters: {
+          ...current.projectFilters,
+          [name]: withFilterValue(current.projectFilters[name], value),
+        },
+      }));
+      rerender();
+    };
   const controls = html`${filterSelectTemplate(
     'Assignee',
     [
@@ -185,7 +222,8 @@ function projectsTemplate(page, ids, rerender) {
     'Search',
     ids.search,
     { value: page.projectSearch, placeholder: 'Find projects…', maxLength: 120 },
-    (event) => setState({ projectSearch: event.currentTarget.value }),
+    (/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) =>
+      setState({ projectSearch: event.currentTarget.value }),
   )}`;
   const chips = FilterChips({
     group: filters,
@@ -212,6 +250,7 @@ function projectsTemplate(page, ids, rerender) {
     ${maintenanceListTemplate('', projectRowsTemplate(page, matches, filtered, search))}
   </section>`;
 }
+/** @type {readonly (keyof Flux.State)[]} */
 const PROJECT_PAGE_KEYS = [
   'board',
   'root',
@@ -223,11 +262,18 @@ const PROJECT_PAGE_KEYS = [
   'busy',
   'loading',
 ];
+/**
+ * The page renders only while a workspace is open, so its board and root exist.
+ * @typedef {Pick<Flux.State, 'projectSearch' | 'projectFilters' | 'integrationFormOpen'
+ *   | 'integrationSubmitting' | 'integrationFormError' | 'busy' | 'loading'>
+ *   & { board: Flux.Board, root: string, lookups: Flux.Lookups }} ProjectsPageData
+ */
+/** @param {Flux.State} current */
 function selectProjectsPage(current) {
-  return {
+  return /** @type {ProjectsPageData} */ ({
     ...Object.fromEntries(PROJECT_PAGE_KEYS.map((key) => [key, current[key]])),
     lookups: selectLookups(current),
-  };
+  });
 }
 export function ProjectsPage() {
   const page = useStore(selectProjectsPage, shallowEqual);
@@ -245,7 +291,10 @@ export function ProjectsPage() {
   // reloads it.
   const needed = !!board.connector_instance && (page.integrationFormOpen || approvedIDs.length > 0);
   const catalog = useRequest(
-    (signal) => (needed ? loadGitLabProjects(page.root, signal) : Promise.resolve([])),
+    (signal) =>
+      needed
+        ? loadGitLabProjects(page.root, signal)
+        : Promise.resolve(/** @type {Flux.GitLabProject[]} */ ([])),
     [page.root, board.connector_instance, needed, page.integrationFormOpen],
   );
   const [, rerender] = useReducer((value) => value + 1, 0);

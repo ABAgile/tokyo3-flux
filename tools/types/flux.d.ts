@@ -60,6 +60,7 @@ declare namespace Flux {
     labels: string[];
     dependencies: string[];
     attachment_count?: number;
+    attachments?: Attachment[];
   }
   type SprintState = 'planned' | 'active' | 'closed';
   interface Sprint {
@@ -88,6 +89,7 @@ declare namespace Flux {
     url?: string;
     state: string;
     sha?: string;
+    provider_state?: string;
   }
   interface Observation {
     url: string;
@@ -95,6 +97,7 @@ declare namespace Flux {
     mr_state: string;
     draft: boolean;
     review?: string;
+    head_sha?: string;
     pipeline?: Pipeline | null;
   }
   interface Link {
@@ -107,6 +110,29 @@ declare namespace Flux {
     outcome: string;
     refresh_pending?: boolean;
     last_success?: string | null;
+    last_attempt?: string | null;
+    next_refresh?: string | null;
+  }
+  // GitLab catalog entries from /gitlab/projects, /gitlab/users and
+  // /gitlab/merge-requests.
+  interface GitLabProject {
+    id: number;
+    name: string;
+    path_with_namespace?: string;
+  }
+  interface GitLabUser {
+    id: number;
+    username: string;
+    name: string;
+    avatar_url?: string;
+  }
+  interface GitLabMergeRequest {
+    project_id?: number;
+    iid: number;
+    title: string;
+    state?: string;
+    draft?: boolean;
+    updated_at?: string;
   }
   interface Integration {
     instance: string;
@@ -137,6 +163,38 @@ declare namespace Flux {
     digest: string;
     uploader: string;
     created_at: string;
+  }
+  interface Comment {
+    id: number;
+    item_id: string;
+    author: string;
+    body: string;
+    created_at: string;
+  }
+  interface CommentPage {
+    comments: Comment[];
+    next_before?: number;
+  }
+  // A day of the sprint burn-down; a count is null where history is missing.
+  interface BurndownPoint {
+    date: string;
+    scope: number | null;
+    remaining: number | null;
+  }
+  interface Burndown {
+    revision: number;
+    sprint: Sprint;
+    project?: string;
+    assignee?: string;
+    history_available: boolean;
+    warning: string;
+    points: BurndownPoint[];
+  }
+  // The receipt of a posted change; `board` is omitted for a minimal receipt.
+  interface ChangeReceipt {
+    revision?: number;
+    board?: Board;
+    board_etag?: string;
   }
   interface HistoryEvent {
     id: number;
@@ -203,15 +261,17 @@ declare namespace Flux {
     root: string | undefined;
   }
   // Filter groups hold accepted values; empty means all, `none` no association.
-  interface Filters {
+  type Filters = {
     project: string[];
     assignee: string[];
     label: string[];
-  }
-  interface ProjectFilters {
+  };
+  type ProjectFilters = {
     assignee: string[];
     label: string[];
-  }
+  };
+  // Any filter group, for helpers that work by filter name.
+  type FilterGroup = Record<string, string[]>;
 
   // ── UI records ────────────────────────────────────────────────────────────
   // The List detail pane; `item` is the snapshot being edited.
@@ -252,6 +312,14 @@ declare namespace Flux {
     scope: string;
     key: string;
     nonce: number;
+  }
+  // A drop target's accepted drag, and the command a drop produces
+  // (modules/drag.js).
+  interface DropZone {
+    type: 'card' | 'list';
+    axis?: 'x' | 'y' | 'end';
+    enabled?: () => boolean;
+    command: (dragged: string, after: boolean) => Command | undefined;
   }
   interface AttachmentTooltip {
     owner: string;
@@ -323,6 +391,9 @@ declare namespace Flux {
     'proposal.reject': { id: string };
   }
   type DialogType = keyof DialogProps;
+
+  // An event whose `currentTarget` is the element the handler is bound to.
+  type TargetEvent<T extends Element, E extends Event = Event> = E & { currentTarget: T };
 
   // ── Shared widget props ───────────────────────────────────────────────────
   // HTM templates are not type-checked, so modules render these widgets with

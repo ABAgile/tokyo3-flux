@@ -14,6 +14,7 @@ import { interactionBlocked, navigate, newItem, refreshWorkspace } from './actio
 // Alt/Control/Meta held, so they cannot shadow browser or assistive-technology
 // keys. Letters are matched case-insensitively and Shift is allowed, so Caps
 // Lock or a shifted key still activates them.
+/** @type {Readonly<Record<string, string>>} */
 const VIEW_SHORTCUTS = Object.freeze({
   b: 'board',
   s: 'sprints',
@@ -25,13 +26,16 @@ const VIEW_SHORTCUTS = Object.freeze({
 });
 const SHORTCUT_CHORD_MS = 2500;
 const TYPING = 'input,textarea,select,[contenteditable=""],[contenteditable="true"]';
+/** @param {EventTarget | null} target */
 function typingTarget(target) {
   return target instanceof Element && target.closest(TYPING) !== null;
 }
+/** @param {KeyboardEvent} event */
 function shortcutKey(event) {
   return event.key.length === 1 ? event.key.toLowerCase() : event.key;
 }
 // The search field is shown for the planning views and Sprints.
+/** @param {Flux.State} current */
 function searchAvailable(current) {
   return !!current.board && !['history', 'projects', 'labels', 'members'].includes(current.view);
 }
@@ -44,6 +48,7 @@ function closeShortcuts() {
 // Installs the document keyboard listeners for the App's lifetime. The List
 // detail pane and open menus handle their own Escape before it reaches here.
 // `mainRef` is the main region that receives focus when Escape leaves a control.
+/** @param {{ current: HTMLElement | null }} mainRef */
 export function useGlobalShortcuts(mainRef) {
   const chord = useRef(0);
   // Escape leaves a page-level control so shortcuts become available without
@@ -59,7 +64,7 @@ export function useGlobalShortcuts(mainRef) {
       !(event.target instanceof Element)
     )
       return;
-    const control = event.target.closest(TYPING);
+    const control = /** @type {HTMLElement | null} */ (event.target.closest(TYPING));
     if (!control || control.closest('dialog') || control.closest('.multi-select-menu')) return;
     event.preventDefault();
     control.blur();
@@ -122,6 +127,7 @@ export function useGlobalShortcuts(mainRef) {
     }
   });
 }
+/** @param {Flux.State} current */
 function selectShortcutsOpen(current) {
   return current.shortcutsOpen;
 }

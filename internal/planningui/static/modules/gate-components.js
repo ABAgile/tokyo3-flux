@@ -5,8 +5,15 @@ import { setState, useStore } from './state.js';
 import { useFocusRestore } from './ui-hooks.js';
 import { useFocusRequest } from './focus-request.js';
 
+/**
+ * @param {{
+ *   workspaces: Flux.Workspace[],
+ *   choose: (id: string) => unknown,
+ *   create: () => unknown,
+ * }} props
+ */
 export function WorkspaceSelection({ workspaces, choose, create }) {
-  const root = useRef();
+  const root = useRef(/** @type {HTMLDivElement | null} */ (null));
   const { onFocusCapture, onBlurCapture } = useFocusRestore(root, 'workspaces');
   useFocusRequest('workspaces', root);
   return html`
@@ -27,17 +34,25 @@ export function WorkspaceSelection({ workspaces, choose, create }) {
   `;
 }
 
+/**
+ * @param {{
+ *   name: string | undefined,
+ *   hasWorkspaces: boolean,
+ *   submit: (name: string) => unknown,
+ *   back: () => unknown,
+ * }} props
+ */
 export function WorkspaceCreation({ name, hasWorkspaces, submit, back }) {
-  const input = useRef();
+  const input = useRef(/** @type {HTMLInputElement | null} */ (null));
   const draft = useStore((current) => current.workspaceCreateDraft);
   const busy = useStore((current) => current.workspaceCreating);
   const status = useStore((current) => current.workspaceCreateStatus);
   const error = useStore((current) => current.workspaceCreateStatusError);
-  useLayoutEffect(() => input.current.focus(), []);
+  useLayoutEffect(() => input.current?.focus(), []);
   useLayoutEffect(() => {
     if (error) input.current?.focus();
   }, [error, status]);
-  function onSubmit(event) {
+  function onSubmit(/** @type {SubmitEvent} */ event) {
     event.preventDefault();
     if (!busy) submit(input.current?.value || '');
   }
@@ -48,7 +63,7 @@ export function WorkspaceCreation({ name, hasWorkspaces, submit, back }) {
         : 'Create a workspace to start planning; your signed-in account will be its initial administrator.'
     }</p>
     <form class="workspace-create-form" onSubmit=${onSubmit}>
-      <label>Workspace name<input ref=${input} id="workspace-name" name="name" type="text" required maxLength="120" autocomplete="organization" placeholder="e.g. Team Alpha" value=${draft} disabled=${busy} onInput=${(event) => setState({ workspaceCreateDraft: event.currentTarget.value })} /></label>
+      <label>Workspace name<input ref=${input} id="workspace-name" name="name" type="text" required maxLength="120" autocomplete="organization" placeholder="e.g. Team Alpha" value=${draft} disabled=${busy} onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => setState({ workspaceCreateDraft: event.currentTarget.value })} /></label>
       <p class=${`workspace-create-status${error ? ' error' : ''}`} data-status-class="workspace-create-status" data-workspace-create-status="true" hidden=${!status} role=${error ? 'alert' : 'status'} aria-live=${error ? 'assertive' : 'polite'}>${status}</p>
       <div class="actions">
         <button type="submit" class="primary" disabled=${busy}>Create workspace</button>
@@ -58,6 +73,12 @@ export function WorkspaceCreation({ name, hasWorkspaces, submit, back }) {
   `;
 }
 
+/**
+ * @param {{
+ *   steps: { done: boolean, title: string, help: string, action: string, run: () => unknown }[],
+ *   disabled: boolean,
+ * }} props
+ */
 export function FirstRunChecklist({ steps, disabled }) {
   return html`
     <h2 id="first-run-heading">Set up your planning workspace</h2>

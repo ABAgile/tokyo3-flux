@@ -24,9 +24,11 @@ const MEMBER_ROLE_ENTRIES = [
   ['member', 'Member'],
   ['admin', 'Admin'],
 ];
+/** @param {string} role */
 function memberRoleLabel(role) {
   return MEMBER_ROLE_ENTRIES.find(([value]) => value === role)?.[1] || role;
 }
+/** @param {string} role */
 function memberRoleChipTemplate(role) {
   const roleClass = MEMBER_ROLE_ENTRIES.some(([value]) => value === role) ? role : 'unknown';
   return html`<span
@@ -34,6 +36,10 @@ function memberRoleChipTemplate(role) {
     aria-label=${`Role: ${memberRoleLabel(role)}`}
   >${memberRoleLabel(role)}</span>`;
 }
+/**
+ * @param {Flux.Member} member
+ * @param {Flux.Session | undefined} session
+ */
 function memberIdentityTemplate(member, session) {
   const info = memberListingInfo(member, session);
   const username = String(member.username || '').trim();
@@ -78,9 +84,11 @@ export function MemberDialog({ member }) {
     `,
   );
 }
+/** @param {Flux.Member} member */
 function editMember(member) {
   if (adminWritable()) openDialog('member.edit', { member });
 }
+/** @param {Flux.State} current */
 function selectSession(current) {
   return current.session;
 }
@@ -107,6 +115,7 @@ export function RemoveMemberDialog({ member, assigned }) {
     `,
   );
 }
+/** @param {Flux.Member} member */
 function removeMember(member) {
   if (!adminWritable()) return;
   const assigned = requireBoard().items.filter((item) => item.assignee === member.subject).length;
@@ -122,7 +131,7 @@ export function AddMemberDialog({ root, connector }) {
   const [selected, setSelected] = useState(/** @type {string[]} */ ([]));
   const [name, setName] = useState('');
   const nameEdited = useRef(false);
-  const users = useRef(new Map());
+  const users = useRef(/** @type {Map<string, Flux.GitLabUser>} */ (new Map()));
   const search = useDebouncedValue(query, query ? 250 : 0);
   // Results stay once loaded, so the chosen user keeps its label after the menu closes.
   const result = useRequest(
@@ -201,7 +210,7 @@ export function AddMemberDialog({ root, connector }) {
           maxlength="120"
           placeholder="Defaults to the GitLab profile name"
           value=${name}
-          onInput=${(event) => {
+          onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => {
             nameEdited.current = true;
             setName(event.currentTarget.value);
           }}
@@ -221,7 +230,9 @@ function addMember() {
   if (!adminWritable()) return;
   openDialog('member.add', { root: requireRoot(), connector: !!requireBoard().connector_instance });
 }
+/** @type {Flux.Member[]} */
 const EMPTY_MEMBERS = [];
+/** @param {Flux.State} current */
 function selectMembersPage(current) {
   return {
     members: current.board?.members || EMPTY_MEMBERS,
@@ -232,6 +243,10 @@ function selectMembersPage(current) {
     integrationFormOpen: current.integrationFormOpen,
   };
 }
+/**
+ * @param {ReturnType<typeof selectMembersPage>} left
+ * @param {ReturnType<typeof selectMembersPage>} right
+ */
 function sameMembersPage(left, right) {
   return (
     left.members === right.members &&

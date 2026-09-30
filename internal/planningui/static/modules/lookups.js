@@ -5,10 +5,23 @@
 /** @type {readonly never[]} */
 const NONE = Object.freeze([]);
 
+/**
+ * @template T, K
+ * @param {readonly T[] | undefined} values
+ * @param {(value: T) => K} key
+ * @returns {Map<K, T>}
+ */
 function byKey(values, key) {
   return new Map((values || NONE).map((value) => [key(value), value]));
 }
+/**
+ * @template T, K
+ * @param {readonly T[] | undefined} values
+ * @param {(value: T) => K} key
+ * @returns {Map<K, T[]>}
+ */
 function groupBy(values, key) {
+  /** @type {Map<K, T[]>} */
   const groups = new Map();
   for (const value of values || NONE) {
     const id = key(value);
@@ -18,6 +31,10 @@ function groupBy(values, key) {
   }
   return groups;
 }
+/**
+ * @param {readonly unknown[]} left
+ * @param {readonly unknown[]} right
+ */
 function sameInputs(left, right) {
   return (
     left.length === right.length && left.every((value, index) => Object.is(value, right[index]))
@@ -27,6 +44,7 @@ function sameInputs(left, right) {
 // Built once per change of the entity lists it indexes. A board refresh keeps
 // unchanged lists by identity, so moving or editing a card keeps the same
 // lookups and every row that did not change can skip rendering.
+/** @type {{ inputs: readonly unknown[], lookups: Flux.Lookups } | undefined} */
 let lookupsCache;
 /**
  * @param {Flux.Board | undefined} board
@@ -44,6 +62,7 @@ export function boardLookups(board, session) {
     session,
   ];
   if (lookupsCache && sameInputs(lookupsCache.inputs, inputs)) return lookupsCache.lookups;
+  /** @type {readonly Flux.Sprint[]} */
   const sprints = board?.sprints || NONE;
   const lookups = Object.freeze({
     session,
@@ -65,6 +84,7 @@ export function selectLookups(current) {
 
 // Items by id across the board payload and the loaded archive page, for
 // dependency resolution. Rebuilt only when either list changes.
+/** @type {{ inputs: readonly unknown[], items: Map<string, Flux.Item> } | undefined} */
 let itemsCache;
 /**
  * @param {Flux.Board | undefined} board

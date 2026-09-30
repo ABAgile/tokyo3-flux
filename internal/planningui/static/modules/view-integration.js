@@ -27,6 +27,11 @@ function cancelIntegration() {
     integrationFormError: '',
   });
 }
+/**
+ * @param {Flux.TargetEvent<HTMLFormElement, SubmitEvent>} event
+ * @param {boolean} readOnly
+ * @param {boolean} loading
+ */
 async function submitIntegration(event, readOnly, loading) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -54,11 +59,21 @@ async function submitIntegration(event, readOnly, loading) {
     setState({ integrationSubmitting: false });
   }
 }
+/** @param {Flux.State} current */
 function selectIntegrationForm(current) {
   return current.integrationSubmitting + '\u0000' + current.integrationFormError;
 }
 // The form's selections and consent live in the store, so a failed save
 // reopens it intact. The catalog is owned by the Projects page request.
+/**
+ * @param {{
+ *   board: Flux.Board,
+ *   catalog: readonly Flux.GitLabProject[],
+ *   loading: boolean,
+ *   error?: string,
+ *   onRetry: () => void,
+ * }} props
+ */
 export function IntegrationForm({ board, catalog, loading, error, onRetry }) {
   useStore(selectIntegrationForm);
   const readOnly = board.role !== 'admin';
@@ -86,7 +101,7 @@ export function IntegrationForm({ board, catalog, loading, error, onRetry }) {
       : null;
   return html`<form
     class="inline-maintenance-form"
-    onSubmit=${(event) => submitIntegration(event, readOnly, loading)}
+    onSubmit=${(/** @type {Flux.TargetEvent<HTMLFormElement, SubmitEvent>} */ event) => submitIntegration(event, readOnly, loading)}
   >
     ${helpTextTemplate(`Operator-configured instance: ${board.connector_instance || 'Not configured'}`)}
     ${helpTextTemplate(`Existing approval: ${board.integration.instance || 'None'}`)}
@@ -116,7 +131,8 @@ export function IntegrationForm({ board, catalog, loading, error, onRetry }) {
         className: 'consent',
         disabled,
         defaultChecked: state.integrationConsent,
-        onChange: (event) => setState({ integrationConsent: event.currentTarget.checked }),
+        onChange: (/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) =>
+          setState({ integrationConsent: event.currentTarget.checked }),
       },
     )}
     ${

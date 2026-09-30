@@ -8,6 +8,13 @@ import { sprintFilterItems, sprintMatchesFilters } from './filters.js';
 // state of those cards. It is a live read of native planning records, not a
 // recorded historical metric, so it is labeled as such.
 const VELOCITY_SPRINTS = 8;
+/** @typedef {{ sprint: Flux.Sprint, committed: number, completed: number }} VelocityEntry */
+/**
+ * @param {Flux.Board} board
+ * @param {Flux.Lookups} lookups
+ * @param {Pick<Flux.Filters, 'project' | 'assignee'>} filters
+ * @returns {VelocityEntry[]}
+ */
 function velocitySeries(board, lookups, filters) {
   return board.sprints
     .filter((sprint) => sprint.state === 'closed' && sprintMatchesFilters(board, sprint, filters))
@@ -18,6 +25,7 @@ function velocitySeries(board, lookups, filters) {
     })
     .slice(-VELOCITY_SPRINTS);
 }
+/** @param {VelocityEntry[]} series */
 function velocityChart(series) {
   const width = 760,
     height = 200,
@@ -30,7 +38,7 @@ function velocityChart(series) {
   const maximum = Math.max(1, ...series.flatMap((entry) => [entry.committed, entry.completed]));
   const band = plotWidth / series.length,
     barWidth = Math.max(4, Math.min(28, band / 3));
-  const y = (value) => top + ((maximum - value) / maximum) * plotHeight;
+  const y = (/** @type {number} */ value) => top + ((maximum - value) / maximum) * plotHeight;
   const title = 'Committed and completed work per closed sprint';
   const grid = [
     ...new Set(Array.from({ length: 4 }, (_, index) => Math.round(maximum * (1 - index / 3)))),
@@ -40,7 +48,11 @@ function velocityChart(series) {
   );
   const bars = series.map((entry, index) => {
     const center = left + band * (index + 0.5);
-    const bar = (kind, value, x) =>
+    const bar = (
+      /** @type {string} */ kind,
+      /** @type {number} */ value,
+      /** @type {number} */ x,
+    ) =>
       html`<rect class=${`velocity-bar velocity-bar-${kind}`} x=${x} y=${y(value)} width=${barWidth} height=${Math.max(1, y(0) - y(value))}><title>${`${entry.sprint.name} · ${value} ${kind}`}</title></rect>`;
     const name =
       entry.sprint.name.length > 14 ? `${entry.sprint.name.slice(0, 13)}…` : entry.sprint.name;
@@ -53,6 +65,7 @@ function velocityChart(series) {
     class="velocity-svg"
   ><title>${title}</title>${grid}${bars}</svg>`;
 }
+/** @param {VelocityEntry[]} series */
 function velocityTable(series) {
   // The <details> open state belongs to the user; the template never binds it.
   return html`<details class="velocity-data" data-state-key="velocity-data">
@@ -80,6 +93,10 @@ function velocityTable(series) {
     </div>
   </details>`;
 }
+/**
+ * @param {Flux.Board} board
+ * @param {VelocityEntry[]} series
+ */
 function velocityBody(board, series) {
   if (!series.length) {
     const narrowed = board.sprints.some((sprint) => sprint.state === 'closed');
@@ -102,7 +119,7 @@ function velocityBody(board, series) {
   );
   return html`${metricListTemplate(
     [
-      [series.at(-1).completed, 'Last sprint'],
+      [/** @type {VelocityEntry} */ (series.at(-1)).completed, 'Last sprint'],
       [Math.round(average * 10) / 10, 'Average completed'],
       [Math.max(...completed), 'Best sprint'],
     ],
@@ -114,6 +131,11 @@ function velocityBody(board, series) {
     </figure>
     ${velocityTable(series)}`;
 }
+/**
+ * @param {Flux.Board} board
+ * @param {Flux.Lookups} lookups
+ * @param {Pick<Flux.Filters, 'project' | 'assignee'>} filters
+ */
 export function sprintVelocityTemplate(board, lookups, filters) {
   return html`<section class="panel velocity-panel" aria-labelledby="velocity-heading">
     ${panelHeadTemplate('Delivery trend', {

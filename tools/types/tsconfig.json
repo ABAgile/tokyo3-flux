@@ -12,7 +12,7 @@
     "noEmit": true,
     "strict": false,
     "strictNullChecks": true,
-    "noImplicitAny": false,
+    "noImplicitAny": true,
     "skipLibCheck": true
   },
   "include": [

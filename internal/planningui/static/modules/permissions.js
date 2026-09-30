@@ -2,20 +2,25 @@
 import { html, shallowEqual } from './vdom.js';
 import { state, useStore } from './state.js';
 
+/** @param {Flux.State} current */
 export function canWrite(current) {
   return !!current.board && current.board.role !== 'viewer' && !current.busy && !current.loading;
 }
+/** @param {Flux.State} current */
 function canAdmin(current) {
   return !!current.board && current.board.role === 'admin' && !current.busy && !current.loading;
 }
+/** @param {Flux.State} current */
 function canUseGitLab(current) {
+  const { board } = current;
   return (
     canWrite(current) &&
-    !!current.board.connector_instance &&
-    current.board.connector_instance === current.board.integration.instance &&
-    !!current.board.integration.projects.length
+    !!board?.connector_instance &&
+    board.connector_instance === board.integration.instance &&
+    !!board.integration.projects.length
   );
 }
+/** @param {Flux.State} current */
 function canCommentIn(current) {
   return (
     !!current.board &&
@@ -38,6 +43,7 @@ export function canComment() {
   return canCommentIn(state);
 }
 
+/** @param {Flux.State} current */
 function selectPermissions(current) {
   const blocked = current.integrationFormOpen;
   return {
@@ -55,6 +61,10 @@ function selectPermissions(current) {
 export function usePermissions() {
   return useStore(selectPermissions, shallowEqual);
 }
+/**
+ * @param {'write' | 'admin' | undefined} access
+ * @param {ReturnType<typeof selectPermissions>} permissions
+ */
 function accessDisabled(access, permissions) {
   if (access === 'write') return permissions.writeDisabled;
   if (access === 'admin') return permissions.adminDisabled;
@@ -63,6 +73,16 @@ function accessDisabled(access, permissions) {
 
 // `access` marks write ('write') or admin ('admin') controls; their disabled
 // state follows the current permissions and busy state.
+/**
+ * @param {{
+ *   label: string,
+ *   icon: string,
+ *   onClick: () => void,
+ *   className?: string,
+ *   access?: 'write' | 'admin',
+ *   disabled?: boolean,
+ * }} props
+ */
 function ActionIcon({ label, icon, onClick, className, access, disabled }) {
   const permissions = usePermissions();
   return html`<button
@@ -94,14 +114,30 @@ export function actionIconTemplate(label, icon, onClick, { className, access, di
     disabled=${disabled}
   />`;
 }
+/**
+ * @param {string} label
+ * @param {string} icon
+ * @param {() => void} onClick
+ * @param {string} [className]
+ */
 export function writeIconTemplate(label, icon, onClick, className) {
   return actionIconTemplate(label, icon, onClick, { className, access: 'write' });
 }
+/**
+ * @param {string} label
+ * @param {string} icon
+ * @param {() => void} onClick
+ * @param {string} [className]
+ */
 export function adminIconTemplate(label, icon, onClick, className) {
   return actionIconTemplate(label, icon, onClick, { className, access: 'admin' });
 }
 // A text button for a write ('write') or admin ('admin') action. `tracked`
 // false omits the data-write marker for buttons inside dialogs and cards.
+/**
+ * @typedef {{ className?: string, access?: 'write' | 'admin', tracked?: boolean, label?: string }} AccessOptions
+ */
+/** @param {AccessOptions & { text: unknown, onClick: () => void }} props */
 function AccessButton({ text, onClick, className, access = 'write', tracked = true, label }) {
   const permissions = usePermissions();
   const mark = tracked ? access : undefined;
@@ -115,6 +151,11 @@ function AccessButton({ text, onClick, className, access = 'write', tracked = tr
     onClick=${onClick}
   >${text}</button>`;
 }
+/**
+ * @param {unknown} text
+ * @param {() => void} onClick
+ * @param {AccessOptions} [options]
+ */
 export function accessButtonTemplate(text, onClick, options = {}) {
   return html`<${AccessButton} text=${text} onClick=${onClick} ...${options} />`;
 }

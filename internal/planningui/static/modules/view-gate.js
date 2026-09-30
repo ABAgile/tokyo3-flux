@@ -5,6 +5,7 @@ import { navigate, newItem } from './actions.js';
 
 // A brand-new board shows a short setup path instead of empty columns, so the
 // workspace-creation momentum carries into the first sprint and card.
+/** @param {{ board: Flux.Board, disabled: boolean }} props */
 export function FirstRunPage({ board, disabled }) {
   const steps = [
     {
@@ -33,12 +34,17 @@ export function FirstRunPage({ board, disabled }) {
     <${FirstRunChecklist} steps=${steps} disabled=${disabled} />
   </section>`;
 }
+/**
+ * @param {Flux.State} current
+ * @param {string} [view]
+ */
 export function showFirstRun(current, view = current.view) {
+  const board = /** @type {Flux.Board} */ (current.board);
   return (
     view === 'board' &&
-    current.board.role !== 'viewer' &&
-    !current.board.items.length &&
-    !current.board.sprints.length &&
+    board.role !== 'viewer' &&
+    !board.items.length &&
+    !board.sprints.length &&
     !current.searchQuery
   );
 }

@@ -96,6 +96,7 @@ export const DIALOGS = Object.freeze({
   'proposal.reject': ProposalRejectDialog,
 });
 
+/** @type {[string, string, string][]} */
 const VIEWS = [
   ['board', '▦', 'Kanban board'],
   ['sprints', '◷', 'Sprints'],
@@ -105,6 +106,7 @@ const VIEWS = [
   ['archive', '▣', 'Archive'],
   ['history', '↺', 'History'],
 ];
+/** @type {Record<string, string>} */
 const TITLES = {
   board: 'Kanban board',
   sprints: 'Sprints',
@@ -114,12 +116,14 @@ const TITLES = {
   archive: 'Archive',
   history: 'History',
 };
+/** @type {Record<string, string>} */
 const SUBTITLES = {
   projects: 'Organize workspace projects and GitLab integration.',
   labels: 'Maintain labels used to classify work.',
   members: 'Manage workspace members, roles, and names.',
 };
 const PAGE_VIEWS = ['projects', 'sprints', 'members', 'labels', 'history'];
+/** @type {Record<string, () => unknown>} */
 const PAGES = {
   projects: ProjectsPage,
   sprints: SprintsPage,
@@ -128,6 +132,7 @@ const PAGES = {
   history: HistoryPage,
 };
 
+/** @param {Pick<Flux.State, 'board' | 'view' | 'presentation' | 'workspaceGate'> & { workspaceCount: number }} props */
 function shellTitle({ board, view, presentation, workspaceGate, workspaceCount }) {
   if (board) return view === 'board' && presentation === 'list' ? 'Planning list' : TITLES[view];
   if (workspaceGate === 'select') return 'Choose a workspace';
@@ -135,6 +140,7 @@ function shellTitle({ board, view, presentation, workspaceGate, workspaceCount }
     return workspaceCount ? 'Create a workspace' : 'Create your first workspace';
   return 'Loading planning data';
 }
+/** @param {Pick<Flux.State, 'board' | 'view' | 'workspaceGate'>} props */
 function shellSubtitle({ board, view, workspaceGate }) {
   if (!board) {
     if (workspaceGate === 'select') return 'Select a shared planning space to continue.';
@@ -144,10 +150,12 @@ function shellSubtitle({ board, view, workspaceGate }) {
   if (board.role === 'viewer') return 'Read-only workspace access.';
   return SUBTITLES[view] || 'Plan intentionally. Keep work moving.';
 }
+/** @param {Flux.State} current */
 function blocked(current) {
   return current.busy || current.loading || current.integrationFormOpen;
 }
 
+/** @param {Flux.State} current */
 function selectSidebar(current) {
   return {
     board: current.board,
@@ -173,7 +181,7 @@ function Sidebar() {
       (workspace) => `/api/v2/workspaces/${encodeURIComponent(workspace.id)}` === root,
     )?.id ||
     '';
-  const changeWorkspace = async (event) => {
+  const changeWorkspace = async (/** @type {Flux.TargetEvent<HTMLSelectElement>} */ event) => {
     if (!(await chooseWorkspace(event.currentTarget.value))) rerender();
   };
   return html`<aside class="sidebar">
@@ -202,6 +210,7 @@ function Sidebar() {
   </aside>`;
 }
 
+/** @param {Flux.State} current */
 function selectHeading(current) {
   return {
     board: current.board,
@@ -224,6 +233,7 @@ function Heading() {
   </div>`;
 }
 
+/** @param {Flux.State} current */
 function selectUndo(current) {
   return {
     offer: !!current.undoOffer,
@@ -239,6 +249,7 @@ function UndoBar() {
   </div>`;
 }
 
+/** @param {Flux.State} current */
 function selectGatePage(current) {
   return {
     board: current.board,
@@ -271,8 +282,9 @@ function PageContent() {
 
 // The planning body stays mounted while a page view is shown, so returning to
 // the board keeps its component lifetime; it renders the last planning view.
+/** @param {string} view */
 function selectPlanningBody(view) {
-  return (current) => {
+  return (/** @type {Flux.State} */ current) => {
     const board = current.board;
     return {
       board,
@@ -285,6 +297,7 @@ function selectPlanningBody(view) {
     };
   };
 }
+/** @param {{ view: string }} props */
 function PlanningBody({ view }) {
   const body = useStore(selectPlanningBody(view), shallowEqual);
   const { board, presentation, items } = body;
@@ -299,6 +312,7 @@ function PlanningBody({ view }) {
     disabled=${body.busy}
   />`;
 }
+/** @param {Flux.State} current */
 function selectContentBusy(current) {
   return (
     current.loading ||
@@ -306,6 +320,7 @@ function selectContentBusy(current) {
     (!current.board && current.workspaceGate === 'loading')
   );
 }
+/** @param {Flux.State} current */
 function selectPlanningArea(current) {
   return {
     workspaceID: current.board?.workspace?.id,
@@ -313,6 +328,7 @@ function selectPlanningArea(current) {
     contentBusy: selectContentBusy(current),
   };
 }
+/** @param {Flux.State} current */
 function selectSummaries(current) {
   return {
     board: current.board,
@@ -363,6 +379,7 @@ function PlanningArea() {
   </section>`;
 }
 
+/** @param {Flux.State} current */
 function selectTheme(current) {
   return current.theme;
 }
@@ -378,14 +395,16 @@ function reloadTemplate() {
 // The App renders once at the body; every change reaches it through the store.
 // A failure outside the inner boundaries replaces the whole shell, which also
 // stops its effects, with a Reload notice.
+/** @param {{ dialogs?: typeof DIALOGS }} props */
 export function App({ dialogs = DIALOGS }) {
   return html`<${ErrorBoundary} label="Flux" fallback=${reloadTemplate}>
     <${Shell} dialogs=${dialogs} />
   </${ErrorBoundary}>`;
 }
 
+/** @param {{ dialogs: typeof DIALOGS }} props */
 function Shell({ dialogs }) {
-  const main = useRef(null);
+  const main = useRef(/** @type {HTMLElement | null} */ (null));
   const theme = useStore(selectTheme);
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -408,7 +427,7 @@ function Shell({ dialogs }) {
     if (event.error) reportUnexpectedError(event.error);
   });
   // A file dropped outside an attachment target must not navigate the page away.
-  const guardFileDrop = (event) => {
+  const guardFileDrop = (/** @type {DragEvent} */ event) => {
     if (isFileTransfer(event.dataTransfer)) event.preventDefault();
   };
   useEventListener(document, 'dragover', guardFileDrop);

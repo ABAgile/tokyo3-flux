@@ -17,15 +17,17 @@ async function loadOlderArchive() {
     if (!isAbortError(error)) notice(error.message, true);
   }
 }
+/** @param {Flux.State} current */
 function selectScope(current) {
   return current.scope;
 }
+/** @param {{ items: readonly Flux.Item[], view: string, archiveMore: boolean, disabled?: boolean }} props */
 export function CardListContent({ items, view, archiveMore, disabled }) {
   const scope = useStore(selectScope);
   const context = useRowContext();
   const blockedIDs = useBlockedIDs(items);
   const [expanded, toggle] = useExpandedAttachments();
-  const root = useRef(null);
+  const root = useRef(/** @type {HTMLDivElement | null} */ (null));
   const focus = useFocusRestore(root, view);
   const empty =
     view === 'board' && scope === 'backlog'

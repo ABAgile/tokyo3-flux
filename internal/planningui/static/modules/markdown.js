@@ -5,6 +5,7 @@
 import { html } from './vdom.js';
 import { useId, useLayoutEffect, useRef, useState, h } from './vendor-preact.js';
 
+/** @param {unknown} value */
 function markdownURL(value) {
   const raw = String(value || '').trim();
   // biome-ignore lint/suspicious/noControlCharactersInRegex: URLs with control characters are rejected on purpose.
@@ -17,9 +18,14 @@ function markdownURL(value) {
     return '';
   }
 }
+/** @param {string} value */
 function markdownEscaped(value) {
   return value === String.fromCharCode(92) || '`*_[]~'.includes(value);
 }
+/**
+ * @param {string} href
+ * @param {unknown} content
+ */
 function markdownLink(href, content) {
   const external = new URL(href, location.href).origin !== location.origin;
   return external
@@ -28,10 +34,15 @@ function markdownLink(href, content) {
 }
 // Inline Markdown as template parts. Plain text is gathered into runs and
 // rendered as text by Preact, which never parses it as markup.
+/**
+ * @param {string} source
+ * @returns {unknown[]}
+ */
 function markdownInline(source) {
+  /** @type {unknown[]} */
   const parts = [];
   let text = '';
-  const push = (part) => {
+  const push = (/** @type {unknown} */ part) => {
     if (text) parts.push(text);
     text = '';
     parts.push(part);
@@ -119,11 +130,13 @@ function markdownInline(source) {
   if (text) parts.push(text);
   return parts;
 }
+/** @param {string} line */
 function markdownBlockStart(line) {
   return /^\s{0,3}(?:#{1,6}\s|`{3,}|~{3,}|>\s?|[-+*]\s+|\d+[.)]\s+|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(
     line,
   );
 }
+/** @param {string} line */
 function markdownTableCells(line) {
   const value = line.trim();
   if (!value.includes('|')) return null;
@@ -143,6 +156,7 @@ function markdownTableCells(line) {
   cells.push(cell.trim());
   return cells;
 }
+/** @type {Record<number, (content: unknown) => unknown>} */
 const HEADINGS = {
   1: (content) => html`<h1>${content}</h1>`,
   2: (content) => html`<h2>${content}</h2>`,
@@ -151,7 +165,17 @@ const HEADINGS = {
   5: (content) => html`<h5>${content}</h5>`,
   6: (content) => html`<h6>${content}</h6>`,
 };
+/**
+ * @param {string[]} header
+ * @param {string[]} alignments
+ * @param {string[][]} rows
+ */
 function markdownTable(header, alignments, rows) {
+  /**
+   * @param {'th' | 'td'} tag
+   * @param {string} value
+   * @param {number} index
+   */
   const cell = (tag, value, index) => {
     const align = alignments[index] ? { 'text-align': alignments[index] } : {};
     return tag === 'th'
@@ -167,6 +191,7 @@ function markdownTable(header, alignments, rows) {
     </tbody>
   </table>`;
 }
+/** @param {{ checked: boolean, content: unknown }} props */
 function MarkdownTask({ checked, content }) {
   return html`<li class="markdown-task">
     <input
@@ -180,6 +205,10 @@ function MarkdownTask({ checked, content }) {
   </li>`;
 }
 // Markdown blocks as a list of templates.
+/**
+ * @param {unknown} source
+ * @returns {unknown[]}
+ */
 function markdownTemplate(source) {
   const blocks = [];
   const lines = String(source || '')
@@ -293,6 +322,10 @@ function markdownTemplate(source) {
   }
   return blocks;
 }
+/**
+ * @param {string} text
+ * @param {string} prefix
+ */
 const prefixLines = (text, prefix) =>
   text
     .split('\n')
@@ -334,11 +367,16 @@ const MARKDOWN_TOOLS = [
   ['Quote', '❝', (text) => prefixLines(text, '> '), 'quoted text'],
   ['Horizontal rule', '—', () => '---', ''],
 ];
+/** @type {Record<string, [(text: string) => string, string]>} */
 const MARKDOWN_SHORTCUTS = {
   b: [(text) => `**${text}**`, 'bold text'],
   i: [(text) => `_${text}_`, 'italic text'],
   k: [(text) => `[${text}](https://example.com)`, 'link text'],
 };
+/**
+ * @param {unknown} source
+ * @param {string} emptyText
+ */
 function markdownPreview(source, emptyText) {
   return html`${markdownTemplate(source)}${
     String(source || '').trim() ? null : html`<p class="help">${emptyText}</p>`
@@ -386,11 +424,11 @@ function MarkdownEditor({
   const inputID = `markdown-${useId()}`;
   const [previewing, setPreviewing] = useState(!!previewByDefault);
   const [previewSource, setPreviewSource] = useState(previewByDefault ? value : null);
-  const ownInput = useRef();
+  const ownInput = useRef(/** @type {HTMLTextAreaElement | null} */ (null));
   // `settings.inputRef` lets the owner focus the native field.
   const input = settings.inputRef || ownInput;
   const controlled = typeof settings.onValueChange === 'function';
-  const onInput = (event) => {
+  const onInput = (/** @type {Flux.TargetEvent<HTMLTextAreaElement>} */ event) => {
     if (controlled) settings.onValueChange?.(event.currentTarget.value);
   };
   const wasPreviewing = useRef(previewing);
@@ -398,7 +436,10 @@ function MarkdownEditor({
     if (wasPreviewing.current && !previewing) input.current?.focus();
     wasPreviewing.current = previewing;
   }, [previewing]);
-  const replaceSelection = (transform, placeholder = 'text') => {
+  const replaceSelection = (
+    /** @type {(text: string) => string} */ transform,
+    placeholder = 'text',
+  ) => {
     const target = input.current;
     if (!target) return;
     const start = target.selectionStart ?? target.value.length;
@@ -410,9 +451,10 @@ function MarkdownEditor({
     target.dispatchEvent(new Event('input', { bubbles: true }));
     target.focus();
   };
-  const shortcut = (event) => {
+  const shortcut = (/** @type {KeyboardEvent} */ event) => {
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
     const key = event.key.toLowerCase();
+    /** @type {[(text: string) => string, string] | undefined} */
     const action =
       MARKDOWN_SHORTCUTS[key] ||
       (event.shiftKey && key === 'x' ? [(text) => `~~${text}~~`, 'struck text'] : undefined);

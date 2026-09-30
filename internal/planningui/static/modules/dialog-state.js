@@ -35,6 +35,7 @@ export function closeEditor() {
   if (state.busy || !state.editorDialog) return;
   setState({ editorDialog: undefined, editorError: '' });
 }
+/** @param {unknown} text */
 export function setEditorError(text) {
   setState({ editorError: String(text || '') });
 }

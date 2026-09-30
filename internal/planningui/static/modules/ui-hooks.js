@@ -44,6 +44,12 @@ export function useRequest(request, dependencies = []) {
 
 // Resolves once `ready()` holds, re-checking on every `subscribe` notification;
 // rejects with an AbortError when `signal` aborts first.
+/**
+ * @param {(listener: () => void) => () => void} subscribe
+ * @param {() => boolean} ready
+ * @param {AbortSignal} signal
+ * @returns {Promise<void>}
+ */
 export function waitUntil(subscribe, ready, signal) {
   if (ready()) return Promise.resolve();
   /** @type {Promise<void>} */
@@ -67,7 +73,7 @@ export function waitUntil(subscribe, ready, signal) {
 // aborted when the component unmounts. `run` returns undefined when a write is
 // already pending, which guards against double submission.
 export function useMutation() {
-  const controllers = useRef(new Set());
+  const controllers = useRef(/** @type {Set<AbortController>} */ (new Set()));
   const running = useRef(false);
   const [pending, setPending] = useState(false);
   useEffect(
@@ -78,25 +84,39 @@ export function useMutation() {
     },
     [],
   );
-  const run = useCallback(async (task) => {
-    if (running.current) return undefined;
-    running.current = true;
-    const controller = new AbortController();
-    controllers.current.add(controller);
-    setPending(true);
-    try {
-      return await task(controller.signal);
-    } finally {
-      controllers.current.delete(controller);
-      running.current = false;
-      if (!controller.signal.aborted) setPending(false);
-    }
-  }, []);
+  const run = useCallback(
+    /**
+     * @template T
+     * @param {(signal: AbortSignal) => T | Promise<T>} task
+     * @returns {Promise<T | undefined>}
+     */
+    async (task) => {
+      if (running.current) return undefined;
+      running.current = true;
+      const controller = new AbortController();
+      controllers.current.add(controller);
+      setPending(true);
+      try {
+        return await task(controller.signal);
+      } finally {
+        controllers.current.delete(controller);
+        running.current = false;
+        if (!controller.signal.aborted) setPending(false);
+      }
+    },
+    [],
+  );
   return { run, pending };
 }
 
 // Dismiss an open component when a pointer lands outside its ref or Escape is
 // pressed. The callback stays current without reinstalling document listeners.
+/**
+ * @param {{ current: Element | null }} ref
+ * @param {boolean} open
+ * @param {((event: Event) => void) | undefined} onDismiss
+ * @param {{ closeOnEscape?: boolean, event?: string }} [options]
+ */
 export function useDismiss(
   ref,
   open,
@@ -109,11 +129,12 @@ export function useDismiss(
   useEffect(() => {
     if (!open) return undefined;
 
-    const onPointer = (pointer) => {
+    const onPointer = (/** @type {Event} */ pointer) => {
       const element = ref.current;
-      if (element && !element.contains(pointer.target)) dismissRef.current?.(pointer);
+      if (element && !element.contains(/** @type {Node | null} */ (pointer.target)))
+        dismissRef.current?.(pointer);
     };
-    const onKeyDown = (key) => {
+    const onKeyDown = (/** @type {KeyboardEvent} */ key) => {
       if (key.key === 'Escape' && !key.defaultPrevented) dismissRef.current?.(key);
     };
     document.addEventListener(event, onPointer);
@@ -127,12 +148,19 @@ export function useDismiss(
 
 // A document or window listener for the lifetime of the component, optionally
 // only while `active`. The handler stays current without reinstalling.
+/**
+ * @template {keyof WindowEventMap | keyof DocumentEventMap} K
+ * @param {Window | Document | null | undefined} target
+ * @param {K} type
+ * @param {(event: (WindowEventMap & DocumentEventMap)[K]) => void} handler
+ * @param {{ active?: boolean, capture?: boolean }} [options]
+ */
 export function useEventListener(target, type, handler, { active = true, capture = false } = {}) {
-  const handlerRef = useRef(handler);
+  const handlerRef = useRef(/** @type {(event: Event) => void} */ (handler));
   handlerRef.current = handler;
   useEffect(() => {
     if (!active || !target) return undefined;
-    const listener = (event) => handlerRef.current(event);
+    const listener = (/** @type {Event} */ event) => handlerRef.current(event);
     target.addEventListener(type, listener, capture);
     return () => target.removeEventListener(type, listener, capture);
   }, [target, type, active, capture]);
@@ -140,6 +168,11 @@ export function useEventListener(target, type, handler, { active = true, capture
 
 // Calls `onChange` after a changed value has been committed to the DOM, so
 // form readers see the rendered controls. The first render does not report.
+/**
+ * @template T
+ * @param {T} value
+ * @param {((value: T) => void) | undefined} onChange
+ */
 export function useCommittedChange(value, onChange) {
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
@@ -151,6 +184,11 @@ export function useCommittedChange(value, onChange) {
   }, [value]);
 }
 
+/**
+ * @template T
+ * @param {T} value
+ * @param {number | undefined} delay
+ */
 export function useDebouncedValue(value, delay) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -164,6 +202,11 @@ export function useDebouncedValue(value, delay) {
   return delay ? debounced : value;
 }
 
+/**
+ * @param {ParentNode} root
+ * @param {string} key
+ * @returns {(HTMLElement & { disabled?: boolean }) | null}
+ */
 function focusKeyTarget(root, key) {
   return root.querySelector(`[data-focus-key="${CSS.escape(key)}"]`);
 }
@@ -172,6 +215,10 @@ function focusKeyTarget(root, key) {
 // from a layout effect of the component that rendered the control, so the
 // render that shows it has committed. `onlyIfLost` leaves focus alone when it
 // already moved on. Returns whether the request is settled.
+/**
+ * @param {string | undefined} key
+ * @param {{ within?: ParentNode | null, onlyIfLost?: boolean }} [options]
+ */
 export function focusKey(key, { within = document, onlyIfLost = false } = {}) {
   if (!key) return false;
   const active = document.activeElement;
@@ -184,6 +231,10 @@ export function focusKey(key, { within = document, onlyIfLost = false } = {}) {
 
 // One focus-restore effect for keyed content whose element can be recreated,
 // such as a card that moves between columns. Spread `handlers` on the container.
+/**
+ * @param {{ current: ParentNode | null }} ref
+ * @param {unknown} route
+ */
 export function useFocusRestore(ref, route) {
   const focusKey = useRef('');
   const previousRoute = useRef(route);
@@ -196,11 +247,15 @@ export function useFocusRestore(ref, route) {
     if (!container || !focusKey.current || document.activeElement !== document.body) return;
     focusKeyTarget(container, focusKey.current)?.focus({ preventScroll: true });
   });
-  const record = useCallback((event) => {
-    focusKey.current = event.target.closest?.('[data-focus-key]')?.dataset.focusKey || '';
+  const record = useCallback((/** @type {Event} */ event) => {
+    const target = /** @type {HTMLElement | null} */ (event.target);
+    focusKey.current =
+      /** @type {HTMLElement | null | undefined} */ (target?.closest?.('[data-focus-key]'))?.dataset
+        .focusKey || '';
   }, []);
-  const clearOutside = useCallback((event) => {
-    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
+  const clearOutside = useCallback((/** @type {FocusEvent} */ event) => {
+    const related = /** @type {Node | null} */ (event.relatedTarget);
+    if (related && !(/** @type {Node} */ (event.currentTarget).contains(related)))
       focusKey.current = '';
   }, []);
   return {

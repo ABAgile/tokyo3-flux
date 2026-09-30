@@ -29,8 +29,13 @@ import { closeDetail, openSharedItem } from './actions.js';
 import { useCommittedChange } from './ui-hooks.js';
 import { GitLabPaste, addGitLabLink, reconcileItemLinks } from './item-links.js';
 
+/**
+ * @param {HTMLFormElement} form
+ * @returns {Flux.ItemDraft}
+ */
 export function itemEditorDraft(form) {
   const data = new FormData(form);
+  const all = (/** @type {string} */ name) => /** @type {string[]} */ (data.getAll(name));
   return {
     title: String(data.get('title') || ''),
     description: String(data.get('description') || ''),
@@ -38,14 +43,15 @@ export function itemEditorDraft(form) {
     end_date: String(data.get('end_date') || ''),
     due_date: String(data.get('due_date') || ''),
     column_id: String(data.get('column_id') || ''),
-    project_ids: data.getAll('project_id').filter(Boolean),
+    project_ids: all('project_id').filter(Boolean),
     assignee: String(data.get('assignee') || ''),
-    sprint_ids: data.getAll('sprint_ids'),
-    labels: data.getAll('labels'),
-    dependencies: data.getAll('dependencies'),
-    link_ids: data.getAll('link_ids'),
+    sprint_ids: all('sprint_ids'),
+    labels: all('labels'),
+    dependencies: all('dependencies'),
+    link_ids: all('link_ids'),
   };
 }
+/** @type {['start_date' | 'end_date' | 'due_date', string][]} */
 const DATE_FIELDS = [
   ['start_date', 'Start date'],
   ['end_date', 'End date'],
@@ -53,6 +59,14 @@ const DATE_FIELDS = [
 ];
 // The date inputs are controlled by the field, and chips summarise them.
 // Committed changes are reported through `onChange`.
+/**
+ * @param {{
+ *   item: Flux.Item,
+ *   draft?: Flux.ItemDraft,
+ *   readOnly: boolean,
+ *   onChange?: () => void,
+ * }} props
+ */
 function DatesField({ item, draft, readOnly, onChange }) {
   const inputsID = `item-dates-${useId()}`;
   const [editing, setEditing] = useState(false);
@@ -66,8 +80,9 @@ function DatesField({ item, draft, readOnly, onChange }) {
   const edit = useRef(/** @type {HTMLButtonElement | null} */ (null));
   const wasEditing = useRef(false);
   useCommittedChange(values, onChange);
-  const setValue = (name, value) => setValues((current) => ({ ...current, [name]: value }));
-  const clear = (name, title) => html`<button
+  const setValue = (/** @type {string} */ name, /** @type {string} */ value) =>
+    setValues((current) => ({ ...current, [name]: value }));
+  const clear = (/** @type {string} */ name, /** @type {string} */ title) => html`<button
     type="button"
     class="multi-select-remove"
     aria-label=${`Clear ${title.toLowerCase()}`}
@@ -82,7 +97,11 @@ function DatesField({ item, draft, readOnly, onChange }) {
     wasEditing.current = editing;
   }, [editing]);
   const { start_date: start, end_date: end, due_date: due } = values;
-  const part = (name, title, text) => html`<span class="date-range-part"
+  const part = (
+    /** @type {string} */ name,
+    /** @type {string} */ title,
+    /** @type {string} */ text,
+  ) => html`<span class="date-range-part"
     ><span>${text || '-'}</span>${editing && text ? clear(name, title) : null}</span
   >`;
   return html`<div class="multi-select-field date-field">
@@ -104,7 +123,7 @@ function DatesField({ item, draft, readOnly, onChange }) {
       class="multi-select date-field-content"
       role="group"
       aria-label="Dates"
-      onKeydown=${(event) => {
+      onKeydown=${(/** @type {KeyboardEvent} */ event) => {
         if (event.key !== 'Escape') return;
         event.preventDefault();
         event.stopPropagation();
@@ -138,16 +157,25 @@ function DatesField({ item, draft, readOnly, onChange }) {
               autocomplete="off"
               disabled=${readOnly}
               value=${values[name]}
-              ref=${(node) => {
+              ref=${(/** @type {HTMLInputElement | null} */ node) => {
                 inputs.current[name] = node;
               }}
-              onInput=${(event) => setValue(name, event.currentTarget.value)}
+              onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => setValue(name, event.currentTarget.value)}
           /></label>`,
         )}
       </div>
     </div>
   </div>`;
 }
+/**
+ * @param {{
+ *   item: Flux.Item,
+ *   draft?: Flux.ItemDraft,
+ *   readOnly: boolean,
+ *   dueBadgeID?: string,
+ *   inputRef?: { current: HTMLInputElement | null },
+ * }} props
+ */
 function ItemTitleField({ item, draft, readOnly, dueBadgeID, inputRef }) {
   const now = useStore(selectDueDateNow);
   const lookups = useStore(selectLookups);
@@ -168,18 +196,21 @@ function ItemTitleField({ item, draft, readOnly, dueBadgeID, inputRef }) {
 // The card's own planning state, stated explicitly: where it sits, whether it
 // is archived or blocked, and which sprints hold it. GitLab entries are labelled
 // as cached provider observations, never as authoritative planning state.
+/** @param {Flux.State} current */
 function selectItemLookup(current) {
   return itemLookup(current.board, current.archiveItems);
 }
+/** @type {Record<string, string>} */
+const CATEGORY_LABELS = { todo: 'To do', doing: 'In progress', done: 'Done' };
+/** @param {{ item: Flux.Item }} props */
 function ItemStatus({ item }) {
   const now = useStore(selectDueDateNow);
   const lookups = useStore(selectLookups);
   const byID = useStore(selectItemLookup);
   const column = lookups.columnsById.get(item.column_id);
-  const category =
-    { todo: 'To do', doing: 'In progress', done: 'Done' }[column?.category] || 'Uncategorised';
+  const category = (column && CATEGORY_LABELS[column.category]) || 'Uncategorised';
   const columnName = column?.name || item.column_id;
-  const sprintName = (id) => lookups.sprintsById.get(id)?.name || id;
+  const sprintName = (/** @type {string} */ id) => lookups.sprintsById.get(id)?.name || id;
   const openSprints = (item.sprint_ids || []).map(sprintName);
   const board = requireBoard();
   const closedSprints = board.closed_scope
@@ -264,6 +295,10 @@ function ItemStatus({ item }) {
 }
 // Restoring from a shared view keeps the same card URL: the link a reader was
 // given must keep resolving after the card returns to the board.
+/**
+ * @param {Flux.Item} item
+ * @param {Flux.EditorMode} mode
+ */
 async function restoreSharedItem(item, mode) {
   if (!writable()) return;
   await quick({ kind: 'item.restore', target: item.id });
@@ -275,6 +310,19 @@ async function restoreSharedItem(item, mode) {
 // The editor fields shared by the modal and the List detail pane. `mode` is
 // 'modal' or 'detail'; `getDraft()` reads the enclosing form's input, and
 // `onChange` hears committed widget changes for draft tracking.
+/**
+ * @param {{
+ *   item: Flux.Item,
+ *   draft?: Flux.ItemDraft,
+ *   readOnly: boolean,
+ *   mode: Flux.EditorMode,
+ *   dueBadgeID?: string,
+ *   titleRef?: { current: HTMLInputElement | null },
+ *   getDraft?: () => Flux.ItemDraft | undefined,
+ *   originFocusKey?: string,
+ *   onChange?: () => void,
+ * }} props
+ */
 export function ItemEditorFields({
   item,
   draft,
@@ -294,7 +342,7 @@ export function ItemEditorFields({
   )?.subject;
   const assignMe =
     !readOnly && selfSubject
-      ? ({ select }) =>
+      ? (/** @type {{ select: (value: Flux.SelectValue) => boolean }} */ { select }) =>
           html`<button
             type="button"
             class="multi-select-edit"
@@ -307,7 +355,7 @@ export function ItemEditorFields({
     .filter((s) => s.item_id === item.id)
     .map((scope) => board.sprints.find((s) => s.id === scope.sprint_id)?.name || scope.sprint_id);
   const itemLinks = item.id ? board.links.filter((link) => link.items.includes(item.id)) : [];
-  const labelChip = (value) => {
+  const labelChip = (/** @type {string} */ value) => {
     const label = labelInfo(lookups, value);
     return {
       className: 'label-badge',
@@ -437,9 +485,10 @@ export function ItemEditorFields({
       </div>
     </div>`;
 }
+/** @param {{ item: Flux.Item }} props */
 function CopyCardLinkButton({ item }) {
   const [outcome, setOutcome] = useState('');
-  const timer = useRef();
+  const timer = useRef(/** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined));
   const mounted = useRef(true);
   useEffect(
     () => () => {
@@ -469,10 +518,15 @@ function CopyCardLinkButton({ item }) {
     onClick=${copy}
   >${label}</button>`;
 }
+/**
+ * @param {Flux.Item} item
+ * @param {number | undefined} [revision]
+ */
 export function itemEditorTitleExtrasTemplate(item, revision = item.revision) {
   return html` ${helpPopoverTemplate(`Card ID: ${item.id}\nRevision: ${revision}`, 'Work item details')} <${CopyCardLinkButton} item=${item} />`;
 }
 // Archive and restore sit before Cancel in either editor surface.
+/** @param {{ item: Flux.Item, readOnly?: boolean, mode: Flux.EditorMode }} props */
 export function ItemFooterActions({ item, readOnly, mode }) {
   const { role, writeDisabled } = usePermissions();
   if (item.id && !item.archived && !readOnly)
@@ -500,7 +554,7 @@ export function ItemFooterActions({ item, readOnly, mode }) {
 export function ItemEditorDialog({ item, draft, readOnly }) {
   const existing = !!item.id;
   const dueBadgeID = `item-title-overdue-${useId()}`;
-  const form = useRef(null);
+  const form = useRef(/** @type {HTMLFormElement | null} */ (null));
   const desiredLinkIDs = useRef(/** @type {FormDataEntryValue[]} */ ([]));
   const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
   return h(
@@ -510,7 +564,7 @@ export function ItemEditorDialog({ item, draft, readOnly }) {
       className: 'item-editor-form',
       formRef: form,
       readOnly,
-      titleExtra: existing ? itemEditorTitleExtrasTemplate(item) : null,
+      titleExtra: existing ? itemEditorTitleExtrasTemplate(/** @type {Flux.Item} */ (item)) : null,
       titleBadge: html`<${EditorDueBadge} item=${item} id=${dueBadgeID} />`,
       footerAction: html`<${ItemFooterActions} item=${item} readOnly=${readOnly} mode="modal" />`,
       command: (data) => {
@@ -521,7 +575,9 @@ export function ItemEditorDialog({ item, draft, readOnly }) {
           item: itemPayloadFromForm(data, item),
         };
       },
-      afterSave: existing ? () => reconcileItemLinks(item.id, desiredLinkIDs.current) : undefined,
+      afterSave: existing
+        ? () => reconcileItemLinks(/** @type {string} */ (item.id), desiredLinkIDs.current)
+        : undefined,
     },
     html`<${ItemEditorFields}
     item=${item}

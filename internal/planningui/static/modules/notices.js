@@ -4,6 +4,7 @@ import { html, shallowEqual } from './vdom.js';
 import { state, setState, useStore } from './state.js';
 import { isAbortError } from './api.js';
 
+/** @param {{ refresh: () => unknown }} props */
 export function StatusBars({ refresh }) {
   const {
     noticeText,
@@ -51,24 +52,29 @@ export function StatusBars({ refresh }) {
 
 // Transient progress and errors are separate surfaces. Preact retains the live
 // regions and changes their text only when a new announcement is made.
+/** @param {unknown} text */
 export function notice(text, error = false) {
   if (error) showError(text);
   else setStatus(text);
 }
+/** @param {unknown} text */
 function setStatus(text) {
   const value = String(text || '');
   if (value !== state.noticeText) setState({ noticeText: value });
 }
+/** @param {unknown} text */
 function showError(text) {
   const value = String(text || '');
   if (value !== state.errorText) setState({ errorText: value });
 }
 // A failure no caller handled: a rejected fire-and-forget promise or an
 // exception thrown by an event handler. Cancelled work is the caller moving on.
+/** @param {unknown} error */
 export function reportUnexpectedError(error) {
   if (isAbortError(error)) return;
   console.error('Unexpected failure.', error);
-  showError(error?.message || (typeof error === 'string' && error) || 'Something went wrong.');
+  const message = /** @type {{ message?: unknown } | null | undefined} */ (error)?.message;
+  showError(message || (typeof error === 'string' && error) || 'Something went wrong.');
 }
 export function clearError() {
   if (state.errorText) setState({ errorText: '' });
@@ -83,14 +89,19 @@ export function clearPlanningChangeNotice() {
 // An undo offer expires after UNDO_TTL. The timer is transient browser state,
 // so it stays in this module rather than in the store.
 export const UNDO_TTL = 10000;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
 let undoTimer;
 export function clearUndo() {
   clearTimeout(undoTimer);
   undoTimer = undefined;
   setState({ undoOffer: undefined, undoText: '' });
 }
+/**
+ * @param {string} text
+ * @param {Flux.Command | Flux.Command[] | undefined} commands
+ */
 export function offerUndo(text, commands) {
-  const list = (Array.isArray(commands) ? commands : [commands]).filter(Boolean);
+  const list = (Array.isArray(commands) ? commands : [commands]).filter((command) => !!command);
   clearUndo();
   if (!list.length) return;
   setState({ undoOffer: list, undoText: text });

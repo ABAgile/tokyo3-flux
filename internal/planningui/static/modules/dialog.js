@@ -27,6 +27,17 @@ function useDialog() {
 
 // A native <dialog> whose modal state follows `open`. Native Escape, backdrop
 // clicks and closes are reported; the caller decides what they mean.
+/**
+ * @param {{
+ *   id: string,
+ *   labelledBy: string,
+ *   open: boolean,
+ *   onCancel?: (event: Event) => void,
+ *   onBackdrop?: (event: MouseEvent) => void,
+ *   onClosed?: (event: Event) => void,
+ *   children?: unknown,
+ * }} props
+ */
 export function Modal({ id, labelledBy, open, onCancel, onBackdrop, onClosed, children }) {
   const ref = useRef(/** @type {HTMLDialogElement | null} */ (null));
   useLayoutEffect(() => {
@@ -37,7 +48,7 @@ export function Modal({ id, labelledBy, open, onCancel, onBackdrop, onClosed, ch
   }, [open]);
   // A click on the dialog element itself lands on its backdrop or padding,
   // never on its content.
-  const click = (event) => {
+  const click = (/** @type {MouseEvent} */ event) => {
     if (event.target === ref.current) onBackdrop?.(event);
   };
   return html`<dialog
@@ -50,11 +61,16 @@ export function Modal({ id, labelledBy, open, onCancel, onBackdrop, onClosed, ch
   >${children}</dialog>`;
 }
 
+/** @param {Flux.State} current */
 function selectEditorDialog(current) {
   return current.editorDialog;
 }
 // A dialog that fails to render keeps its head and close button, so it can
 // always be dismissed.
+/**
+ * @param {string} label
+ * @param {() => void} retry
+ */
 function dialogFallback(label, retry) {
   const dismiss = () => {
     if (!state.busy) closeEditor();
@@ -73,6 +89,13 @@ function dialogFallback(label, retry) {
 // Hosts the open dialog. `dialogs` maps a dialog type to its component; a
 // component's optional static `onClose(props)` runs when its dialog is closed
 // rather than replaced by another.
+/**
+ * @typedef {{
+ *   (props: Flux.DialogProps[Flux.DialogType]): unknown,
+ *   onClose?: (props: Flux.DialogProps[Flux.DialogType]) => void,
+ * }} DialogComponent
+ */
+/** @param {{ dialogs: Record<Flux.DialogType, DialogComponent> }} props */
 export function EditorDialog({ dialogs }) {
   const record = useStore(selectEditorDialog);
   const Component = record ? dialogs[record.type] : undefined;
@@ -98,14 +121,14 @@ export function EditorDialog({ dialogs }) {
       setSharedItem('');
     }
   }, [record]);
-  const cancel = (event) => {
+  const cancel = (/** @type {Event} */ event) => {
     event.preventDefault();
     if (!state.busy) closeEditor();
   };
   const backdrop = () => {
     if (!state.busy) closeEditor();
   };
-  const closed = (event) => {
+  const closed = (/** @type {Flux.TargetEvent<HTMLDialogElement>} */ event) => {
     if (event.currentTarget.open || !state.editorDialog) return;
     setState({ editorDialog: undefined, editorError: '' });
   };
@@ -118,7 +141,7 @@ export function EditorDialog({ dialogs }) {
     onClosed=${closed}
   >
     ${
-      Component
+      Component && record
         ? html`<${DialogContext.Provider} value=${record}
             ><${ErrorBoundary} key=${record.key} label="Dialog unavailable" fallback=${dialogFallback}
               ><${Component} ...${record.props}
@@ -129,9 +152,11 @@ export function EditorDialog({ dialogs }) {
   </${Modal}>`;
 }
 
+/** @param {Flux.State} current */
 function selectBusy(current) {
   return current.busy;
 }
+/** @param {Flux.State} current */
 function selectEditorError(current) {
   return current.editorError;
 }
@@ -157,7 +182,7 @@ export function FormDialog({
   const [saving, setSaving] = useState(false);
   const submitting = useRef(false);
   const disabled = saving || busy;
-  async function submit(event) {
+  async function submit(/** @type {Flux.TargetEvent<HTMLFormElement, SubmitEvent>} */ event) {
     event.preventDefault();
     if (readOnly || state.busy || submitting.current || !onSubmit) return;
     const form = event.currentTarget;
@@ -210,7 +235,7 @@ export function CommandDialog({ command, afterSave, ...props }) {
   const dialog = useDialog();
   /** @type {{ current: { serialized: string | undefined, key: string | undefined } }} */
   const pending = useRef({ serialized: undefined, key: undefined });
-  async function onSubmit(data) {
+  async function onSubmit(/** @type {FormData} */ data) {
     try {
       const full = { revision: dialog?.revision, ...command(data) };
       const serialized = JSON.stringify(full);

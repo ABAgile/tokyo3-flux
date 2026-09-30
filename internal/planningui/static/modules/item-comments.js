@@ -12,12 +12,14 @@ import { canComment, usePermissions } from './permissions.js';
 import { memberInfo, avatarImageTemplate } from './people.js';
 import { useCommittedChange, useMutation, useRequest } from './ui-hooks.js';
 
+/** @param {string | number | Date} value */
 function commentTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return { label: 'Unknown time', dateTime: '' };
   return { label: date.toLocaleString(), dateTime: date.toISOString() };
 }
 const COMMENT_PAGE_LIMIT = 100;
+/** @param {Flux.Comment | null | undefined} comment */
 function validComment(comment) {
   return (
     comment &&
@@ -32,6 +34,7 @@ function validComment(comment) {
     !Number.isNaN(Date.parse(comment.created_at))
   );
 }
+/** @param {Flux.CommentPage | null | undefined} data */
 function validCommentPage(data) {
   return (
     data &&
@@ -41,6 +44,10 @@ function validCommentPage(data) {
       (Number.isSafeInteger(data.next_before) && data.next_before >= 0))
   );
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Comment} comment
+ */
 function commentTemplate(lookups, comment) {
   const info = memberInfo(lookups, comment.author);
   const time = commentTime(comment.created_at);
@@ -58,9 +65,32 @@ function commentTemplate(lookups, comment) {
     </div>
   </article>`;
 }
+/** @param {{ lookups: Flux.Lookups, comment: Flux.Comment }} props */
 function CommentItem({ lookups, comment }) {
   return commentTemplate(lookups, comment);
 }
+/**
+ * @typedef {{
+ *   comments: Flux.Comment[],
+ *   nextBefore: number,
+ *   olderDisabled: boolean,
+ *   status: string,
+ *   error: boolean,
+ *   draft: string,
+ * }} CommentsState
+ */
+/**
+ * @typedef {{ type: 'loading' }
+ *   | { type: 'loaded', comments: Flux.Comment[], nextBefore: number | undefined, append: boolean }
+ *   | { type: 'failed', message: string }
+ *   | { type: 'status', text?: string, error?: boolean }
+ *   | { type: 'draft', draft: string }} CommentsAction
+ */
+/**
+ * @param {CommentsState} current
+ * @param {CommentsAction} action
+ * @returns {CommentsState}
+ */
 function commentsReducer(current, action) {
   switch (action.type) {
     case 'loading':
@@ -89,6 +119,13 @@ function commentsReducer(current, action) {
       return current;
   }
 }
+/**
+ * @param {string} root
+ * @param {string} itemID
+ * @param {number} before
+ * @param {AbortSignal} signal
+ * @returns {Promise<Flux.CommentPage>}
+ */
 async function commentPage(root, itemID, before, signal) {
   const query = new URLSearchParams({ limit: String(COMMENT_PAGE_LIMIT) });
   if (before) query.set('before', String(before));
@@ -101,6 +138,7 @@ async function commentPage(root, itemID, before, signal) {
 // The component owns comment paging, status and the controlled composer. It is
 // keyed by workspace root and item, so a switch remounts it and every pending
 // read or write is aborted rather than applied to another context.
+/** @param {{ root: string, item: Flux.Item, onDraftChange?: (draft: string) => void }} props */
 function ItemComments({ root, item, onDraftChange }) {
   const [local, dispatch] = useReducer(commentsReducer, {
     comments: [],
@@ -211,9 +249,11 @@ function ItemComments({ root, item, onDraftChange }) {
     }
   </section>`;
 }
+/** @param {Flux.State} current */
 function selectRoot(current) {
   return current.root;
 }
+/** @param {{ item: Flux.Item, onDraftChange?: (draft: string) => void }} props */
 function WorkspaceItemComments({ item, onDraftChange }) {
   const root = useStore(selectRoot);
   return html`<${ItemComments}
@@ -223,6 +263,10 @@ function WorkspaceItemComments({ item, onDraftChange }) {
     onDraftChange=${onDraftChange}
   />`;
 }
+/**
+ * @param {Flux.Item} item
+ * @param {(draft: string) => void} [onDraftChange]
+ */
 export function itemCommentsTemplate(item, onDraftChange) {
   return html`<${WorkspaceItemComments} item=${item} onDraftChange=${onDraftChange} />`;
 }

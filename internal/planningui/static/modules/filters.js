@@ -12,31 +12,57 @@ export const PROJECT_FILTER_NAMES = Object.freeze(['assignee', 'label']);
 // list means "all", and the exclusive `none` value means "records with no
 // association at all". The toolbar selects add one value at a time; chips below
 // the toolbar are the authoritative, removable view of what is active.
+/** @type {readonly (keyof Flux.Filters)[]} */
 export const FILTER_NAMES = Object.freeze(['project', 'assignee', 'label']);
 export const SEARCH_DEBOUNCE_MS = 150;
 // Each item's searchable text is memoized per board generation and revision.
+/** @type {WeakMap<Flux.Item, { generation: number, revision: number | undefined, text: string }>} */
 const searchIndex = new WeakMap();
 
 // Pure filter-value rules shared by every filter group. `none` is exclusive and
 // can never be combined with concrete values.
+/**
+ * @param {readonly string[]} values
+ * @param {string | undefined} value
+ * @returns {string[]}
+ */
 export function withFilterValue(values, value) {
   if (!value || value === 'all') return [];
   if (value === 'none') return ['none'];
   const next = values.filter((current) => current !== 'none' && current !== String(value));
   return [...next, String(value)];
 }
+/**
+ * @param {readonly string[]} values
+ * @param {string} value
+ */
 function withoutFilterValue(values, value) {
   return values.filter((current) => current !== String(value));
 }
+/**
+ * @param {readonly string[]} values
+ * @param {readonly string[]} candidates
+ */
 export function matchesFilter(values, candidates) {
   if (!values.length) return true;
   if (values.includes('none')) return candidates.length === 0;
   return candidates.some((value) => values.includes(value));
 }
+/**
+ * @template {Flux.FilterGroup} G
+ * @param {G} group
+ * @returns {G}
+ */
 function emptyFilterGroup(group) {
-  return Object.fromEntries(Object.keys(group).map((name) => [name, []]));
+  return /** @type {G} */ (
+    Object.fromEntries(Object.keys(group).map((name) => [name, /** @type {string[]} */ ([])]))
+  );
 }
 
+/**
+ * @param {keyof Flux.Filters} name
+ * @param {string} value
+ */
 export function addPlanningFilter(name, value) {
   setState((current) => ({
     filters: { ...current.filters, [name]: withFilterValue(current.filters[name], value) },
@@ -44,12 +70,20 @@ export function addPlanningFilter(name, value) {
 }
 // Unknown values are dropped whenever a board is loaded, so a renamed or
 // removed project, member or label never leaves a filter nothing can match.
+/**
+ * @template {Flux.FilterGroup} G
+ * @param {G} filters
+ * @param {Flux.Board} board
+ * @returns {G}
+ */
 export function knownFilters(filters, board) {
-  const next = Object.fromEntries(
-    Object.entries(filters).map(([name, values]) => [
-      name,
-      values.filter((value) => knownFilterValue(name, value, board)),
-    ]),
+  const next = /** @type {G} */ (
+    Object.fromEntries(
+      Object.entries(filters).map(([name, values]) => [
+        name,
+        values.filter((value) => knownFilterValue(name, value, board)),
+      ]),
+    )
   );
   return Object.keys(next).every((name) => next[name].length === filters[name].length)
     ? filters
@@ -57,6 +91,10 @@ export function knownFilters(filters, board) {
 }
 // A single concrete selection still drives the project lens and the server-side
 // burn-down filter, which accept one value. Wider selections fall back to all.
+/**
+ * @param {string} name
+ * @param {Flux.FilterGroup} filters
+ */
 export function singleFilterValue(name, filters) {
   const values = filters[name];
   return values.length === 1 && values[0] !== 'none'
@@ -65,15 +103,35 @@ export function singleFilterValue(name, filters) {
       ? 'none'
       : 'all';
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {string} name
+ * @param {string} value
+ */
 function filterOptionText(lookups, name, value) {
   if (value === 'none')
-    return { project: 'No project', assignee: 'Unassigned', label: 'No labels' }[name];
+    return /** @type {Record<string, string>} */ ({
+      project: 'No project',
+      assignee: 'Unassigned',
+      label: 'No labels',
+    })[name];
   if (name === 'project') return projectName(lookups, value);
   if (name === 'assignee') return memberName(lookups, value);
   return value;
 }
 // Chips are the removable, authoritative view of any filter group. `onChange`
 // receives the next group; `lookups` resolves the chip names.
+/**
+ * @template {Flux.FilterGroup} G
+ * @param {{
+ *   group: G,
+ *   names: readonly string[],
+ *   lookups: Flux.Lookups,
+ *   onChange: (next: G) => void,
+ *   disabled?: boolean,
+ *   clearLabel?: string,
+ * }} props
+ */
 export function FilterChips({
   group,
   names,
@@ -86,7 +144,11 @@ export function FilterChips({
   names.forEach((name) => {
     group[name].forEach((value) => {
       const text = filterOptionText(lookups, name, value);
-      const title = { project: 'Project', assignee: 'Assignee', label: 'Label' }[name];
+      const title = /** @type {Record<string, string>} */ ({
+        project: 'Project',
+        assignee: 'Assignee',
+        label: 'Label',
+      })[name];
       const color = name === 'label' && value !== 'none' ? labelInfo(lookups, value).color : '';
       const colors = color ? { 'background-color': color, color: labelForeground(color) } : {};
       chips.push(html`<span key=${`${name}:${value}`} class=${`filter-chip filter-chip-${name}`} style=${colors}>
@@ -96,7 +158,7 @@ export function FilterChips({
           class="filter-chip-remove"
           aria-label=${`Remove ${name} filter ${text}`}
           disabled=${disabled}
-          onClick=${() => onChange({ ...group, [name]: withoutFilterValue(group[name], value) })}
+          onClick=${() => onChange(/** @type {G} */ ({ ...group, [name]: withoutFilterValue(group[name], value) }))}
         >×</button>
       </span>`);
     });
@@ -111,12 +173,26 @@ export function FilterChips({
     >${clearLabel}</button>`);
   return chips;
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {string} name
+ * @param {Flux.FilterGroup} filters
+ */
 function filterSummaryText(lookups, name, filters) {
   const values = filters[name];
   if (!values.length)
-    return { project: 'All projects', assignee: 'All assignees', label: 'All labels' }[name];
+    return /** @type {Record<string, string>} */ ({
+      project: 'All projects',
+      assignee: 'All assignees',
+      label: 'All labels',
+    })[name];
   return values.map((value) => filterOptionText(lookups, name, value)).join(', ');
 }
+/**
+ * @param {string} name
+ * @param {string} value
+ * @param {Flux.Board} board
+ */
 export function knownFilterValue(name, value, board) {
   if (value === 'none') return true;
   if (name === 'project') return board.projects.some((project) => project.id === value);
@@ -126,6 +202,11 @@ export function knownFilterValue(name, value, board) {
 // Searchable text is derived once per item revision. `boardGeneration` is
 // bumped whenever the board is replaced, so renamed projects or members
 // invalidate the memo without tracking each name individually.
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ * @param {number} generation
+ */
 function itemHaystack(lookups, item, generation) {
   const cached = searchIndex.get(item);
   if (cached && cached.generation === generation && cached.revision === item.revision)
@@ -136,6 +217,7 @@ function itemHaystack(lookups, item, generation) {
   searchIndex.set(item, { generation, revision: item.revision, text });
   return text;
 }
+/** @param {unknown} value */
 export function normalizedSearch(value) {
   return String(value || '')
     .trim()
@@ -149,6 +231,10 @@ export function commitSearch(text) {
   const searchInput = String(text);
   setState({ searchInput, searchQuery: normalizedSearch(searchInput) });
 }
+/**
+ * @param {Flux.Item} item
+ * @param {Flux.Filters} filters
+ */
 function matchesItemFilters(item, filters) {
   return (
     matchesFilter(filters.project, itemProjectIDs(item)) &&
@@ -157,8 +243,13 @@ function matchesItemFilters(item, filters) {
   );
 }
 // Work shown by a planning view (`board` or `archive`), derived from the store.
+/**
+ * @param {Flux.State} current
+ * @param {string} view
+ */
 function computeFilteredItems(current, view) {
-  const { board, searchQuery: query, scope, filters, boardGeneration } = current;
+  const { searchQuery: query, scope, filters, boardGeneration } = current;
+  const board = /** @type {Flux.Board} */ (current.board);
   const lookups = selectLookups(current);
   const sprint = lookups.sprintsById.get(scope);
   const active = view === 'archive' ? [] : lookups.activeSprints;
@@ -179,8 +270,14 @@ function computeFilteredItems(current, view) {
     return !query || itemHaystack(lookups, i, boardGeneration).includes(query);
   });
 }
+/** @type {Record<string, { inputs: readonly unknown[], items: readonly Flux.Item[] } | undefined>} */
 const filteredCache = { board: undefined, archive: undefined };
 // Memoized per view on every input it reads, so subscribers compare by identity.
+/**
+ * @param {Flux.State} current
+ * @param {string} [view]
+ * @returns {readonly Flux.Item[]}
+ */
 export function selectFilteredItems(current, view = current.view) {
   if (!current.board || !['board', 'archive'].includes(view)) return EMPTY;
   const inputs = [
@@ -197,11 +294,12 @@ export function selectFilteredItems(current, view = current.view) {
   filteredCache[view] = { inputs, items };
   return items;
 }
-/** @type {readonly never[]} */
+/** @type {readonly Flux.Item[]} */
 const EMPTY = Object.freeze([]);
 export function filteredItems() {
   return selectFilteredItems(state);
 }
+/** @param {{ show: boolean, includeLabels: boolean, disabled?: boolean }} props */
 export function PlanningFilterChips({ show, includeLabels, disabled }) {
   const filters = useStore(selectFilters);
   const lookups = useStore(selectLookups);
@@ -219,15 +317,26 @@ export function PlanningFilterChips({ show, includeLabels, disabled }) {
     ${chips}
   </div>`;
 }
+/** @param {Flux.State} current */
 function selectFilters(current) {
   return current.filters;
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {string} name
+ * @param {Flux.FilterGroup} filters
+ */
 export function selectedFilterText(lookups, name, filters) {
   const values = filters[name];
   return values.length > 1
     ? `${filterSummaryText(lookups, name, filters)} (chart shows all)`
     : filterSummaryText(lookups, name, filters);
 }
+/**
+ * @param {Flux.Board} board
+ * @param {Flux.Sprint} sprint
+ * @param {Pick<Flux.Filters, 'project' | 'assignee'>} filters
+ */
 export function sprintFilterItems(board, sprint, filters) {
   return scopeItems(board, sprint).filter(
     (item) =>
@@ -239,13 +348,24 @@ export function sprintFilterItems(board, sprint, filters) {
 // their metrics count: a sprint is shown when its scope still holds work that
 // matches every active filter. Sprints are never filtered out while no work
 // filter is active, so an empty sprint stays visible and plannable.
+/**
+ * @param {Flux.Board} board
+ * @param {Flux.Sprint} sprint
+ * @param {Pick<Flux.Filters, 'project' | 'assignee'>} filters
+ */
 export function sprintMatchesFilters(board, sprint, filters) {
   if (!filters.project.length && !filters.assignee.length) return true;
   return sprintFilterItems(board, sprint, filters).length > 0;
 }
 // The sprints the Sprints page lists: those matching the work filters, then
 // the search query against name and goal.
+/**
+ * @param {Flux.Board | undefined} board
+ * @param {string} query
+ * @param {Pick<Flux.Filters, 'project' | 'assignee'>} filters
+ */
 export function sprintResults(board, query, filters) {
+  if (!board) return { filtered: [], matches: [] };
   const filtered = (board?.sprints || []).filter((sprint) =>
     sprintMatchesFilters(board, sprint, filters),
   );

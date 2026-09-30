@@ -9,7 +9,13 @@ import { refresh } from './sync.js';
 // minimal skips the committed board in the receipt. A batch only needs the
 // board once, so every command but the last asks for a minimal receipt and the
 // whole sequence costs one board read instead of one per command.
+/**
+ * @param {Flux.Command} command
+ * @param {string} [key]
+ * @param {boolean} [minimal]
+ */
 function postChange(command, key = requestKey(), minimal = false) {
+  /** @type {Record<string, string>} */
   const headers = {
     'Content-Type': 'application/json',
     'X-CSRF-Token': sessionCSRF(),
@@ -18,6 +24,10 @@ function postChange(command, key = requestKey(), minimal = false) {
   if (minimal) headers.Prefer = 'return=minimal';
   return api(state.root + '/changes', { method: 'POST', headers, body: JSON.stringify(command) });
 }
+/**
+ * @param {Flux.ChangeReceipt | null | undefined} receipt
+ * @returns {{ board: Flux.Board, etag: string } | undefined}
+ */
 function preloadedBoard(receipt) {
   return receipt?.board && typeof receipt.board_etag === 'string' && receipt.board_etag
     ? { board: receipt.board, etag: receipt.board_etag }
@@ -27,10 +37,15 @@ function preloadedBoard(receipt) {
 // it past the revision this command produced. Its own revision is the one the
 // next command in a batch must present, or the batch conflicts on a value the
 // server has already moved beyond.
+/**
+ * @param {Flux.ChangeReceipt | null | undefined} receipt
+ * @param {number} fallback
+ */
 export function receiptRevision(receipt, fallback) {
   const board = preloadedBoard(receipt)?.board.workspace?.revision;
-  if (Number.isSafeInteger(board)) return board;
-  return Number.isSafeInteger(receipt?.revision) ? receipt.revision : fallback;
+  if (board !== undefined && Number.isSafeInteger(board)) return board;
+  const revision = receipt?.revision;
+  return revision !== undefined && Number.isSafeInteger(revision) ? revision : fallback;
 }
 /**
  * @param {Flux.Command} command
@@ -111,15 +126,27 @@ export function optimisticPatch(current, command) {
 }
 // Applies the optimistic patch and returns its rollback: the exact previous
 // values, restored only while the optimistic ones are still current.
+/** @param {Flux.Command} command */
 function optimisticApply(command) {
   const patch = optimisticPatch(state, command);
   if (!patch) return undefined;
-  const previous = Object.fromEntries(Object.keys(patch).map((key) => [key, state[key]]));
+  const previous = Object.fromEntries(
+    /** @type {(keyof Flux.State)[]} */ (Object.keys(patch)).map((key) => [key, state[key]]),
+  );
   setState(patch);
   return () => {
-    if (Object.entries(patch).every(([key, value]) => state[key] === value)) setState(previous);
+    if (
+      Object.entries(patch).every(
+        ([key, value]) => state[/** @type {keyof Flux.State} */ (key)] === value,
+      )
+    )
+      setState(previous);
   };
 }
+/**
+ * @param {Readonly<Flux.State>} current
+ * @param {string | undefined} id
+ */
 function itemTitle(current, id) {
   return findItem(id, current)?.title || 'work item';
 }

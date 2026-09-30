@@ -29,6 +29,11 @@ import { cardDropZones, columnDropZones, useBlockedIDs, useRowContext } from './
 // Rows and the complete detail form are rendered from shared state. The keyed
 // detail component keeps one uncontrolled form lifetime per opened item.
 const LIST_HEADINGS = ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'];
+/**
+ * @param {string} label
+ * @param {string} className
+ * @param {unknown} content
+ */
 function listCellTemplate(label, className, content) {
   return html`<div class=${`list-cell ${className}`} data-label=${label}>
     <span class="list-cell-label">${label}</span>
@@ -36,19 +41,39 @@ function listCellTemplate(label, className, content) {
   </div>`;
 }
 const emptyCell = html`<span class="list-cell-empty">—</span>`;
+/** @param {Flux.Item} item */
 function rowFocusKey(item) {
   return `item:${item.id}:list-row`;
 }
+/**
+ * @param {MouseEvent} event
+ * @param {Flux.Item} item
+ */
 function selectFromRow(event, item) {
-  if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
+  if (
+    event.defaultPrevented ||
+    /** @type {Element | null} */ (event.target)?.closest?.(
+      'a,button,input,select,textarea,summary',
+    )
+  )
     return;
   selectItem(item.id, rowFocusKey(item));
 }
+/**
+ * @param {KeyboardEvent} event
+ * @param {Flux.Item} item
+ */
 function selectFromKey(event, item) {
   if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
   event.preventDefault();
   selectItem(item.id, rowFocusKey(item));
 }
+/**
+ * @param {Flux.Item} item
+ * @param {boolean} overdue
+ * @param {boolean} bulkSelected
+ * @param {Flux.RowContext} context
+ */
 function titleCellTemplate(item, overdue, bulkSelected, context) {
   const selectable = context.role !== 'viewer' && !item.archived;
   const busy = context.busy;
@@ -67,8 +92,8 @@ function titleCellTemplate(item, overdue, bulkSelected, context) {
                 disabled=${busy}
                 data-focus-key=${`item:${item.id}:bulk-select`}
                 aria-label=${`Select ${item.title} for bulk actions`}
-                onClick=${(event) => event.stopPropagation()}
-                onChange=${(event) => setBulkSelected(item.id, event.currentTarget.checked)}
+                onClick=${(/** @type {MouseEvent} */ event) => event.stopPropagation()}
+                onChange=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => setBulkSelected(item.id, event.currentTarget.checked)}
               />`
             : null
         }
@@ -83,6 +108,10 @@ function titleCellTemplate(item, overdue, bulkSelected, context) {
     </div>`,
   );
 }
+/**
+ * @param {Flux.Item} item
+ * @param {readonly Flux.Link[]} links
+ */
 function linksTemplate(item, links) {
   const count = `${links.length} GitLab link${links.length === 1 ? '' : 's'}`;
   return html`<div class="list-row-indicator list-row-links" aria-label=${count}>
@@ -108,6 +137,15 @@ function linksTemplate(item, links) {
     )}
   </div>`;
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Item} item
+ * @param {{ label: string, overdue: boolean } | undefined} due
+ * @param {boolean} isBlocked
+ * @param {readonly Flux.Link[]} links
+ * @param {number} total
+ * @param {Date | undefined} now
+ */
 function statusCellTemplate(lookups, item, due, isBlocked, links, total, now) {
   const overdue = !!due?.overdue;
   const badges = [
@@ -171,8 +209,8 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
     aria-current=${selected ? 'true' : null}
     data-drag-type="card"
     draggable=${draggable}
-    onClick=${(event) => selectFromRow(event, item)}
-    onKeydown=${(event) => selectFromKey(event, item)}
+    onClick=${(/** @type {MouseEvent} */ event) => selectFromRow(event, item)}
+    onKeydown=${(/** @type {KeyboardEvent} */ event) => selectFromKey(event, item)}
     ...${mergeEventProps(dragEvents, files.props, drop.props)}
   >
     ${titleCellTemplate(item, overdue, bulkSelected, context)}
@@ -209,6 +247,17 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
 const ListRow = memo(ListRowView);
 // A section's open state belongs to the user: `open` is a static attribute, so
 // Preact sets it once and never again.
+/**
+ * @param {{
+ *   column: Flux.Column,
+ *   peers: Flux.Item[],
+ *   total: number,
+ *   context: Flux.RowContext,
+ *   blockedIDs: Set<string>,
+ *   selectedID: string,
+ *   bulkIDs: Set<string>,
+ * }} props
+ */
 function ListSection({ column, peers, total, context, blockedIDs, selectedID, bulkIDs }) {
   const drop = useDropZone(`column:${column.id}`, columnDropZones(column.id));
   const drag = useDraggable('list', column.id, () => context.canWrite);
@@ -247,34 +296,40 @@ function ListSection({ column, peers, total, context, blockedIDs, selectedID, bu
     </div>
   </details>`;
 }
+/** @param {Flux.State} current */
 function selectBoard(current) {
   return current.board;
 }
+/** @param {Flux.State} current */
 function selectSelectedItem(current) {
   return current.selectedItemID;
 }
+/** @param {Flux.State} current */
 function selectDetail(current) {
   return current.detail;
 }
+/** @param {Flux.State} current */
 function selectBulkSelection(current) {
   return current.bulkSelection;
 }
 // Escape in the detail pane closes it, unless a dialog owns Escape; menus
 // and fields inside the pane that own Escape stop it before it gets here.
+/** @param {KeyboardEvent} event */
 function closeDetailOnEscape(event) {
   if (event.key !== 'Escape' || isEditorOpen()) return;
   if (closeDetail()) event.preventDefault();
   event.stopPropagation();
 }
+/** @param {{ items: readonly Flux.Item[] }} props */
 export function ListPresentation({ items }) {
-  const board = useStore(selectBoard);
+  const board = /** @type {Flux.Board} */ (useStore(selectBoard));
   const selectedID = useStore(selectSelectedItem);
   const detail = useStore(selectDetail);
   const bulkSelection = useStore(selectBulkSelection);
   const bulkIDs = useMemo(() => new Set(bulkSelection), [bulkSelection]);
   const context = useRowContext();
   const blockedIDs = useBlockedIDs(items);
-  const root = useRef(null);
+  const root = useRef(/** @type {HTMLDivElement | null} */ (null));
   const focus = useFocusRestore(root, 'list');
   useFocusRequest('list', root);
   // Selection keeps to the shown, selectable cards.

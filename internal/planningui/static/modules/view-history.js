@@ -9,6 +9,10 @@ import { memberListingInfo } from './people.js';
 import { selectLookups } from './lookups.js';
 import { isAbortError } from './api.js';
 import { loadHistory } from './page-data.js';
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {string} subject
+ */
 function historyActorLabel(lookups, subject) {
   const { session } = lookups;
   const member = lookups.membersBySubject.get(subject);
@@ -26,6 +30,7 @@ async function loadOlderHistory() {
     if (!isAbortError(e)) notice(e.message, true);
   }
 }
+/** @param {{ event: Flux.HistoryEvent, label: string, lookups: Flux.Lookups }} props */
 function HistoryRow({ event, label, lookups }) {
   const scope = event.legacy_project_id ? 'legacy project' : 'workspace';
   const meta = `${historyActorLabel(lookups, event.actor)} · ${new Date(event.at).toLocaleString()} · ${label} · ${scope} revision ${event.revision}`;
@@ -36,9 +41,10 @@ function HistoryRow({ event, label, lookups }) {
     ${event.reason ? html`<p>${event.reason}</p>` : null}
   </article>`;
 }
+/** @param {Flux.State} current */
 function selectHistoryPage(current) {
   return {
-    board: current.board,
+    board: /** @type {Flux.Board} */ (current.board),
     lookups: selectLookups(current),
     history: current.history,
     historyMore: current.historyMore,

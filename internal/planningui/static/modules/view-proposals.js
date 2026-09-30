@@ -14,6 +14,30 @@ import { openDialog } from './dialog-state.js';
 import { CommandDialog, FormDialog } from './dialog.js';
 import { useRequest } from './ui-hooks.js';
 
+/** @typedef {{ id: string, title: string, state: string, imported_by: string, revision: number, sequence: number }} ProposalRow */
+/** @typedef {{ revision: number, title: string, rationale: string, provenance: string }} ProposalDocument */
+/**
+ * @typedef {{
+ *   id: string,
+ *   state: string,
+ *   document: ProposalDocument,
+ *   imported_by: string,
+ *   reviewed_by?: string,
+ *   review_reason?: string,
+ * }} Proposal
+ */
+/** @typedef {{ id: string, fields: Record<string, { before: unknown, after: unknown }> }} ProposalChange */
+/**
+ * @typedef {{
+ *   proposal: Proposal,
+ *   digest?: string,
+ *   problem?: string,
+ *   created?: number,
+ *   skipped?: Record<string, unknown>,
+ *   workspace_changes?: Record<string, unknown>,
+ *   changes?: ProposalChange[],
+ * }} ProposalPreview
+ */
 // The proposal list pages from its own request. The review dialog reads its
 // proposal's preview itself, so it shows exactly the diff the server returned
 // and a closed or replaced dialog cancels the read.
@@ -24,6 +48,7 @@ export function ProposalsDialog({ root }) {
     (signal) => api(`${root}/proposals?before=${before}`, { signal }),
     [root, before],
   );
+  /** @type {ProposalRow[]} */
   const rows = page.data || [];
   return h(
     FormDialog,
@@ -54,7 +79,7 @@ export function ProposalsDialog({ root }) {
     )}
     ${
       rows.length === 20
-        ? html`<button type="button" onClick=${() => setBefore(rows.at(-1).sequence)}
+        ? html`<button type="button" onClick=${() => setBefore(/** @type {ProposalRow} */ (rows.at(-1)).sequence)}
             >Older proposals</button
           >`
         : null
@@ -63,6 +88,7 @@ export function ProposalsDialog({ root }) {
   `,
   );
 }
+/** @param {unknown} [document] */
 function importProposal(document) {
   openDialog('proposal.import', { document, id: requestKey() });
 }
@@ -101,12 +127,23 @@ export function ProposalImportDialog({ document, id }) {
     `,
   );
 }
+/**
+ * @param {string} root
+ * @param {string} id
+ */
 function reviewProposal(root, id) {
   openDialog('proposal.review', { root, id });
 }
 // Whether the diff can be accepted is decided once, when the preview arrives,
 // so the approval fields stay put while the acceptance itself is saving.
+/**
+ * @param {string} root
+ * @param {string} id
+ * @param {AbortSignal} signal
+ * @returns {Promise<{ preview: ProposalPreview, canAccept: boolean }>}
+ */
 async function loadProposalReview(root, id, signal) {
+  /** @type {ProposalPreview} */
   const preview = await api(`${root}/proposals/${encodeURIComponent(id)}`, { signal });
   const v = preview.proposal;
   return {
@@ -206,6 +243,7 @@ export function ProposalReviewDialog({ root, id }) {
   `,
   );
 }
+/** @param {string} id */
 async function rejectProposal(id) {
   if (!(await refresh())) return;
   openDialog('proposal.reject', { id });

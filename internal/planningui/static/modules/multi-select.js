@@ -70,11 +70,12 @@ const LABEL_PALETTE = Object.freeze([
   '#3c096c',
 ]);
 // A help popover toggles its tooltip and closes on Escape or an outside click.
+/** @param {{ text: unknown, name: string }} props */
 function HelpPopover({ text, name }) {
   const contentID = `help-${useId()}`;
   const [open, setOpen] = useState(false);
-  const wrapper = useRef();
-  const trigger = useRef();
+  const wrapper = useRef(/** @type {HTMLElement | null} */ (null));
+  const trigger = useRef(/** @type {HTMLButtonElement | null} */ (null));
   useDismiss(wrapper, open, () => setOpen(false), { closeOnEscape: false, event: 'click' });
   const close = () => {
     setOpen(false);
@@ -90,7 +91,7 @@ function HelpPopover({ text, name }) {
       aria-describedby=${contentID}
       ref=${trigger}
       onClick=${() => setOpen((previous) => !previous)}
-      onKeydown=${(event) => {
+      onKeydown=${(/** @type {KeyboardEvent} */ event) => {
         if (event.key !== 'Escape') return;
         event.preventDefault();
         event.stopPropagation();
@@ -101,19 +102,43 @@ function HelpPopover({ text, name }) {
     ></span
   >`;
 }
+/**
+ * @param {unknown} text
+ * @param {string} [name]
+ */
 export function helpPopoverTemplate(text, name = 'Help') {
   return html`<${HelpPopover} text=${text} name=${name} />`;
 }
+/**
+ * @param {readonly (readonly Flux.SelectValue[])[]} entries
+ * @returns {[string, string][]}
+ */
 function uniqueEntries(entries) {
+  /** @type {Set<string>} */
   const seen = new Set();
   return entries
-    .map(([value, text]) => [String(value), String(text)])
+    .map(([value, text]) => /** @type {[string, string]} */ ([String(value), String(text)]))
     .filter(([value]) => !seen.has(value) && seen.add(value));
 }
+/**
+ * @param {readonly Flux.SelectValue[] | undefined} values
+ * @param {boolean} single
+ */
 function initialSelection(values, single) {
   const list = (values || []).map(String);
   return single && list.length > 1 ? [list[0]] : list;
 }
+/** @typedef {{ selected: string[], editing: boolean, query: string }} PickerState */
+/**
+ * @typedef {{ type: 'open' | 'close' }
+ *   | { type: 'query', query: string }
+ *   | { type: 'select', selected: string[] }} PickerAction
+ */
+/**
+ * @param {PickerState} current
+ * @param {PickerAction} action
+ * @returns {PickerState}
+ */
 function pickerReducer(current, action) {
   switch (action.type) {
     case 'open':
@@ -169,12 +194,12 @@ export function MultiSelect({
     query: '',
   }));
   const selected = controlled ? initialSelection(value, single) : local.selected;
-  const group = useRef();
-  const edit = useRef();
-  const filter = useRef();
+  const group = useRef(/** @type {HTMLDivElement | null} */ (null));
+  const edit = useRef(/** @type {HTMLButtonElement | null} */ (null));
+  const filter = useRef(/** @type {HTMLInputElement | null} */ (null));
   const { editing, query } = local;
   const chosenValues = list.filter(([entry]) => selected.includes(entry)).map(([entry]) => entry);
-  const setSelected = (next) => {
+  const setSelected = (/** @type {string[]} */ next) => {
     if (controlled) onChange?.(list.filter(([entry]) => next.includes(entry)).map(([v]) => v));
     else dispatch({ type: 'select', selected: next });
   };
@@ -182,7 +207,7 @@ export function MultiSelect({
   useCommittedChange(controlled ? undefined : local.selected, () => {
     if (!controlled) onChange?.(chosenValues);
   });
-  const toggleValue = (candidate, checked) => {
+  const toggleValue = (/** @type {string} */ candidate, /** @type {boolean} */ checked) => {
     let next = selected.filter((current) => current !== candidate);
     if (checked) {
       if (single) next = [];
@@ -194,7 +219,7 @@ export function MultiSelect({
     }
     setSelected(next);
   };
-  const select = (candidate) => {
+  const select = (/** @type {Flux.SelectValue} */ candidate) => {
     const next = String(candidate);
     if (!single || !list.some(([entry]) => entry === next)) return false;
     setSelected([next]);
@@ -223,7 +248,7 @@ export function MultiSelect({
     list.filter(([, text]) => !needle || text.toLowerCase().includes(needle)).map(([v]) => v),
   );
   const help = helpText ? helpPopoverTemplate(helpText, title) : null;
-  const closeOnEscape = (event) => {
+  const closeOnEscape = (/** @type {KeyboardEvent} */ event) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopPropagation();
@@ -231,8 +256,8 @@ export function MultiSelect({
   };
   return html`<div class="multi-select-field" ref=${group}>
     <div class="multi-select-header"
-      onClick=${(event) => {
-        if (editing && !edit.current?.contains(event.target)) close();
+      onClick=${(/** @type {MouseEvent} */ event) => {
+        if (editing && !edit.current?.contains(/** @type {Node | null} */ (event.target))) close();
       }}
     >
       <span class="multi-select-heading"
@@ -292,7 +317,7 @@ export function MultiSelect({
           disabled=${!!disabled}
           value=${query}
           ref=${filter}
-          onInput=${(event) => {
+          onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => {
             const nextQuery = event.currentTarget.value;
             dispatch({ type: 'query', query: nextQuery });
             onQuery?.(nextQuery.trim());
@@ -318,7 +343,7 @@ export function MultiSelect({
                 checked=${selected.includes(entry)}
                 disabled=${!!disabled}
                 aria-label=${text}
-                onChange=${(event) => toggleValue(entry, event.currentTarget.checked)}
+                onChange=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => toggleValue(entry, event.currentTarget.checked)}
               /><span>${text}</span></label
             >`,
           )}
@@ -329,6 +354,7 @@ export function MultiSelect({
     ${footer}
   </div>`;
 }
+/** @param {unknown} value */
 export function labelColorPickerTemplate(value) {
   const selected = String(value || '')
     .trim()

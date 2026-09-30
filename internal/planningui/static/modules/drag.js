@@ -10,7 +10,9 @@ import { quick } from './commands.js';
 import { hideAttachmentTooltip } from './tooltip.js';
 import { workspaceSignal } from './workspace-session.js';
 
+/** @type {{ type: string, id: string, revision: number, workspace: AbortSignal } | undefined} */
 let session;
+/** @type {HTMLElement | undefined} */
 let preview;
 
 function endDrag() {
@@ -21,7 +23,12 @@ function endDrag() {
   setPointer({ dropTarget: undefined });
 }
 // Combines event props from several hooks; handlers run in argument order.
+/**
+ * @param {...Record<string, (event: Event) => void>} list
+ * @returns {Record<string, (event: Event) => void>}
+ */
 export function mergeEventProps(...list) {
+  /** @type {Record<string, (event: Event) => void>} */
   const merged = {};
   for (const props of list)
     for (const [name, handler] of Object.entries(props)) {
@@ -37,16 +44,23 @@ export function mergeEventProps(...list) {
 }
 // A draggable card, row, column head or list section. `canDrag` is read at
 // render and again when the gesture starts.
+/**
+ * @param {string} type
+ * @param {string} id
+ * @param {() => boolean} canDrag
+ */
 export function useDraggable(type, id, canDrag) {
   const [source, setSource] = useState(false);
   const props = {
     draggable: canDrag(),
-    onDragStart: (event) => {
+    onDragStart: (/** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event) => {
       const node = event.currentTarget;
+      const transfer = /** @type {DataTransfer} */ (event.dataTransfer);
       if (
         !writable() ||
         !canDrag() ||
-        (event.target !== node && event.target.closest?.('button,a,input,select,textarea'))
+        (event.target !== node &&
+          /** @type {Element | null} */ (event.target)?.closest?.('button,a,input,select,textarea'))
       ) {
         event.preventDefault();
         return;
@@ -62,13 +76,13 @@ export function useDraggable(type, id, canDrag) {
       };
       setState({ dragging: true });
       setPointer({ dropTarget: undefined });
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('text/plain', id);
+      transfer.effectAllowed = 'move';
+      transfer.setData('text/plain', id);
       // The drag image is a detached clone of the source, so the native image
       // matches the element without Preact owning the copy.
       const bounds = node.getBoundingClientRect();
       preview?.remove();
-      preview = node.cloneNode(true);
+      preview = /** @type {HTMLElement} */ (node.cloneNode(true));
       preview.classList.add('drag-source', 'drag-preview');
       preview.dataset.dragPreview = 'true';
       preview.removeAttribute('draggable');
@@ -94,7 +108,7 @@ export function useDraggable(type, id, canDrag) {
         event.clientY >= bounds.top && event.clientY < bounds.bottom
           ? event.clientY - bounds.top
           : bounds.height / 2;
-      event.dataTransfer.setDragImage(preview, x, y);
+      transfer.setDragImage(preview, x, y);
     },
     onDragEnd: () => {
       setSource(false);
@@ -103,43 +117,55 @@ export function useDraggable(type, id, canDrag) {
   };
   return { props, source };
 }
+/** @type {Record<string, string>} */
 const DROP_CLASSES = { before: 'drop-before', after: 'drop-after', end: 'drop-end' };
 // A drop target identified by `key`. Each zone accepts one drag `type`, places
 // the drop on `axis` ('y', 'x', or 'end' for the whole element) and builds the
 // planning command from the dragged id. `enabled()` can refuse at event time.
-/** @param {string} key */
+/**
+ * @param {string} key
+ * @param {readonly Flux.DropZone[]} zones
+ */
 export function useDropZone(key, zones) {
   const mark = usePointer((current) =>
     current.dropTarget?.key === key ? current.dropTarget.mark : '',
   );
-  const zoneFor = () =>
-    session && !session.workspace.aborted && writable()
-      ? zones.find((zone) => zone.type === session.type && (zone.enabled?.() ?? true))
+  const zoneFor = () => {
+    const dragged = session;
+    return dragged && !dragged.workspace.aborted && writable()
+      ? zones.find((zone) => zone.type === dragged.type && (zone.enabled?.() ?? true))
       : undefined;
-  const after = (event, zone) => {
+  };
+  const after = (
+    /** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event,
+    /** @type {Flux.DropZone} */ zone,
+  ) => {
     const r = event.currentTarget.getBoundingClientRect();
     return zone.axis === 'x'
       ? event.clientX > r.left + r.width / 2
       : event.clientY > r.top + r.height / 2;
   };
   const props = {
-    onDragOver: (event) => {
+    onDragOver: (/** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event) => {
       const zone = zoneFor();
       if (!zone) return;
       event.preventDefault();
       event.stopPropagation();
-      event.dataTransfer.dropEffect = 'move';
+      /** @type {DataTransfer} */ (event.dataTransfer).dropEffect = 'move';
       const next = zone.axis === 'end' ? 'end' : after(event, zone) ? 'after' : 'before';
       if (pointer.dropTarget?.key !== key || pointer.dropTarget.mark !== next)
         setPointer({ dropTarget: { key, mark: next } });
     },
-    onDragLeave: (event) => {
-      if (!event.currentTarget.contains(event.relatedTarget) && pointer.dropTarget?.key === key)
+    onDragLeave: (/** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event) => {
+      if (
+        !event.currentTarget.contains(/** @type {Node | null} */ (event.relatedTarget)) &&
+        pointer.dropTarget?.key === key
+      )
         setPointer({ dropTarget: undefined });
     },
-    onDrop: (event) => {
+    onDrop: (/** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event) => {
       const zone = zoneFor();
-      if (!zone) return;
+      if (!zone || !session) return;
       event.preventDefault();
       event.stopPropagation();
       const command = zone.command(session.id, after(event, zone));

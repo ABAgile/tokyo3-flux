@@ -15,7 +15,33 @@
 //
 // Every component is a Preact template (`*Template`).
 import { html } from './vdom.js';
+
+/** @typedef {readonly (readonly Flux.SelectValue[])[]} SelectEntries [value, text] pairs. */
+/**
+ * @typedef {{
+ *   className?: string,
+ *   controlFirst?: boolean,
+ *   id?: string,
+ *   required?: boolean,
+ *   readOnly?: boolean,
+ *   disabled?: boolean,
+ *   maxLength?: number,
+ *   placeholder?: string,
+ *   min?: number | string,
+ *   max?: number | string,
+ *   step?: number | string,
+ *   autocomplete?: string,
+ *   defaultChecked?: boolean,
+ *   onChange?: (event: Event) => void,
+ *   onInput?: (event: Event) => void,
+ * }} FieldOptions
+ */
 // A bordered surface. Variants add their own padding and inner layout.
+/**
+ * @param {string | undefined} className
+ * @param {unknown} content
+ * @param {'section' | 'article'} [tag]
+ */
 function panelTemplate(className, content, tag = 'section') {
   const classes = className ? `panel ${className}` : 'panel';
   return tag === 'article'
@@ -23,6 +49,10 @@ function panelTemplate(className, content, tag = 'section') {
     : html`<section class=${classes}>${content}</section>`;
 }
 // Page-level section title with optional right-aligned actions.
+/**
+ * @param {unknown} title
+ * @param {...unknown} actions
+ */
 function sectionHeadTemplate(title, ...actions) {
   return html`<div class="section-head"><h2>${title}</h2>${actions.filter(Boolean)}</div>`;
 }
@@ -42,6 +72,10 @@ function panelHeadTemplate(title, { id, description, className } = {}) {
   return html`<div class=${classes}><div>${heading}${guidance}</div></div>`;
 }
 // Guidance text. `variant` adds a page-specific class beside the shared one.
+/**
+ * @param {unknown} text
+ * @param {string} [variant]
+ */
 function helpTextTemplate(text, variant) {
   return html`<p class=${variant ? `help ${variant}` : 'help'}>${text}</p>`;
 }
@@ -49,15 +83,24 @@ function helpTextTemplate(text, variant) {
 // assertive while they carry an error, hidden while they say nothing. Components
 // render them from state. Error lines are one-line regions, empty and hidden
 // until a write fails, and are separate from progress so they are announced once.
+/**
+ * @param {unknown} [text]
+ * @param {string} [className]
+ */
 function errorLineTemplate(text = '', className = 'error') {
   return html`<p class=${className} role="alert" hidden=${!text}>${text}</p>`;
 }
 // Empty states are marked with data-empty.
+/** @param {unknown} text */
 function emptyStateTemplate(text) {
   return html`<p class="empty" data-empty="true">${text}</p>`;
 }
 // The one metric row: large value over its caption, shared by the project lens,
 // sprint panels, the delivery trend and burn-down charts.
+/**
+ * @param {readonly (readonly unknown[])[]} entries [value, label] pairs
+ * @param {string} [className]
+ */
 function metricListTemplate(entries, className) {
   return html`<div class=${className ? `metrics ${className}` : 'metrics'}>
     ${entries.map(
@@ -69,6 +112,10 @@ function metricListTemplate(entries, className) {
 
 // The only filter container: labeled native controls on the left, a
 // right-aligned visible record count.
+/**
+ * @param {unknown} controls
+ * @param {unknown} [count]
+ */
 function filterBarTemplate(controls, count = '') {
   return html`<div class="filter-bar">
     <div class="actions">${controls}</div>
@@ -78,10 +125,20 @@ function filterBarTemplate(controls, count = '') {
 // Filter controls are standalone page state, never form data, so they are
 // identified by a unique id rather than a submitted name. `base` is the owning
 // component's useId, so a re-render keeps the id.
+/**
+ * @param {string} title
+ * @param {string} base
+ */
 function filterControlID(title, base) {
   return `filter-${controlSlug(title)}-${base}`;
 }
 // Add-a-filter select: it adds one value and returns to its All entry.
+/**
+ * @param {string} title
+ * @param {SelectEntries} entries
+ * @param {string} id
+ * @param {(event: Event) => void} onChange
+ */
 function filterSelectTemplate(title, entries, id, onChange) {
   return html`<label for=${id}
     >${title}<select id=${id} data-focus-key=${`filter:${id}`} aria-label=${title} value="all" onChange=${onChange}>
@@ -89,6 +146,12 @@ function filterSelectTemplate(title, entries, id, onChange) {
     </select></label
   >`;
 }
+/**
+ * @param {string} title
+ * @param {string} id
+ * @param {{ value?: string, placeholder?: string, maxLength?: number }} options
+ * @param {(event: Event) => void} onInput
+ */
 function filterSearchTemplate(
   title,
   id,
@@ -109,6 +172,14 @@ function filterSearchTemplate(
 }
 // A labeled form control. `options` carries its attributes. Values are bound
 // once per mount: forms are rendered when opened and then belong to the user.
+/**
+ * @param {string} name
+ * @param {unknown} title
+ * @param {unknown} [value]
+ * @param {string} [type]
+ * @param {SelectEntries} [entries]
+ * @param {FieldOptions} [options]
+ */
 function fieldTemplate(name, title, value = '', type = 'text', entries, options = {}) {
   const {
     className,
@@ -182,6 +253,7 @@ function fieldTemplate(name, title, value = '', type = 'text', entries, options 
     ? html`<label class=${className || null}>${control}${title}</label>`
     : html`<label class=${className || null}>${title}${control}</label>`;
 }
+/** @param {unknown} title */
 function controlSlug(title) {
   return (
     String(title)
@@ -191,16 +263,28 @@ function controlSlug(title) {
   );
 }
 // Removable chips are the authoritative view of a multi-value filter group.
+/**
+ * @param {string} ariaLabel
+ * @param {readonly unknown[]} chips
+ */
 function filterChipRowTemplate(ariaLabel, chips) {
   return html`<div class="filter-chips" role="group" aria-label=${ariaLabel} hidden=${!chips.length}>
     ${chips}
   </div>`;
 }
 // A page-level filter bar is rendered directly into its owning slot.
+/**
+ * @param {string | undefined} id
+ * @param {...unknown} children
+ */
 function filterSlotTemplate(id, ...children) {
   return html`<div class="filter-slot" id=${id || null}>${children.filter(Boolean)}</div>`;
 }
 
+/**
+ * @param {string | undefined} className
+ * @param {unknown} rows
+ */
 function maintenanceListTemplate(className, rows) {
   return html`<div class=${className ? `maintenance-list ${className}` : 'maintenance-list'}>
     ${rows}

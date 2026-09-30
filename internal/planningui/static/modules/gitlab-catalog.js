@@ -2,12 +2,19 @@
 import { api } from './api.js';
 import { requireBoard } from './state.js';
 
+/** @param {Flux.GitLabProject} project */
 export function gitlabProjectLabel(project) {
   const name = String(project.name || '').trim();
   const path = String(project.path_with_namespace || '').trim();
   return `${name}${path && path !== name ? ` · ${path}` : ''} (#${project.id})`;
 }
+/**
+ * @param {readonly Flux.GitLabProject[]} projects
+ * @param {readonly string[]} selected
+ * @returns {[string, string][]}
+ */
 export function integrationProjectEntries(projects, selected) {
+  /** @type {[string, string][]} */
   const entries = [];
   const seen = new Set();
   projects.forEach((project) => {
@@ -28,6 +35,7 @@ export function integrationProjectEntries(projects, selected) {
   });
   return entries;
 }
+/** @param {Flux.GitLabUser} user */
 function gitLabUserLabel(user) {
   const name =
     String(user.name || '').trim() ||
@@ -36,6 +44,7 @@ function gitLabUserLabel(user) {
   const username = String(user.username || '').trim();
   return `${name}${username && username !== name ? ` · @${username}` : ''} (#${user.id})`;
 }
+/** @param {unknown} data */
 function validGitLabUserCatalog(data) {
   return (
     Array.isArray(data) &&
@@ -52,7 +61,13 @@ function validGitLabUserCatalog(data) {
     )
   );
 }
+/**
+ * @param {readonly Flux.GitLabUser[]} users
+ * @param {readonly (string | number)[]} [selected]
+ * @returns {[string, string][]}
+ */
 export function memberUserEntries(users, selected = []) {
+  /** @type {[string, string][]} */
   const entries = [],
     seen = new Set(),
     existing = new Set(requireBoard().members.map((member) => member.subject)),
@@ -71,6 +86,12 @@ export function memberUserEntries(users, selected = []) {
   });
   return entries;
 }
+/**
+ * @param {string} currentRoot
+ * @param {string} [search]
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Flux.GitLabUser[]>}
+ */
 export async function loadGitLabUsers(currentRoot, search = '', signal) {
   const params = new URLSearchParams({ search });
   const data = await api(currentRoot + '/gitlab/users?' + params, { signal });
@@ -78,6 +99,7 @@ export async function loadGitLabUsers(currentRoot, search = '', signal) {
     throw new Error('GitLab user results are invalid. Refresh to retry.');
   return data;
 }
+/** @param {unknown} data */
 function validGitLabProjectCatalog(data) {
   return (
     Array.isArray(data) &&
@@ -91,12 +113,23 @@ function validGitLabProjectCatalog(data) {
     )
   );
 }
+/**
+ * @param {string} currentRoot
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Flux.GitLabProject[]>}
+ */
 export async function loadGitLabProjects(currentRoot, signal) {
   const data = await api(currentRoot + '/gitlab/projects', { signal });
   if (!validGitLabProjectCatalog(data))
     throw new Error('GitLab project catalog is invalid. Refresh to retry.');
   return data;
 }
+/**
+ * @param {string} currentRoot
+ * @param {{ project: string, scope?: string, search: string }} query
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<Flux.GitLabMergeRequest[]>}
+ */
 export async function loadGitLabMergeRequests(currentRoot, { project, scope, search }, signal) {
   const params = new URLSearchParams({ project, scope: scope || 'recent', search });
   const data = await api(`${currentRoot}/gitlab/merge-requests?${params}`, { signal });
@@ -104,6 +137,7 @@ export async function loadGitLabMergeRequests(currentRoot, { project, scope, sea
     throw new Error('GitLab merge-request results are invalid. Refresh to retry.');
   return data;
 }
+/** @param {readonly Flux.GitLabProject[]} projects */
 export function approvedGitLabProjectEntries(projects) {
   const approved = new Set(requireBoard().integration.projects.map(String));
   return integrationProjectEntries(
@@ -111,6 +145,7 @@ export function approvedGitLabProjectEntries(projects) {
     requireBoard().integration.projects.map(String),
   );
 }
+/** @param {Flux.GitLabMergeRequest} mergeRequest */
 function mergeRequestLabel(mergeRequest) {
   const title = String(mergeRequest.title || '').trim();
   const state = String(mergeRequest.state || '').trim();
@@ -121,6 +156,7 @@ function mergeRequestLabel(mergeRequest) {
     : ` · updated ${new Date(timestamp).toLocaleDateString()}`;
   return `MR !${mergeRequest.iid} · ${title}${state ? ` · ${state}` : ''}${mergeRequest.draft ? ' · Draft' : ''}${updated}`;
 }
+/** @param {unknown} data */
 function validGitLabMergeRequestCatalog(data) {
   return (
     Array.isArray(data) &&
@@ -134,7 +170,13 @@ function validGitLabMergeRequestCatalog(data) {
     )
   );
 }
+/**
+ * @param {readonly Flux.GitLabMergeRequest[]} mergeRequests
+ * @param {readonly string[]} selected
+ * @returns {[string, string][]}
+ */
 export function mergeRequestEntries(mergeRequests, selected) {
+  /** @type {[string, string][]} */
   const entries = [];
   const seen = new Set();
   mergeRequests.forEach((mergeRequest) => {
@@ -156,6 +198,7 @@ export function mergeRequestEntries(mergeRequests, selected) {
   return entries;
 }
 // Link identity and cached observations, compared when the idle poll reloads them.
+/** @param {Flux.Link} link */
 export function linkIdentitySignature(link) {
   return JSON.stringify({
     id: link.id,
@@ -165,6 +208,7 @@ export function linkIdentitySignature(link) {
     items: [...(link.items || [])].sort(),
   });
 }
+/** @param {Flux.Link} link */
 function observationSignature(link) {
   return JSON.stringify({
     observation: link.observation || null,
@@ -175,11 +219,16 @@ function observationSignature(link) {
     refresh_pending: !!link.refresh_pending,
   });
 }
+/**
+ * @param {readonly Flux.Link[]} previousLinks
+ * @param {readonly Flux.Link[]} nextLinks
+ */
 export function observationsChanged(previousLinks, nextLinks) {
   const previous = new Map(previousLinks.map((link) => [link.id, link]));
   return nextLinks.some(
     (link) =>
       previous.has(link.id) &&
-      observationSignature(previous.get(link.id)) !== observationSignature(link),
+      observationSignature(/** @type {Flux.Link} */ (previous.get(link.id))) !==
+        observationSignature(link),
   );
 }

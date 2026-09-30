@@ -14,11 +14,19 @@ import { closeEditor, openDialog } from './dialog-state.js';
 import { FormDialog } from './dialog.js';
 import { clearBulk, selectAllBulk } from './actions.js';
 
+/** @typedef {(item: Flux.Item) => Flux.Command | undefined} BulkPlan */
+/** @typedef {(targets: Flux.Item[]) => { text: string, commands: Flux.Command[] }} BulkUndo */
+/** @returns {Flux.Item[]} */
 function bulkTargets() {
-  return state.bulkSelection
-    .map((id) => findItem(id, state))
-    .filter((item) => item && !item.archived);
+  return /** @type {Flux.Item[]} */ (
+    state.bulkSelection.map((id) => findItem(id, state)).filter((item) => item && !item.archived)
+  );
 }
+/**
+ * @param {Flux.Item} item
+ * @param {Partial<Flux.Item>} patch
+ * @returns {Flux.Command}
+ */
 function bulkItemUpdate(item, patch) {
   return {
     kind: 'item.update',
@@ -26,13 +34,18 @@ function bulkItemUpdate(item, patch) {
     item: { ...item, project_id: undefined, attachments: undefined, ...patch },
   };
 }
+/**
+ * @param {string} label
+ * @param {BulkPlan} plan
+ * @param {BulkUndo} [undoFor]
+ */
 async function runBulk(label, plan, undoFor) {
   const targets = bulkTargets();
   if (!targets.length) {
     notice('Select at least one work item first.', true);
     return;
   }
-  const commands = targets.map(plan).filter(Boolean);
+  const commands = targets.map(plan).filter((command) => !!command);
   const undo = undoFor?.(targets);
   setState({ bulkSelection: [] });
   const ok = await runSequence(label, commands);
@@ -41,6 +54,17 @@ async function runBulk(label, plan, undoFor) {
 }
 // A bulk dialog plans one command per selected item from its form; the plan
 // is validated before the dialog closes and the sequence runs.
+/**
+ * @param {{
+ *   title: string,
+ *   saveText: string,
+ *   plan: (data: FormData) => BulkPlan,
+ *   label: string,
+ *   undoFor?: BulkUndo,
+ *   hideSave?: boolean,
+ *   children?: unknown,
+ * }} props
+ */
 function BulkDialog({ title, saveText, plan, label, undoFor, hideSave = false, children }) {
   return h(
     FormDialog,
@@ -58,6 +82,7 @@ function BulkDialog({ title, saveText, plan, label, undoFor, hideSave = false, c
     children,
   );
 }
+/** @param {number} n */
 function count(n) {
   return `${n} selected work item${n === 1 ? '' : 's'}`;
 }
@@ -68,9 +93,9 @@ export function BulkAssignDialog({ selected, members }) {
     title="Assign selected work"
     saveText="Assign items"
     label="Assign"
-    plan=${(data) => {
+    plan=${(/** @type {FormData} */ data) => {
       const assignee = String(data.get('assignee') || '');
-      return (item) =>
+      return (/** @type {Flux.Item} */ item) =>
         item.assignee === assignee ? undefined : bulkItemUpdate(item, { assignee });
     }}
   >
@@ -88,10 +113,10 @@ export function BulkSprintDialog({ selected, sprints }) {
     saveText="Add to sprint"
     label="Add to sprint"
     hideSave=${!sprints.length}
-    plan=${(data) => {
+    plan=${(/** @type {FormData} */ data) => {
       const sprint = String(data.get('sprint') || '');
       if (!sprints.some((value) => value.id === sprint)) throw new Error('Choose an open sprint.');
-      return (item) =>
+      return (/** @type {Flux.Item} */ item) =>
         item.sprint_ids.includes(sprint)
           ? undefined
           : bulkItemUpdate(item, { sprint_ids: [...item.sprint_ids, sprint] });
@@ -120,11 +145,11 @@ export function BulkLabelDialog({ selected, labels }) {
     saveText="Add label"
     label="Add label"
     hideSave=${!labels.length}
-    plan=${(data) => {
+    plan=${(/** @type {FormData} */ data) => {
       const label = String(data.get('label') || '');
       if (!labels.some((value) => value.name === label))
         throw new Error('Choose a workspace label.');
-      return (item) =>
+      return (/** @type {Flux.Item} */ item) =>
         item.labels.includes(label)
           ? undefined
           : bulkItemUpdate(item, { labels: [...item.labels, label] });
@@ -158,11 +183,11 @@ export function BulkArchiveDialog({ selected }) {
     title="Archive selected work"
     saveText="Archive items"
     label="Archive"
-    plan=${(data) => {
+    plan=${(/** @type {FormData} */ data) => {
       const reason = String(data.get('reason') || '');
-      return (item) => ({ kind: 'item.archive', target: item.id, reason });
+      return (/** @type {Flux.Item} */ item) => ({ kind: 'item.archive', target: item.id, reason });
     }}
-    undoFor=${(targets) => ({
+    undoFor=${(/** @type {Flux.Item[]} */ targets) => ({
       text: `Archived ${targets.length} work item${targets.length === 1 ? '' : 's'}`,
       commands: targets.map((item) => ({
         kind: 'item.restore',
@@ -192,18 +217,29 @@ function bulkLabel() {
 function bulkArchive() {
   openDialog('bulk.archive', { selected: bulkTargets().length });
 }
+/** @param {readonly Flux.Item[]} items */
 function bulkSelectableIDs(items) {
   return items.filter((item) => !item.archived).map((item) => item.id);
 }
 // The selection keeps only shown, selectable cards.
+/**
+ * @param {string[]} selection
+ * @param {readonly Flux.Item[]} items
+ */
 export function prunedBulkSelection(selection, items) {
   const selectable = new Set(bulkSelectableIDs(items));
   const next = selection.filter((id) => selectable.has(id));
   return next.length === selection.length ? selection : next;
 }
+/** @param {{ items: readonly Flux.Item[], selection: string[], role: string | undefined }} props */
 export function BulkBar({ items, selection, role }) {
   const ids = bulkSelectableIDs(items);
   const show = selection.length > 0 && role !== 'viewer';
+  /**
+   * @param {string} text
+   * @param {() => void} fn
+   * @param {string} [className]
+   */
   const action = (text, fn, className) =>
     accessButtonTemplate(text, fn, { className, tracked: false });
   const selectAll = () => selectAllBulk(ids);

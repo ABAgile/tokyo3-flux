@@ -21,9 +21,15 @@ import { selectLookups } from './lookups.js';
 import { useDismiss, useMutation } from './ui-hooks.js';
 import { useAttachmentTooltip } from './tooltip.js';
 
+/** @param {DataTransfer | null | undefined} dataTransfer */
 export function isFileTransfer(dataTransfer) {
   return Array.from(dataTransfer?.types || []).includes('Files');
 }
+/**
+ * @param {Flux.Item} item
+ * @param {Flux.Attachment} attachment
+ * @param {string} base
+ */
 function attachmentHref(item, attachment, base) {
   return `${base}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(attachment.id)}`;
 }
@@ -31,25 +37,41 @@ function attachmentHref(item, attachment, base) {
 // metadata is fetched per card the first time it is actually shown. Loaded
 // lists live in the store by item id; a fresh board drops them and the next
 // viewer reloads them.
+/** @type {Map<string, Promise<void>>} */
 const attachmentLoads = new Map();
+/** @param {string} itemID */
 export function useAttachmentList(itemID) {
   return useStore((current) => current.attachmentLists[itemID]);
 }
+/** @param {Flux.State} current */
 export function selectBoardGeneration(current) {
   return current.boardGeneration;
 }
+/**
+ * @param {Pick<Flux.Item, 'attachment_count'> | undefined} item
+ * @param {Flux.Attachment[] | undefined} list
+ */
 export function attachmentCount(item, list) {
+  const declared = item?.attachment_count;
   return Array.isArray(list)
     ? list.length
-    : Number.isSafeInteger(item?.attachment_count) && item.attachment_count > 0
-      ? item.attachment_count
+    : declared !== undefined && Number.isSafeInteger(declared) && declared > 0
+      ? declared
       : 0;
 }
+/**
+ * @param {string} itemID
+ * @param {Flux.Attachment[]} attachments
+ */
 function setItemAttachments(itemID, attachments) {
   setState((current) => ({
     attachmentLists: { ...current.attachmentLists, [itemID]: attachments },
   }));
 }
+/**
+ * @param {string | undefined} itemID
+ * @returns {Promise<void> | undefined}
+ */
 export function ensureAttachments(itemID) {
   if (!itemID || !state.root || Array.isArray(state.attachmentLists[itemID])) return undefined;
   const root = state.root,
@@ -78,10 +100,19 @@ export function ensureAttachments(itemID) {
 }
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024,
   MAX_ITEM_ATTACHMENTS = 100;
+/** @type {Map<string, string>} */
 const uploadRequestKeys = new Map();
+/**
+ * @param {Flux.Item} item
+ * @param {File} file
+ */
 function uploadSignature(item, file) {
   return [item.id, file.name, file.size, file.lastModified || 0, file.type || ''].join('\u0000');
 }
+/**
+ * @param {Flux.Item} item
+ * @param {File} file
+ */
 function uploadRequestKey(item, file) {
   const signature = uploadSignature(item, file);
   let key = uploadRequestKeys.get(signature);
@@ -93,9 +124,14 @@ function uploadRequestKey(item, file) {
   }
   return { signature, key };
 }
+/** @param {string} signature */
 function clearUploadRequestKey(signature) {
   uploadRequestKeys.delete(signature);
 }
+/**
+ * @param {Flux.Item} item
+ * @param {File | null | undefined} file
+ */
 function attachmentRejection(item, file) {
   if (attachmentCount(item, state.attachmentLists[item.id]) >= MAX_ITEM_ATTACHMENTS)
     return `This card already has the maximum of ${MAX_ITEM_ATTACHMENTS} attachments.`;
@@ -115,6 +151,13 @@ function attachmentRejection(item, file) {
 // browser cannot measure the request body. `signal` belongs to the workspace
 // session or to a component keyed by it, so an aborted upload is never
 // applied to another workspace.
+/**
+ * @param {Flux.Item} item
+ * @param {File} file
+ * @param {(fraction: number | undefined) => void} onProgress
+ * @param {AbortSignal} signal
+ * @returns {Promise<Flux.Attachment | undefined>}
+ */
 async function uploadItemFile(item, file, onProgress, signal) {
   const request = uploadRequestKey(item, file);
   const form = new FormData();
@@ -140,6 +183,10 @@ async function uploadItemFile(item, file, onProgress, signal) {
 // Dropping files onto a card uploads them without opening the editor. Progress
 // and failures are reported through the shared status and error surfaces; the
 // uploads belong to the workspace session and stop when it ends.
+/**
+ * @param {Flux.Item} item
+ * @param {ArrayLike<File> | null | undefined} files
+ */
 async function dropFilesOntoItem(item, files) {
   const selected = Array.from(files || []).filter(Boolean);
   if (!selected.length || state.uploadBusy || !writable()) return;
@@ -180,38 +227,41 @@ async function dropFilesOntoItem(item, files) {
 // Cards and list rows accept file drops. Planning drags are unaffected because
 // only transfers that carry files are intercepted. The current record is
 // resolved by id at event time, so permissions, names and counts stay fresh.
+/** @param {string} itemID */
 export function useItemFileDrop(itemID) {
   const [active, setActive] = useState(false);
   const currentItem = () =>
     state.board?.items.find((value) => value.id === itemID) ||
     state.archiveItems.find((value) => value.id === itemID);
-  const show = (event) => {
-    if (!isFileTransfer(event.dataTransfer)) return;
+  const show = (/** @type {DragEvent} */ event) => {
+    const transfer = event.dataTransfer;
+    if (!transfer || !isFileTransfer(transfer)) return;
     event.preventDefault();
     event.stopPropagation();
     const item = currentItem();
     const allowed = writable() && !state.uploadBusy && item && !item.archived;
-    event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+    transfer.dropEffect = allowed ? 'copy' : 'none';
     setActive(!!allowed);
   };
   const props = {
     onDragEnter: show,
     onDragOver: show,
-    onDragLeave: (event) => {
+    onDragLeave: (/** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event) => {
       if (
         !(event.relatedTarget instanceof Node) ||
         !event.currentTarget.contains(event.relatedTarget)
       )
         setActive(false);
     },
-    onDrop: (event) => {
-      if (!isFileTransfer(event.dataTransfer)) return;
+    onDrop: (/** @type {DragEvent} */ event) => {
+      const transfer = event.dataTransfer;
+      if (!transfer || !isFileTransfer(transfer)) return;
       event.preventDefault();
       event.stopPropagation();
       setActive(false);
       const item = currentItem();
       if (writable() && !state.uploadBusy && item && !item.archived)
-        void dropFilesOntoItem(item, event.dataTransfer.files);
+        void dropFilesOntoItem(item, transfer.files);
     },
   };
   return { props, className: active ? 'attachment-drop-active' : '' };
@@ -221,6 +271,15 @@ export function attachmentPaperclipTemplate() {
 }
 // `extraClass` adds a placement class, for example on a card's attachment list.
 // `base` is the workspace root the attachment belongs to.
+/**
+ * @param {{
+ *   item: Flux.Item,
+ *   attachment: Flux.Attachment,
+ *   base: string,
+ *   metadata?: string,
+ *   extraClass?: string,
+ * }} props
+ */
 export function AttachmentTileLink({
   item,
   attachment,
@@ -250,9 +309,10 @@ export function AttachmentTileLink({
 }
 // The actions menu is a native disclosure whose open state the component owns,
 // so an outside pointer closes it.
+/** @param {{ attachment: Flux.Attachment, onRemove: () => unknown }} props */
 function AttachmentActions({ attachment, onRemove }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const ref = useRef(/** @type {HTMLDetailsElement | null} */ (null));
   const { writeDisabled } = usePermissions();
   useDismiss(ref, open, () => setOpen(false), { closeOnEscape: false });
   return html`<details
@@ -260,7 +320,7 @@ function AttachmentActions({ attachment, onRemove }) {
     data-state-key=${`attachment:${attachment.id}:actions`}
     open=${open}
     ref=${ref}
-    onToggle=${(event) => setOpen(event.currentTarget.open)}
+    onToggle=${(/** @type {Flux.TargetEvent<HTMLDetailsElement>} */ event) => setOpen(event.currentTarget.open)}
   >
     <summary
       class="attachment-actions-toggle"
@@ -279,6 +339,10 @@ function AttachmentActions({ attachment, onRemove }) {
     </div>
   </details>`;
 }
+/**
+ * @param {unknown} data
+ * @returns {data is Flux.Attachment[]}
+ */
 function validAttachments(data) {
   return (
     Array.isArray(data) &&
@@ -303,6 +367,25 @@ function validAttachments(data) {
     )
   );
 }
+/**
+ * @typedef {{
+ *   status: string,
+ *   error: boolean,
+ *   progress: number | undefined,
+ *   progressShown: boolean,
+ *   dropping: boolean,
+ * }} AttachmentsState
+ */
+/**
+ * @typedef {{ type: 'status', text?: string, error?: boolean }
+ *   | { type: 'progress', progress: number | undefined, shown?: boolean }
+ *   | { type: 'dropping', dropping: boolean }} AttachmentsAction
+ */
+/**
+ * @param {AttachmentsState} current
+ * @param {AttachmentsAction} action
+ * @returns {AttachmentsState}
+ */
 function attachmentsReducer(current, action) {
   switch (action.type) {
     case 'status':
@@ -320,6 +403,7 @@ function attachmentsReducer(current, action) {
 // The component owns upload progress and drop state; the list itself is shared
 // store data. The file input's value remains native form state. Keyed by
 // workspace root and item, so a switch remounts it and aborts its writes.
+/** @param {{ root: string, item: Flux.Item, readOnly?: boolean }} props */
 function ItemAttachments({ root, item, readOnly }) {
   const inputID = `attachment-file-${useId()}`;
   const [local, dispatch] = useReducer(attachmentsReducer, {
@@ -343,10 +427,12 @@ function ItemAttachments({ root, item, readOnly }) {
     const add = addButton.current;
     if (refocusAdd && add && !add.disabled) add.focus();
   }, [refocusAdd]);
-  const setStatus = (text, error = false) => dispatch({ type: 'status', text, error });
+  const setStatus = (/** @type {string} */ text, error = false) =>
+    dispatch({ type: 'status', text, error });
   useEffect(() => {
     if (!Array.isArray(list)) void ensureAttachments(item.id);
   }, [item.id, list, generation]);
+  /** @param {Flux.Attachment} attachment */
   async function removeAttachment(attachment) {
     if (!writable()) return;
     await writes.run(async (signal) => {
@@ -368,6 +454,7 @@ function ItemAttachments({ root, item, readOnly }) {
       }
     });
   }
+  /** @param {ArrayLike<File> | null | undefined} files */
   async function uploadFiles(files) {
     if (writes.pending || state.uploadBusy || !writable()) return;
     const selected = Array.from(files || []).filter(Boolean);
@@ -417,12 +504,13 @@ function ItemAttachments({ root, item, readOnly }) {
     setRefocusAdd((value) => value + 1);
   }
   const dropAllowed = () => writable() && !writes.pending && !state.uploadBusy;
-  const showDrop = (event) => {
-    if (!isFileTransfer(event.dataTransfer)) return;
+  const showDrop = (/** @type {DragEvent} */ event) => {
+    const transfer = event.dataTransfer;
+    if (!transfer || !isFileTransfer(transfer)) return;
     event.preventDefault();
     event.stopPropagation();
     const allowed = dropAllowed();
-    event.dataTransfer.dropEffect = allowed ? 'copy' : 'none';
+    transfer.dropEffect = allowed ? 'copy' : 'none';
     dispatch({ type: 'dropping', dropping: allowed });
   };
   const dropProps = readOnly
@@ -430,19 +518,20 @@ function ItemAttachments({ root, item, readOnly }) {
     : {
         onDragEnter: showDrop,
         onDragOver: showDrop,
-        onDragLeave: (event) => {
+        onDragLeave: (/** @type {Flux.TargetEvent<HTMLElement, DragEvent>} */ event) => {
           if (
             !(event.relatedTarget instanceof Node) ||
             !event.currentTarget.contains(event.relatedTarget)
           )
             dispatch({ type: 'dropping', dropping: false });
         },
-        onDrop: (event) => {
-          if (!isFileTransfer(event.dataTransfer)) return;
+        onDrop: (/** @type {DragEvent} */ event) => {
+          const transfer = event.dataTransfer;
+          if (!transfer || !isFileTransfer(transfer)) return;
           event.preventDefault();
           event.stopPropagation();
           dispatch({ type: 'dropping', dropping: false });
-          if (dropAllowed()) void uploadFiles(event.dataTransfer.files);
+          if (dropAllowed()) void uploadFiles(transfer.files);
         },
       };
   const listTemplate = () => {
@@ -497,11 +586,11 @@ function ItemAttachments({ root, item, readOnly }) {
       tabindex="-1"
       aria-label="Attachment file"
       ref=${fileInput}
-      onChange=${(event) => {
+      onChange=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => {
         const input = event.currentTarget;
         void uploadFiles(input.files ? [input.files[0]] : []);
       }}
-      onCancel=${(event) => {
+      onCancel=${(/** @type {Event} */ event) => {
         event.preventDefault();
         event.stopPropagation();
         addButton.current?.focus();
@@ -531,13 +620,19 @@ function ItemAttachments({ root, item, readOnly }) {
     <div class="attachment-grid">${listTemplate()}</div>
   </section>`;
 }
+/** @param {Flux.State} current */
 function selectRoot(current) {
   return current.root;
 }
+/** @param {{ item: Flux.Item, readOnly?: boolean }} props */
 function WorkspaceItemAttachments({ item, readOnly }) {
   const root = useStore(selectRoot);
   return html`<${ItemAttachments} key=${`${root}:${item.id}`} root=${root} item=${item} readOnly=${readOnly} />`;
 }
+/**
+ * @param {Flux.Item} item
+ * @param {boolean} [readOnly]
+ */
 export function itemAttachmentsTemplate(item, readOnly) {
   return html`<${WorkspaceItemAttachments} item=${item} readOnly=${readOnly} />`;
 }

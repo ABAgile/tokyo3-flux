@@ -19,6 +19,17 @@ import { CommandDialog } from './dialog.js';
 import { reopenItemEditor } from './actions.js';
 import { useDebouncedValue, useMutation, useRequest } from './ui-hooks.js';
 
+/**
+ * The editor a link operation came from: its surface, its draft and the control
+ * that had focus.
+ * @typedef {{ mode: Flux.EditorMode, draft?: Flux.ItemDraft, originFocusKey?: string }} LinkOrigin
+ */
+/**
+ * @param {unknown} value
+ * @param {Flux.Board} currentBoard
+ * @param {readonly Flux.GitLabProject[]} projects
+ * @returns {{ project: number, kind: string, number: number }}
+ */
 function resolveGitLabMRURL(value, currentBoard, projects) {
   const raw = String(value || '').trim();
   if (!raw) throw new Error('Paste a GitLab merge-request URL first.');
@@ -67,12 +78,17 @@ function resolveGitLabMRURL(value, currentBoard, projects) {
     throw new Error('That merge-request project is not in the approved GitLab project catalog.');
   return { project: Number(project.id), kind: 'mr', number: Number(iid) };
 }
+/**
+ * @param {Flux.Board} board
+ * @param {string} itemID
+ */
 function itemLinkIDs(board, itemID) {
   return board.links.filter((value) => value.items.includes(itemID)).map((value) => value.id);
 }
 // Reopens the card in the surface it came from with the draft it had, plus any
 // link the workspace gained for it meanwhile. `root` is the workspace the
 // card was edited in; nothing reopens once another workspace is shown.
+/** @param {Flux.DialogProps['link.add']} props */
 function returnToCard({ item, draft, mode, originFocusKey, previousLinkIDs, root }) {
   if (state.root !== root || !state.board) return;
   const latest = state.board.items.find((value) => value.id === item.id);
@@ -87,10 +103,15 @@ function returnToCard({ item, draft, mode, originFocusKey, previousLinkIDs, root
 // `origin` is { mode, draft, originFocusKey } of the editor the link came from.
 // The write outlives the editor it started in, so it belongs to the workspace
 // session and nothing is reopened after that session ended.
+/**
+ * @param {Flux.Item} item
+ * @param {{ project: number, kind: string, number: number }} link
+ * @param {LinkOrigin} origin
+ */
 async function attachItemGitLabLink(item, link, origin) {
   const currentBoard = requireBoard(),
     signal = workspaceSignal();
-  const context = { item, ...origin, root: state.root };
+  const context = { item, ...origin, root: requireRoot() };
   const previousLinkIDs = itemLinkIDs(currentBoard, item.id);
   if (origin.mode === 'modal') closeEditor();
   try {
@@ -114,6 +135,14 @@ async function attachItemGitLabLink(item, link, origin) {
 // The paste-an-MR-URL row under the GitLab links picker. `getDraft` reads the
 // enclosing editor's current input, so a reopened card keeps it. Keyed by
 // workspace root, so a switch remounts it and aborts a pending resolve.
+/**
+ * @typedef {LinkOrigin & {
+ *   item: Flux.Item,
+ *   readOnly?: boolean,
+ *   getDraft?: () => Flux.ItemDraft | undefined,
+ * }} GitLabPasteProps
+ */
+/** @param {GitLabPasteProps & { root: string }} props */
 function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }) {
   const inputID = `gitlab-mr-url-${useId()}`;
   const [status, setStatus] = useState({ text: '', error: false });
@@ -153,7 +182,7 @@ function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }
         aria-label="GitLab MR URL"
         autocomplete="off"
         ref=${input}
-        onKeydown=${(event) => {
+        onKeydown=${(/** @type {KeyboardEvent} */ event) => {
           if (event.key !== 'Enter') return;
           event.preventDefault();
           void resolve();
@@ -174,14 +203,20 @@ function GitLabPasteRow({ root, item, readOnly, mode, getDraft, originFocusKey }
       aria-live="polite"
     >${status.text}</p>`;
 }
+/** @param {Flux.State} current */
 function selectRoot(current) {
   return current.root;
 }
+/** @param {GitLabPasteProps} props */
 export function GitLabPaste(props) {
   const root = useStore(selectRoot);
   return html`<${GitLabPasteRow} key=${root} root=${root} ...${props} />`;
 }
 // Opens the Add link dialog for a card edited in `origin.mode`.
+/**
+ * @param {Flux.Item} item
+ * @param {LinkOrigin} origin
+ */
 export function addGitLabLink(item, origin) {
   if (origin.mode === 'modal') closeEditor();
   openDialog('link.add', {
@@ -189,13 +224,22 @@ export function addGitLabLink(item, origin) {
     draft: origin.draft,
     mode: origin.mode,
     originFocusKey: origin.originFocusKey,
-    previousLinkIDs: itemLinkIDs(state.board, item.id),
+    previousLinkIDs: itemLinkIDs(requireBoard(), item.id),
     root: requireRoot(),
   });
 }
 // The merge-request picker owns its search: one request per project, quick
 // scope and debounced query once its menu has opened. It is keyed by project and
 // scope, so a change starts a fresh picker and cancels pending results.
+/**
+ * @param {{
+ *   root: string,
+ *   project: string,
+ *   scope: string,
+ *   value: string[],
+ *   onChange: (values: string[]) => void,
+ * }} props
+ */
 function GitLabLinkPicker({ root, project, scope, value, onChange }) {
   const [opened, setOpened] = useState(false);
   const [query, setQuery] = useState('');
@@ -302,7 +346,7 @@ export function AddLinkDialog({ item, root }) {
           ['board_members', 'Assigned to board members'],
         ],
         {
-          onChange: (event) => {
+          onChange: (/** @type {Flux.TargetEvent<HTMLSelectElement>} */ event) => {
             setScope(event.currentTarget.value);
             setMergeRequest([]);
           },
@@ -314,7 +358,7 @@ export function AddLinkDialog({ item, root }) {
         project=${project}
         scope=${scope}
         value=${mergeRequest}
-        onChange=${(values) => {
+        onChange=${(/** @type {string[]} */ values) => {
           setMergeRequest(values);
           if (values.length) setManualIID('');
         }}
@@ -328,7 +372,7 @@ export function AddLinkDialog({ item, root }) {
           max=${Number.MAX_SAFE_INTEGER}
           step="1"
           value=${manualIID}
-          onInput=${(event) => setManualIID(event.currentTarget.value)}
+          onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => setManualIID(event.currentTarget.value)}
       /></label>
       ${
         !projects.length &&
@@ -342,6 +386,10 @@ export function AddLinkDialog({ item, root }) {
   );
 }
 AddLinkDialog.onClose = returnToCard;
+/**
+ * @param {string} itemID
+ * @param {readonly FormDataEntryValue[]} desiredIDs
+ */
 export async function reconcileItemLinks(itemID, desiredIDs) {
   const desired = new Set(desiredIDs);
   for (const link of requireBoard().links.filter(

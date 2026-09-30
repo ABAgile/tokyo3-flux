@@ -9,15 +9,21 @@ import { focusKey } from './ui-hooks.js';
 let sequence = 0;
 // The store patch requesting focus for the control with logical focus `key`.
 // `scope` names the consumer that renders it, for example 'list'.
+/**
+ * @param {string} scope
+ * @param {string | undefined} key
+ */
 export function focusRequestPatch(scope, key) {
   sequence += 1;
   return { focusRequest: key ? { scope, key, nonce: sequence } : undefined };
 }
+/** @param {Flux.FocusRequest | undefined} request */
 export function clearFocusRequest(request) {
   setState((current) =>
     current.focusRequest === request ? { focusRequest: undefined } : undefined,
   );
 }
+/** @param {Flux.State} current */
 function selectFocusRequest(current) {
   return current.focusRequest;
 }
@@ -25,6 +31,10 @@ function selectFocusRequest(current) {
 // for the target inside `ref`. A request whose target is gone is dropped. While
 // a modal dialog is open the rest of the page is inert, so the request waits
 // and the dialog host fulfils it when the dialog closes.
+/**
+ * @param {string} scope
+ * @param {{ current: ParentNode | null }} ref
+ */
 export function useFocusRequest(scope, ref) {
   const request = useStore(selectFocusRequest);
   useLayoutEffect(() => {

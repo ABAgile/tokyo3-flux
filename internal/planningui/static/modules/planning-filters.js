@@ -20,6 +20,7 @@ import { setPresentation, setScope } from './actions.js';
 // the Sprints page render the bar in turn, never both.
 /** @type {{ current: HTMLInputElement | null }} */
 export const searchInputRef = { current: null };
+/** @param {Flux.State} current */
 function planningCount(current) {
   const { board, view } = current;
   if (!board) return '';
@@ -33,6 +34,7 @@ function planningCount(current) {
     ? `${items.length} archived${current.archiveMore ? '+' : ''} · workspace revision ${board.workspace.revision}`
     : `${items.length} items · workspace revision ${board.workspace.revision}`;
 }
+/** @param {Flux.State} current */
 function selectPlanningFilters(current) {
   return {
     board: current.board,
@@ -55,12 +57,14 @@ export function PlanningFilters() {
   const { board, lookups, view, presentation, scope, busy, blocked } = bar;
   const showFilters = !!board && !['history', 'projects', 'labels', 'members'].includes(view);
   const showLabelFilter = !['sprints', 'history'].includes(view);
-  const addFilter = (name) => (event) => {
-    addPlanningFilter(name, event.currentTarget.value);
-    rerender();
-  };
+  const addFilter =
+    (/** @type {keyof Flux.Filters} */ name) =>
+    (/** @type {Flux.TargetEvent<HTMLSelectElement>} */ event) => {
+      addPlanningFilter(name, event.currentTarget.value);
+      rerender();
+    };
   const search = useSearchField();
-  const searchKeyDown = (event) => {
+  const searchKeyDown = (/** @type {KeyboardEvent} */ event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();
     search.commit();
@@ -68,7 +72,7 @@ export function PlanningFilters() {
   return html`<${Fragment}>
     <div id="planning-filters" class="filter-bar" hidden=${!showFilters}>
       <div class="actions">
-        <label id="scope-label" hidden=${view !== 'board'}>Scope<select id="scope" data-focus-key="filter:scope" value=${scope} onChange=${(event) => setScope(event.currentTarget.value)}>
+        <label id="scope-label" hidden=${view !== 'board'}>Scope<select id="scope" data-focus-key="filter:scope" value=${scope} onChange=${(/** @type {Flux.TargetEvent<HTMLSelectElement>} */ event) => setScope(event.currentTarget.value)}>
           <option value="active">Active sprints</option><option value="backlog">Backlog</option><option value="all">All open work</option>
           ${board?.sprints?.map((sprint) => html`<option key=${sprint.id} value=${sprint.id}>${`${sprint.name} (${sprint.state})`}</option>`)}
         </select></label>
@@ -84,7 +88,7 @@ export function PlanningFilters() {
           <option value="all">All labels</option><option value="none">No labels</option>
           ${board?.labels?.map((label) => html`<option key=${label.name} value=${label.name} style=${labelOptionColors(lookups, label.name)}>${label.name}</option>`)}
         </select></label>
-        <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" ref=${searchInputRef} data-focus-key="filter:search" type="search" autocomplete="off" value=${search.text} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${(event) => search.setText(event.currentTarget.value)} onChange=${search.commit} onKeydown=${searchKeyDown} /></label>
+        <label id="search-filter" hidden=${view === 'history'}>Search<input id="search" ref=${searchInputRef} data-focus-key="filter:search" type="search" autocomplete="off" value=${search.text} placeholder=${view === 'sprints' ? 'Find sprints…' : 'Find work…'} maxlength="240" onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => search.setText(event.currentTarget.value)} onChange=${search.commit} onKeydown=${searchKeyDown} /></label>
       </div>
       <div class="filter-bar-end">
         <div id="presentation-toggle" class="presentation-toggle" role="group" aria-label="Planning presentation" hidden=${!board || view !== 'board'}>
@@ -97,6 +101,7 @@ export function PlanningFilters() {
     <${PlanningFilterChips} show=${showFilters} includeLabels=${showLabelFilter} disabled=${busy} />
   </${Fragment}>`;
 }
+/** @param {Flux.State} current */
 function selectSearchInput(current) {
   return current.searchInput;
 }

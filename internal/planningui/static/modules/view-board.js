@@ -41,16 +41,25 @@ import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitl
 import { editItem } from './actions.js';
 import { useDismiss, useFocusRestore } from './ui-hooks.js';
 
+/**
+ * @param {{
+ *   board: Flux.Board | undefined,
+ *   lookups: Flux.Lookups,
+ *   items: ReadonlyMap<string, Flux.Item>,
+ *   view: string,
+ *   projectID: string,
+ * }} props
+ */
 export function ProjectSummary({ board, lookups, items: itemsByID, view, projectID }) {
   const project = board?.projects?.find((value) => value.id === projectID);
   const visible = view === 'board' && !!project && !['all', 'none'].includes(projectID);
   const items = visible
-    ? (board.items || []).filter(
+    ? (board?.items || []).filter(
         (item) => !item.archived && itemProjectIDs(item).includes(projectID),
       )
     : [];
   const openSprints = visible
-    ? (board.sprints || []).filter(
+    ? (board?.sprints || []).filter(
         (sprint) =>
           sprint.state !== 'closed' && items.some((item) => item.sprint_ids.includes(sprint.id)),
       )
@@ -104,9 +113,11 @@ export function ProjectSummary({ board, lookups, items: itemsByID, view, project
 // lookups its templates resolve names with, its links, the due-date clock and
 // permissions. Templates read only what the context carries, so a memoized row
 // skips rendering exactly when its item, flags and this context are unchanged.
+/** @param {Flux.State} current */
 function selectBoard(current) {
   return current.board;
 }
+/** @param {Flux.State} current */
 function selectArchiveItems(current) {
   return current.archiveItems;
 }
@@ -118,16 +129,17 @@ export function useRowContext() {
   const { write, writeDisabled, busy, role } = usePermissions();
   const root = useStore((current) => current.root);
   return useMemo(() => {
+    /** @type {Map<string, Flux.Link[]>} */
     const linksByItem = new Map();
     for (const link of links || [])
       for (const id of link.items) {
         if (!linksByItem.has(id)) linksByItem.set(id, []);
-        linksByItem.get(id).push(link);
+        linksByItem.get(id)?.push(link);
       }
     return {
       lookups,
       linksByItem,
-      sprintName: (id) => lookups.sprintsById.get(id)?.name || id,
+      sprintName: (/** @type {string} */ id) => lookups.sprintsById.get(id)?.name || id,
       canWrite: write,
       writeDisabled,
       busy,
@@ -141,7 +153,7 @@ export function useRowContext() {
 const NO_LINKS = Object.freeze([]);
 // Blocked flags depend on other cards, so they are computed per list.
 /**
- * @param {Flux.Item[]} items
+ * @param {readonly Flux.Item[]} items
  * @returns {Set<string>}
  */
 export function useBlockedIDs(items) {
@@ -151,10 +163,14 @@ export function useBlockedIDs(items) {
   return useMemo(() => {
     const byID = itemLookup(board, archiveItems);
     return new Set(items.filter((item) => blocked(lookups, byID, item)).map((item) => item.id));
-  }, [items, board.items, lookups, archiveItems]);
+  }, [items, board?.items, lookups, archiveItems]);
 }
 // Board cards and List rows are both drop targets for a card: before or after
 // the target within its column.
+/**
+ * @param {string} itemID
+ * @returns {Flux.DropZone[]}
+ */
 export function cardDropZones(itemID) {
   return [
     {
@@ -176,6 +192,10 @@ export function cardDropZones(itemID) {
   ];
 }
 // A column or List section accepts a card at its end and a list before or after it.
+/**
+ * @param {string} columnID
+ * @returns {Flux.DropZone[]}
+ */
 export function columnDropZones(columnID) {
   return [
     {
@@ -198,16 +218,33 @@ export function columnDropZones(columnID) {
   ];
 }
 
+/**
+ * @param {MouseEvent} event
+ * @param {Flux.Item} item
+ */
 function openCardFromClick(event, item) {
-  if (event.defaultPrevented || event.target.closest?.('a,button,input,select,textarea,summary'))
+  if (
+    event.defaultPrevented ||
+    /** @type {Element | null} */ (event.target)?.closest?.(
+      'a,button,input,select,textarea,summary',
+    )
+  )
     return;
   editItem(item);
 }
+/**
+ * @param {KeyboardEvent} event
+ * @param {Flux.Item} item
+ */
 function openCardFromKey(event, item) {
   if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
   event.preventDefault();
   editItem(item);
 }
+/**
+ * @param {Flux.Item} item
+ * @param {readonly Flux.Link[]} links
+ */
 function cardLinksTemplate(item, links) {
   return html`<div class="card-links-section" role="group" aria-label="GitLab links">
     <div class="card-links-head">
@@ -236,8 +273,18 @@ function cardLinksTemplate(item, links) {
 }
 // The disclosure's open state belongs to the board, so it survives a card
 // moving between columns; expanding it is what pays for the metadata read.
+/**
+ * @param {{
+ *   root: string | undefined,
+ *   item: Flux.Item,
+ *   total: number,
+ *   list: Flux.Attachment[] | undefined,
+ *   open: boolean,
+ *   onToggle: (id: string, open: boolean) => void,
+ * }} props
+ */
 function CardAttachments({ root, item, total, list, open, onToggle }) {
-  const ref = useRef(null);
+  const ref = useRef(/** @type {HTMLDetailsElement | null} */ (null));
   const generation = useStore(selectBoardGeneration);
   const count = `${total} attachment${total === 1 ? '' : 's'}`;
   useDismiss(ref, open, () => onToggle(item.id, false), { closeOnEscape: false });
@@ -250,7 +297,7 @@ function CardAttachments({ root, item, total, list, open, onToggle }) {
     aria-label=${count}
     open=${open}
     ref=${ref}
-    onToggle=${(event) => {
+    onToggle=${(/** @type {Flux.TargetEvent<HTMLDetailsElement>} */ event) => {
       if (event.currentTarget.open !== open) onToggle(item.id, event.currentTarget.open);
     }}
   >
@@ -302,8 +349,8 @@ function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsTogg
     draggable=${draggable}
     tabindex="0"
     aria-label=${`Open work item ${item.title}; draggable`}
-    onClick=${(event) => openCardFromClick(event, item)}
-    onKeydown=${(event) => openCardFromKey(event, item)}
+    onClick=${(/** @type {MouseEvent} */ event) => openCardFromClick(event, item)}
+    onKeydown=${(/** @type {KeyboardEvent} */ event) => openCardFromKey(event, item)}
     ...${mergeEventProps(dragEvents, files.props, drop.props)}
   >
     <div class=${classNames({ 'card-top': true, 'card-top-overdue': overdue })}>
@@ -361,8 +408,8 @@ export const Card = memo(CardView);
 // Open card-attachment disclosures, by item id, for one list of cards.
 /** @returns {[Set<string>, (id: string, open: boolean) => void]} */
 export function useExpandedAttachments() {
-  const [expanded, setExpanded] = useState(() => new Set());
-  const toggle = useCallback((id, open) => {
+  const [expanded, setExpanded] = useState(() => /** @type {Set<string>} */ (new Set()));
+  const toggle = useCallback((/** @type {string} */ id, /** @type {boolean} */ open) => {
     setExpanded((current) => {
       if (current.has(id) === open) return current;
       const next = new Set(current);
@@ -373,6 +420,17 @@ export function useExpandedAttachments() {
   }, []);
   return [expanded, toggle];
 }
+/**
+ * @param {{
+ *   column: Flux.Column,
+ *   peers: Flux.Item[],
+ *   total: number,
+ *   context: Flux.RowContext,
+ *   blockedIDs: Set<string>,
+ *   expanded: Set<string>,
+ *   onAttachmentsToggle: (id: string, open: boolean) => void,
+ * }} props
+ */
 function Column({ column, peers, total, context, blockedIDs, expanded, onAttachmentsToggle }) {
   const drop = useDropZone(`column:${column.id}`, columnDropZones(column.id));
   const drag = useDraggable('list', column.id, () => context.canWrite);
@@ -406,12 +464,13 @@ function Column({ column, peers, total, context, blockedIDs, expanded, onAttachm
     ${peers.length ? null : emptyStateTemplate('No work here')}
   </section>`;
 }
+/** @param {{ items: readonly Flux.Item[] }} props */
 export function BoardContent({ items }) {
-  const board = useStore(selectBoard);
+  const board = /** @type {Flux.Board} */ (useStore(selectBoard));
   const context = useRowContext();
   const blockedIDs = useBlockedIDs(items);
   const [expanded, toggle] = useExpandedAttachments();
-  const root = useRef(null);
+  const root = useRef(/** @type {HTMLDivElement | null} */ (null));
   const focus = useFocusRestore(root, 'board');
   return html`<div class="board" data-content-view="board" ref=${root} ...${focus}>
     ${board.columns.map(
@@ -497,6 +556,11 @@ export function RemoveColumnDialog({ column, destinations }) {
     `,
   );
 }
+/**
+ * @param {Flux.Column[]} columns
+ * @param {Flux.Column} column
+ * @param {number} index
+ */
 async function moveColumnLeft(columns, column, index) {
   await quick({ kind: 'column.rank', target: column.id, before: columns[index - 1].id });
   closeEditor();
@@ -505,7 +569,8 @@ async function moveColumnLeft(columns, column, index) {
 // dialog, and a reorder closes setup.
 /** @param {Flux.DialogProps['board.setup']} props */
 export function BoardSetupDialog({ columns }) {
-  const action = (text, fn) => accessButtonTemplate(text, fn, { tracked: false });
+  const action = (/** @type {string} */ text, /** @type {() => unknown} */ fn) =>
+    accessButtonTemplate(text, fn, { tracked: false });
   return h(
     FormDialog,
     { title: 'Board setup', readOnly: true },
@@ -525,7 +590,9 @@ export function BoardSetupDialog({ columns }) {
               ? action('Remove…', () =>
                   openDialog('column.remove', {
                     column: c,
-                    destinations: columns.filter((v) => v.id !== c.id).map((v) => [v.id, v.name]),
+                    destinations: columns
+                      .filter((v) => v.id !== c.id)
+                      .map((v) => /** @type {[string, string]} */ ([v.id, v.name])),
                   }),
                 )
               : null

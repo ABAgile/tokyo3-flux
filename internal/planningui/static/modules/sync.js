@@ -24,11 +24,22 @@ import {
   workspaceRoot,
 } from './page-data.js';
 
+/**
+ * @param {unknown} previous
+ * @param {unknown} next
+ */
 function sameValue(previous, next) {
   return JSON.stringify(previous) === JSON.stringify(next);
 }
 // Unchanged entities and lists keep their identity, so keyed components whose
 // data did not change can skip rendering after a refresh.
+/**
+ * @template T
+ * @param {T[] | undefined} previous
+ * @param {T[] | undefined} next
+ * @param {(value: T) => string} key
+ * @returns {T[]}
+ */
 function mergeEntities(previous = [], next = [], key) {
   const existing = new Map(previous.map((value) => [key(value), value]));
   let changed = previous.length !== next.length;
@@ -47,6 +58,11 @@ function mergeEntities(previous = [], next = [], key) {
  */
 export function mergeBoardData(previous, next) {
   if (!previous) return next;
+  /**
+   * @template {'participants' | 'closed_scope' | 'integration'} K
+   * @param {K} name
+   * @returns {Flux.Board[K]}
+   */
   const list = (name) => (sameValue(previous[name], next[name]) ? previous[name] : next[name]);
   return {
     ...next,
@@ -62,6 +78,10 @@ export function mergeBoardData(previous, next) {
     integration: list('integration'),
   };
 }
+/**
+ * @param {string} scope
+ * @param {Flux.Board} board
+ */
 function knownScope(scope, board) {
   return ['active', 'backlog', 'all'].includes(scope) ||
     board.sprints.some((sprint) => sprint.id === scope)
@@ -71,6 +91,10 @@ function knownScope(scope, board) {
 // Returns to the workspace gate, discarding everything that belonged to the
 // workspace and cancelling its work. An editor that is saving stays until its
 // request settles.
+/**
+ * @param {Flux.State['workspaceGate']} mode
+ * @param {string} [message]
+ */
 export function enterWorkspaceGate(mode, message) {
   beginWorkspaceSession();
   clearUndo();
@@ -95,6 +119,7 @@ export function enterWorkspaceGate(mode, message) {
 // One board or workspace-list load at a time: a new load aborts the one in
 // flight, and leaving the workspace aborts it too. Only the current load
 // clears the loading flag, so a superseded one never ends its successor's.
+/** @type {AbortController | undefined} */
 let currentLoad;
 export function beginLoad() {
   currentLoad?.abort();
@@ -103,6 +128,7 @@ export function beginLoad() {
   setState({ loading: true });
   return { controller, signal: withWorkspace(controller.signal) };
 }
+/** @param {{ controller: AbortController }} load */
 export function finishLoad(load) {
   if (currentLoad !== load.controller) return;
   currentLoad = undefined;
@@ -114,6 +140,7 @@ let observationReadAt = 0;
 // preloaded carries a board a write already returned, so a saved change is
 // applied without a second board read. Membership is still reloaded, because a
 // change receipt says nothing about workspace access.
+/** @param {{ board: Flux.Board, etag: string }} [preloaded] */
 export async function refresh(preloaded) {
   if (state.busy || state.integrationFormOpen || !state.root) return false;
   const load = beginLoad();
@@ -154,7 +181,7 @@ export async function refresh(preloaded) {
     observationReadAt = 0;
     // The view's own first page is reloaded with the board, so both are
     // committed in one update; a failed page read still applies the board.
-    const apply = (pages) =>
+    const apply = (/** @type {Partial<Flux.State>} */ pages) =>
       setState((current) => ({
         board,
         boardGeneration: current.boardGeneration + 1,
@@ -234,6 +261,7 @@ async function pollObservations() {
       Date.now() - observationReadAt < OBSERVATION_FALLBACK_MS
     )
       return;
+    /** @type {Flux.Board} */
     const next = await api(`${path}/board`, { signal });
     if (signal.aborted || state.board !== current || pollBlocked()) return;
     if (!next?.workspace || !Array.isArray(next.links))

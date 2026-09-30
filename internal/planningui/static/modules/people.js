@@ -49,6 +49,7 @@ export function memberListingInfo(member, session) {
       member.avatar_url || (member.subject === session?.subject && session.avatar_url) || '',
   };
 }
+/** @param {{ url: string }} props */
 function AvatarImage({ url }) {
   const [failed, setFailed] = useState(false);
   return failed
@@ -57,9 +58,14 @@ function AvatarImage({ url }) {
 }
 // Failure is component state, never removal of a Preact-owned DOM node.
 // A changed URL gets a fresh component and can retry independently.
+/** @param {string | undefined} avatarURL */
 export function avatarImageTemplate(avatarURL) {
   return avatarURL ? html`<${AvatarImage} key=${avatarURL} url=${avatarURL} />` : null;
 }
+/**
+ * @param {string} name
+ * @param {string | undefined} avatarURL
+ */
 export function avatarTemplate(name, avatarURL) {
   return html`<span class="avatar" aria-hidden="true">
     <span class="avatar-fallback">${initials(name)}</span>
@@ -70,6 +76,7 @@ export function avatarTemplate(name, avatarURL) {
 // comment authors, so a card states who is involved without one request per
 // card. A reviewer who is not a workspace member carries its own provider
 // identity; everyone else resolves against the workspace roster.
+/** @type {Readonly<Record<string, string>>} */
 const PARTICIPANT_ROLE_LABELS = Object.freeze({
   assignee: 'Assignee',
   reviewer: 'Reviewer',
@@ -110,10 +117,18 @@ export function participantInfo(lookups, participant) {
     assignee: (participant.roles || []).includes('assignee'),
   };
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Participant} participant
+ */
 function participantDescription(lookups, participant) {
   const info = participantInfo(lookups, participant);
   return info.roles.length ? `${info.name} \u00b7 ${info.roles.join(', ')}` : info.name;
 }
+/**
+ * @param {Flux.Lookups} lookups
+ * @param {Flux.Participant} participant
+ */
 function participantAvatarTemplate(lookups, participant) {
   const info = participantInfo(lookups, participant);
   const description = participantDescription(lookups, participant);
@@ -137,7 +152,8 @@ function participantAvatarTemplate(lookups, participant) {
  */
 export function participantStackTemplate(lookups, item) {
   const participants = itemParticipants(lookups, item);
-  const describe = (participant) => participantDescription(lookups, participant);
+  const describe = (/** @type {Flux.Participant} */ participant) =>
+    participantDescription(lookups, participant);
   if (!participants.length)
     return html`<div class="participant-stack" data-card-section="participants" aria-label="No participants · unassigned">
       <span class="participant-empty">Unassigned</span>

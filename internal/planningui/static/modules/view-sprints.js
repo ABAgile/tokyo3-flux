@@ -35,11 +35,12 @@ import { sprintVelocityTemplate } from './view-velocity.js';
 
 // The sprint goal measures its rendered height to decide whether to offer
 // "Show more". Until the first measurement the goal stays inert.
+/** @param {{ value: string }} props */
 function SprintGoal({ value }) {
   const contentID = `sprint-goal-${useId()}`;
   const [expanded, setExpanded] = useState(false);
-  const [clipped, setClipped] = useState();
-  const content = useRef();
+  const [clipped, setClipped] = useState(/** @type {boolean | undefined} */ (undefined));
+  const content = useRef(/** @type {HTMLDivElement | null} */ (null));
   const measure = () => {
     const node = content.current;
     if (!node) return;
@@ -77,6 +78,7 @@ function SprintGoal({ value }) {
     >${expanded ? 'Show less' : 'Show more'}</button>
   </div>`;
 }
+/** @param {{ sprint: Flux.Sprint, expanded: boolean }} props */
 function SprintActions({ sprint: s, expanded }) {
   const { busy } = usePermissions();
   const label = expanded ? 'Hide burn down' : 'Show burn down';
@@ -117,10 +119,12 @@ function SprintActions({ sprint: s, expanded }) {
   </div>`;
 }
 
+/** @param {Flux.State} current */
 function selectItemLookup(current) {
   return itemLookup(current.board, current.archiveItems);
 }
 // A changed goal gets a fresh goal widget; otherwise it keeps its measurement.
+/** @param {{ sprint: Flux.Sprint, items: readonly Flux.Item[] }} props */
 function SprintPanel({ sprint: s, items }) {
   const expanded = useStore((current) => current.burndownExpanded.includes(s.id));
   const lookups = useStore(selectLookups);
@@ -152,6 +156,10 @@ function SprintPanel({ sprint: s, items }) {
     ${expanded ? burndownTemplate(s) : null}
   </article>`;
 }
+/**
+ * @param {SprintPageData} page
+ * @param {{ filtered: Flux.Sprint[], matches: Flux.Sprint[] }} results
+ */
 function sprintRowsTemplate(page, { filtered, matches }) {
   const { board, filters } = page;
   const search = page.searchInput.trim();
@@ -174,6 +182,7 @@ function sprintRowsTemplate(page, { filtered, matches }) {
     />`,
   );
 }
+/** @param {string} value */
 function sprintHistoryTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
@@ -187,6 +196,7 @@ async function loadOlderSprintHistory() {
     if (!isAbortError(error)) setState({ sprintHistoryError: error.message });
   }
 }
+/** @param {{ record: Flux.SprintHistoryRecord }} props */
 function SprintHistoryRow({ record }) {
   const sprint = record.sprint || {};
   const closure = record.closure || {};
@@ -199,6 +209,7 @@ function SprintHistoryRow({ record }) {
     </div>
   </div>`;
 }
+/** @param {SprintPageData} page */
 function sprintHistoryBody(page) {
   if (page.sprintHistoryError) return emptyStateTemplate(page.sprintHistoryError);
   if (!page.sprintHistory.length)
@@ -212,6 +223,7 @@ function sprintHistoryBody(page) {
     ),
   );
 }
+/** @param {SprintPageData} page */
 function sprintHistoryTemplate(page) {
   return html`<section class="panel sprint-history">
     ${panelHeadTemplate('Archived sprint history', {
@@ -233,6 +245,7 @@ function sprintHistoryTemplate(page) {
 }
 // Sprints uses the same page layout as Projects: a read-only summary section
 // first, then a titled section whose shared planning filters sit below its heading.
+/** @type {readonly (keyof Flux.State)[]} */
 const SPRINT_PAGE_KEYS = [
   'board',
   'session',
@@ -245,8 +258,17 @@ const SPRINT_PAGE_KEYS = [
   'sprintHistoryMore',
   'sprintHistoryError',
 ];
+/**
+ * The page renders only while a workspace is open, so its board exists.
+ * @typedef {Pick<Flux.State, 'session' | 'filters' | 'searchQuery' | 'searchInput' | 'busy'
+ *   | 'loading' | 'sprintHistory' | 'sprintHistoryMore' | 'sprintHistoryError'>
+ *   & { board: Flux.Board }} SprintPageData
+ */
+/** @param {Flux.State} current */
 function selectSprintPage(current) {
-  return Object.fromEntries(SPRINT_PAGE_KEYS.map((key) => [key, current[key]]));
+  return /** @type {SprintPageData} */ (
+    Object.fromEntries(SPRINT_PAGE_KEYS.map((key) => [key, current[key]]))
+  );
 }
 // The page lists the sprints matching the planning filters and search; the
 // shared filter bar renders in its slot below the section heading.
@@ -269,9 +291,11 @@ export function SprintsPage() {
       </section>
       ${sprintHistoryTemplate(page)}`;
 }
+/** @param {Flux.State} current */
 function selectSummaryFilters(current) {
   return current.filters;
 }
+/** @param {{ board: Flux.Board | undefined, view: string, scope: string }} props */
 export function SprintSummary({ board, view, scope }) {
   useStore(selectSummaryFilters);
   const selected = board?.sprints?.find((sprint) => sprint.id === scope);
@@ -351,6 +375,7 @@ export function SprintDialog({ sprint }) {
     `,
   );
 }
+/** @param {Flux.Sprint} sprint */
 function closeSprint(sprint) {
   const items = scopeItems(requireBoard(), sprint);
   const lookups = selectLookups(state);
@@ -360,7 +385,7 @@ function closeSprint(sprint) {
     unfinished: items.filter((i) => !done(lookups, i)).length,
     destinations: requireBoard()
       .sprints.filter((s) => (s.state === 'planned' || s.state === 'active') && s.id !== sprint.id)
-      .map((s) => [s.id, s.name]),
+      .map((s) => /** @type {[string, string]} */ ([s.id, s.name])),
   });
 }
 /** @param {Flux.DialogProps['sprint.close']} props */
