@@ -54,9 +54,6 @@ func bareStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	if err = s.Ready(ctx); err == nil {
-		t.Fatal("unmigrated schema ready")
-	}
 	return s
 }
 func testStore(t *testing.T) *Store {
@@ -104,6 +101,21 @@ func newItem(b p.Board, title string) p.Item {
 func execSQL(t *testing.T, s *Store, sql string) {
 	t.Helper()
 	if _, err := s.pool.Exec(context.Background(), sql); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresReadiness(t *testing.T) {
+	s := bareStore(t)
+	ctx := context.Background()
+	// Exercise the expected missing-table error once, not in every test setup.
+	if err := s.Ready(ctx); err == nil {
+		t.Fatal("unmigrated schema ready")
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Ready(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
