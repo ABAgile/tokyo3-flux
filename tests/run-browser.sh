@@ -105,7 +105,7 @@ run_one() {
   if [ -n "$gitlab" ]; then
     evolving=
     if [ $gitlab = evolving ]; then evolving=--evolving; fi
-    python3 tests/gitlab_fixture.py --port $GITLAB_PORT $evolving >"$OUT/$name.gitlab.log" 2>&1 &
+    node tests/gitlab-fixture.mjs --port $GITLAB_PORT $evolving >"$OUT/$name.gitlab.log" 2>&1 &
     PIDS="$PIDS $!"
     # Fails if another process already holds the fixture port.
     wait_http "http://127.0.0.1:$GITLAB_PORT/uploads/avatar/7.png"

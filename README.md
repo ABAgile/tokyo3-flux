@@ -506,7 +506,7 @@ Use a disposable test DB; PostgreSQL tests skip without its URL.
 Browser scripts in `tests/` mutate disposable workspaces: planning/proposals require fresh seeded workspaces, drag-labels requires an empty workspace.
 Their workspace must be first for the test identity.
 Verify light/dark at 1440, 768 and 390px and keyboard access.
-`tests/gitlab_fixture.py` provides synthetic loopback observations; use `--evolving` for `background.browser.js`.
+`tests/gitlab-fixture.mjs` provides synthetic loopback observations; use `--evolving` for `background.browser.js`.
 `tests/style-snapshot.browser.js` returns a computed-style snapshot of the main views; diff two same-day runs saved outside the repository to confirm a refactor leaves the UI unchanged.
 Never run these scripts on team data.
 

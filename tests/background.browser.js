@@ -1,5 +1,5 @@
 // Disposable seeded workspace, automatic refresh enabled (30s), webhook secret
-// fixture-webhook-secret-0000000000000000, mock GitLab (gitlab_fixture.py --evolving):
+// fixture-webhook-secret-0000000000000000, mock GitLab (gitlab-fixture.mjs --evolving):
 // project 42 / MR7: first fetch current head success, subsequent fetch newer MR
 // with an old-head pipeline. MR8 always returns a valid observation.
 // biome-ignore lint/correctness/noUnusedVariables: Playwright run-code invokes this function.
