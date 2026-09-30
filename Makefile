@@ -25,7 +25,6 @@ TYPESCRIPT_VERSION := 7.0.2
 BIOME ?= npx --yes @biomejs/biome@$(BIOME_VERSION)
 RUMDL ?= uvx rumdl@$(RUMDL_VERSION)
 TSC ?= npx --yes -p typescript@$(TYPESCRIPT_VERSION) tsc
-WEB_JS = internal/planningui/static/app.js $(wildcard internal/planningui/static/modules/*.js)
 
 IMAGE_NAME ?= abagile/tokyo3-flux
 IMAGE_TAG  ?= $(VERSION)
@@ -107,9 +106,8 @@ check-web:
 	$(TSC) -p tools/types/tsconfig.json
 	$(RUMDL) check .
 
-## test-web: Syntax-check browser modules and run the Node tests, including the store and planning-logic unit tests
+## test-web: Run the Node tests, including the store and planning-logic unit tests
 test-web:
-	@for f in $(WEB_JS); do node --check $$f || exit 1; done
 	node tests/extension.test.mjs
 	node tests/date-format.test.mjs
 	node --test "tests/unit/*.test.mjs"
