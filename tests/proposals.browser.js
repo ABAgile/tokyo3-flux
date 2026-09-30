@@ -22,8 +22,8 @@ async function run(page) {
     workspace_id: b.workspace.id,
     revision: b.workspace.revision,
     title: 'Agent acceptance criteria',
-    rationale: 'Inspect the native dependency evidence. ' + 'x'.repeat(200),
-    provenance: 'Unverified Pi fixture ' + 'y'.repeat(150),
+    rationale: `Inspect the native dependency evidence. ${'x'.repeat(200)}`,
+    provenance: `Unverified Pi fixture ${'y'.repeat(150)}`,
     evidence: [{ kind: 'item', id: item.id, revision: item.revision }],
     operations: [
       {
@@ -54,7 +54,7 @@ async function run(page) {
   };
   const review = async (title) => {
     await openList();
-    await page.getByRole('button', { name: 'Review ' + title, exact: true }).click();
+    await page.getByRole('button', { name: `Review ${title}`, exact: true }).click();
     await page.getByRole('heading', { name: 'Review planning proposal', exact: true }).waitFor();
     // The dialog opens at once and reads its preview; the document title marks it loaded.
     await page.locator('dialog#editor .proposal-text').first().waitFor();
@@ -69,7 +69,7 @@ async function run(page) {
   await review(doc.title);
   check(
     (await page
-      .getByText('Before: "' + originalTitle + '"\nAfter: "Human-approved native change"', {
+      .getByText(`Before: "${originalTitle}"\nAfter: "Human-approved native change"`, {
         exact: true,
       })
       .count()) === 1,
@@ -120,9 +120,9 @@ async function run(page) {
   await importDoc(stale);
   await page.evaluate(async () => {
     const session = await (await fetch('/api/v2/session')).json();
-    const root = '/api/v2/workspaces/' + document.querySelector('#workspace').value;
-    const b = await (await fetch(root + '/board')).json();
-    const r = await fetch(root + '/changes', {
+    const root = `/api/v2/workspaces/${document.querySelector('#workspace').value}`;
+    const b = await (await fetch(`${root}/board`)).json();
+    const r = await fetch(`${root}/changes`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -203,7 +203,7 @@ async function run(page) {
     'import created duplicate identity',
   );
   const security = await page.evaluate(async () => {
-    const root = '/api/v2/workspaces/' + document.querySelector('#workspace').value;
+    const root = `/api/v2/workspaces/${document.querySelector('#workspace').value}`;
     const headers = {
       Authorization: 'Bearer fixture-native-machine-token-0000000000',
       'Content-Type': 'application/json',
@@ -212,7 +212,7 @@ async function run(page) {
     for (const kind of ['proposal.import', 'proposal.accept', 'proposal.reject']) {
       statuses.push(
         (
-          await fetch(root + '/changes', {
+          await fetch(`${root}/changes`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ kind }),
@@ -222,7 +222,7 @@ async function run(page) {
     }
     return {
       statuses,
-      read: (await fetch(root + '/read/board?limit=1', { headers })).status,
+      read: (await fetch(`${root}/read/board?limit=1`, { headers })).status,
       legacy: (await fetch('/api/today', { headers })).status,
     };
   });

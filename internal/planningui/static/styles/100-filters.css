@@ -16,9 +16,6 @@ section > .filter-bar,
 .filter-slot > .filter-bar {
   margin: 0;
 }
-.filter-slot > .filter-chips {
-  margin: 0;
-}
 .filter-bar > .actions {
   flex: 0 1 auto;
   min-width: 0;
@@ -76,6 +73,9 @@ section > .filter-bar,
   gap: var(--s2);
   margin-bottom: var(--s4);
   min-width: 0;
+}
+.filter-slot > .filter-chips {
+  margin: 0;
 }
 .filter-chip {
   display: inline-flex;

@@ -1,6 +1,6 @@
 language js
 
-// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Planning UI guardrail, run by Biome in `make check-web`.
 // Board helpers resolve data from the lookups they are given and never
 // import the store.
 // GritQL regexes must not use capture groups: a group binds a variable.

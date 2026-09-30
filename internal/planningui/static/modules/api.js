@@ -95,7 +95,7 @@ function apiUpload(path, { headers = {}, body, onProgress, signal } = {}) {
     request.open('POST', path);
     request.responseType = 'text';
     request.setRequestHeader('Accept', 'application/json');
-    Object.entries(headers).forEach(([name, value]) => request.setRequestHeader(name, value));
+    for (const [name, value] of Object.entries(headers)) request.setRequestHeader(name, value);
     if (onProgress)
       request.upload.addEventListener('progress', (event) => {
         onProgress(event.lengthComputable ? Math.min(1, event.loaded / event.total) : undefined);

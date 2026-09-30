@@ -22,7 +22,7 @@ function postChange(command, key = requestKey(), minimal = false) {
     'Idempotency-Key': key,
   };
   if (minimal) headers.Prefer = 'return=minimal';
-  return api(state.root + '/changes', { method: 'POST', headers, body: JSON.stringify(command) });
+  return api(`${state.root}/changes`, { method: 'POST', headers, body: JSON.stringify(command) });
 }
 /**
  * @param {Flux.ChangeReceipt | null | undefined} receipt

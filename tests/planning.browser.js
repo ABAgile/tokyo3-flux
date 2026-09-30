@@ -2226,7 +2226,7 @@ ${'unbrokencode'.repeat(12)}
   // for a minimal receipt, so the server is not asked for a board it discards.
   const preferences = [];
   await page.route('**/changes', (route) => {
-    preferences.push(route.request().headers()['prefer'] || '');
+    preferences.push(route.request().headers().prefer || '');
     return route.continue();
   });
   await page.unroute('**/changes');

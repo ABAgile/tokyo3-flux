@@ -29,9 +29,6 @@
   gap: var(--s1);
   min-width: 0;
 }
-.multi-select-heading .multi-select-edit {
-  margin-left: 0;
-}
 .multi-select-label {
   color: var(--muted);
   font-weight: 600;
@@ -121,6 +118,9 @@
   background: transparent;
   color: var(--accent);
   text-decoration: underline;
+}
+.multi-select-heading .multi-select-edit {
+  margin-left: 0;
 }
 .multi-select-edit:hover {
   background: transparent;

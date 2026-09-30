@@ -94,7 +94,7 @@ export function memberUserEntries(users, selected = []) {
  */
 export async function loadGitLabUsers(currentRoot, search = '', signal) {
   const params = new URLSearchParams({ search });
-  const data = await api(currentRoot + '/gitlab/users?' + params, { signal });
+  const data = await api(`${currentRoot}/gitlab/users?${params}`, { signal });
   if (!validGitLabUserCatalog(data))
     throw new Error('GitLab user results are invalid. Refresh to retry.');
   return data;
@@ -119,7 +119,7 @@ function validGitLabProjectCatalog(data) {
  * @returns {Promise<Flux.GitLabProject[]>}
  */
 export async function loadGitLabProjects(currentRoot, signal) {
-  const data = await api(currentRoot + '/gitlab/projects', { signal });
+  const data = await api(`${currentRoot}/gitlab/projects`, { signal });
   if (!validGitLabProjectCatalog(data))
     throw new Error('GitLab project catalog is invalid. Refresh to retry.');
   return data;

@@ -58,7 +58,7 @@ function resolveGitLabMRURL(value, currentBoard, projects) {
   )
     throw new Error('Use a URL from the configured GitLab instance.');
   const basePath = instance.pathname.replace(/\/+$/, '');
-  const prefix = basePath ? basePath + '/' : '/';
+  const prefix = basePath ? `${basePath}/` : '/';
   if (!target.pathname.startsWith(prefix))
     throw new Error('That URL is outside the configured GitLab instance.');
   const tail = projectPath.slice(prefix.length);

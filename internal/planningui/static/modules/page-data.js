@@ -107,8 +107,7 @@ function validSprintHistoryPage(page) {
     page.total >= 0 &&
     page.records.every(
       (record) =>
-        record &&
-        record.sprint &&
+        record?.sprint &&
         typeof record.sprint.id === 'string' &&
         record.closure &&
         typeof record.closure.closed_at === 'string' &&

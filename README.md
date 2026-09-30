@@ -475,8 +475,8 @@ make build
 docker compose config -q
 ```
 
-`make check` ends with `make check-web test-web`: pinned Biome and rumdl checks, the strict type check of `app.js` and every module, and the Node tests.
-Run `make fmt-web lint-web typecheck-web` after JS/CSS edits and `make fmt-md` after Markdown edits; [AGENTS.md](AGENTS.md) lists the frontend conventions.
+`make check` ends with `make check-web`: pinned Biome and rumdl checks (any lint warning fails), the strict type check of `app.js` and every module, and the Node tests.
+Run `make fmt-web` after JS, CSS or Markdown edits and `make check-web` before handing off; [AGENTS.md](AGENTS.md) lists the frontend conventions.
 
 ### Preact + HTM experiment
 

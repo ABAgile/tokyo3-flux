@@ -1,6 +1,6 @@
 language js
 
-// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Planning UI guardrail, run by Biome in `make check-web`.
 // A store view under another name would escape the write rule.
 // GritQL regexes must not use capture groups: a group binds a variable.
 

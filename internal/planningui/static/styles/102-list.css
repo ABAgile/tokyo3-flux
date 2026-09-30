@@ -11,10 +11,6 @@
 .list-detail-layout.has-detail {
   grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
 }
-.list-detail-layout.has-detail .list-table-head,
-.list-detail-layout.has-detail .list-row {
-  grid-template-columns: minmax(0, 2.6fr) minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 1.8fr);
-}
 .list-detail-layout.has-detail .list-table-heading:nth-child(n + 5),
 .list-detail-layout.has-detail .list-cell:nth-child(n + 5) {
   display: none;
@@ -130,6 +126,10 @@
   background: var(--panel);
   overflow-wrap: anywhere;
 }
+.list-detail-layout.has-detail .list-table-head,
+.list-detail-layout.has-detail .list-row {
+  grid-template-columns: minmax(0, 2.6fr) minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 1.8fr);
+}
 .list-row:hover {
   border-color: var(--accent);
 }
@@ -214,9 +214,6 @@
   background: transparent;
   color: var(--accent);
 }
-.list-row-links .list-row-observation-link {
-  margin-left: 0;
-}
 .list-row-observation-link {
   justify-self: start;
   padding: 0;
@@ -225,6 +222,9 @@
   color: var(--accent);
   font-size: 12px;
   text-decoration: underline;
+}
+.list-row-links .list-row-observation-link {
+  margin-left: 0;
 }
 .list-row-observation-link:hover {
   background: transparent;

@@ -1,6 +1,6 @@
 language js
 
-// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Planning UI guardrail, run by Biome in `make check-web`.
 // The store views are imported under their own names, for the same reason.
 // GritQL regexes must not use capture groups: a group binds a variable.
 

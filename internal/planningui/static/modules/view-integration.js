@@ -62,7 +62,7 @@ async function submitIntegration(event, readOnly, loading) {
 }
 /** @param {Flux.State} current */
 function selectIntegrationForm(current) {
-  return current.integrationSubmitting + '\u0000' + current.integrationFormError;
+  return `${current.integrationSubmitting}\u0000${current.integrationFormError}`;
 }
 // The form's selections and consent live in the store, so a failed save
 // reopens it intact. The catalog is owned by the Projects page request.

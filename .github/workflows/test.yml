@@ -71,4 +71,4 @@ jobs:
           make vendor-web
           git diff --exit-code -- internal/planningui/static/modules/vendor-preact.js
 
-      - run: make check-web test-web BIOME=biome RUMDL=rumdl
+      - run: make check-web BIOME=biome RUMDL=rumdl

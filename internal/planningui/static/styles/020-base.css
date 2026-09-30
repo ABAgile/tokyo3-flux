@@ -1,6 +1,7 @@
 * {
   box-sizing: border-box;
 }
+/* A hidden element stays hidden whatever display its component sets. */
 [hidden] {
   display: none !important;
 }

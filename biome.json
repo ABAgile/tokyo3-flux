@@ -44,23 +44,32 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUndeclaredVariables": "error",
         "noUnusedVariables": "error"
       },
       "style": {
-        "useTemplate": "warn",
-        "noDescendingSpecificity": "warn"
+        "useTemplate": "error",
+        "noDescendingSpecificity": "error"
       },
       "suspicious": {
-        "useIterableCallbackReturn": "warn",
+        "useIterableCallbackReturn": "error",
         "noImportCycles": "error"
       },
       "complexity": {
-        "noImportantStyles": "warn",
-        "useOptionalChain": "warn"
+        "noImportantStyles": "error",
+        "useOptionalChain": "error"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "internal/planningui/static/styles/020-base.css",
+        "internal/planningui/static/styles/130-motion.css"
+      ],
+      "linter": { "rules": { "complexity": { "noImportantStyles": "off" } } }
+    }
+  ]
 }

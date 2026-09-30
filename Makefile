@@ -30,7 +30,7 @@ IMAGE_NAME ?= abagile/tokyo3-flux
 IMAGE_TAG  ?= $(VERSION)
 
 .PHONY: all build build-linux build-linux-amd64 build-darwin \
-        test tidy vet lint check fmt-web lint-web typecheck-web fmt-md check-web test-web \
+        test tidy vet lint check fmt-web check-web biome-ci tsc-check md-check test-web \
         docker-build docker-build-amd64 docker-push \
         docker-up docker-down install clean help
 
@@ -84,26 +84,24 @@ lint:
 vendor-web:
 	cd tools/vendor && npm ci --ignore-scripts && npm run build
 
-## fmt-web: Format frontend JS/CSS, tests and the Pi extension with Biome
+## fmt-web: Format frontend JS/CSS with Biome and reflow Markdown to one sentence per line
 fmt-web:
 	$(BIOME) format --write .
-
-## lint-web: Lint frontend JS/CSS, tests and the Pi extension, including the tools/lint rendering guardrails
-lint-web:
-	$(BIOME) lint .
-
-## typecheck-web: Type-check the frontend modules against their JSDoc and tools/types/flux.d.ts
-typecheck-web:
-	$(TSC) -p tools/types/tsconfig.json
-
-## fmt-md: Reflow Markdown docs to one sentence per line
-fmt-md:
 	$(RUMDL) check --fix .
 
-## check-web: Verify frontend and Markdown formatting and lint without changes
-check-web:
-	$(BIOME) ci --diagnostic-level=error .
+## check-web: Verify formatting, lint (warnings fail), types and Markdown without changes, then run the Node tests
+check-web: biome-ci tsc-check md-check test-web
+
+# Biome format and lint of JS, CSS, tests and the Pi extension, including the
+# tools/lint rendering guardrails; any warning fails.
+biome-ci:
+	$(BIOME) ci --error-on-warnings .
+
+# Strict type check of the frontend modules against their JSDoc and tools/types/flux.d.ts.
+tsc-check:
 	$(TSC) -p tools/types/tsconfig.json
+
+md-check:
 	$(RUMDL) check .
 
 ## test-web: Run the Node tests, including the store and planning-logic unit tests
@@ -112,7 +110,7 @@ test-web:
 	node tests/date-format.test.mjs
 	node --test "tests/unit/*.test.mjs"
 
-## check: Full Go verification sequence, then the frontend checks
+## check: Full Go verification sequence, then the frontend checks and tests
 check:
 	gofmt -s -w .
 	$(GO) mod tidy
@@ -122,7 +120,7 @@ check:
 	find . -type f -name "*.go" -print0 | xargs -0 -n 100 gopls check -severity=hint
 	govulncheck ./...
 	@out=$$(deadcode -test ./...); if [ -n "$$out" ]; then echo "$$out"; echo "deadcode: unreachable functions found (above)"; exit 1; fi
-	$(MAKE) check-web test-web
+	$(MAKE) check-web
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 

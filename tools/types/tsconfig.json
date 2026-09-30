@@ -1,6 +1,6 @@
 {
   // The planning UI has no build step: this configuration only type-checks the
-  // served ES modules (`make typecheck-web`, part of `make check-web`). Shared
+  // served ES modules (`make check-web`). Shared
   // types live in flux.d.ts; vendor-preact.d.ts sits beside the bundle it types.
   "compilerOptions": {
     "target": "es2023",

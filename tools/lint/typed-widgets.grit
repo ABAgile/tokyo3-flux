@@ -1,6 +1,6 @@
 language js
 
-// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Planning UI guardrail, run by Biome in `make check-web`.
 // HTM templates are not type-checked, so shared widgets are rendered with
 // h(Widget, props), which the checker verifies against their declared props.
 

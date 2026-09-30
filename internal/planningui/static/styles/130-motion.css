@@ -1,3 +1,4 @@
+/* The user's preference must beat every author animation, so these win. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -1,6 +1,6 @@
 language js
 
-// Planning UI guardrail, run by Biome in `make lint-web` and `make check-web`.
+// Planning UI guardrail, run by Biome in `make check-web`.
 // Document queries live only in the effect helpers in ui-hooks.js.
 // GritQL regexes must not use capture groups: a group binds a variable.
 
