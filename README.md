@@ -475,8 +475,10 @@ make build
 docker compose config -q
 ```
 
-`make check` ends with `make check-web`: pinned Biome and rumdl checks (any lint warning fails), the strict type check of `app.js` and every module, and the Node tests.
+`make check` is the single Go verification target: formatting, module tidy, tests, vet, staticcheck, gopls, vulnerability scanning and dead-code detection.
+It replaces the standalone `test`, `tidy`, `vet` and `lint` targets and ends with `make check-web`: pinned Biome and rumdl checks (any lint warning fails), the strict type check of `app.js` and every module, and the Node tests.
 Run `make fmt-web` after JS, CSS or Markdown edits and `make check-web` before handing off; [AGENTS.md](AGENTS.md) lists the frontend conventions.
+Keep them separate: `fmt-web` modifies files, while `check-web` verifies them without changes and runs all Node tests.
 
 ### Preact + HTM experiment
 

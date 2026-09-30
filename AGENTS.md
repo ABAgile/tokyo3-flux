@@ -181,7 +181,7 @@ Each file holds one feature, including its media queries; a feature's responsive
 - After editing JS, CSS or Markdown, run `make fmt-web`.
 - Before handing off, run `make check-web`: Biome lint (any warning fails), the strict type check, the Markdown check and the Node tests.
 - Any Go change (for example `web.go`) needs `make check` with `FLUX_TEST_DATABASE_URL` set to a disposable database.
-- `tests/unit/*.test.mjs` run in Node with `node:test` as part of `make test-web`: store semantics, filter rules, optimistic placement and undo, board merging, URL restore, lookups and workspace cancellation.
+- `tests/unit/*.test.mjs` run in Node with `node:test` as part of `make check-web`: store semantics, filter rules, optimistic placement and undo, board merging, URL restore, lookups and workspace cancellation.
   Test pure logic there first; `tests/unit/dom.mjs` is just enough DOM for Preact to render hooks.
   Keep such logic in functions that take the state they read, so it runs without a browser.
 - Browser scripts in `tests/*.browser.js` run through Playwright `run-code` against disposable, seeded workspaces only.

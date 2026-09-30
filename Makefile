@@ -30,7 +30,7 @@ IMAGE_NAME ?= abagile/tokyo3-flux
 IMAGE_TAG  ?= $(VERSION)
 
 .PHONY: all build build-linux build-linux-amd64 build-darwin \
-        test tidy vet lint check fmt-web check-web biome-ci tsc-check md-check test-web \
+        check fmt-web check-web \
         docker-build docker-build-amd64 docker-push \
         docker-up docker-down install clean help
 
@@ -63,22 +63,6 @@ build-darwin: $(BIN_DIR)
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 
-## test: Run all tests
-test:
-	$(GO) test ./... -count=1
-
-## tidy: Run go mod tidy
-tidy:
-	$(GO) mod tidy
-
-## vet: Run go vet
-vet:
-	$(GO) vet ./...
-
-## lint: Run staticcheck
-lint:
-	staticcheck ./...
-
 .PHONY: vendor-web
 ## vendor-web: Rebuild the checked-in Preact/HTM runtime (versions in tools/vendor/package-lock.json)
 vendor-web:
@@ -90,22 +74,10 @@ fmt-web:
 	$(RUMDL) check --fix .
 
 ## check-web: Verify formatting, lint (warnings fail), types and Markdown without changes, then run the Node tests
-check-web: biome-ci tsc-check md-check test-web
-
-# Biome format and lint of JS, CSS, tests and the Pi extension, including the
-# tools/lint rendering guardrails; any warning fails.
-biome-ci:
+check-web:
 	$(BIOME) ci --error-on-warnings .
-
-# Strict type check of the frontend modules against their JSDoc and tools/types/flux.d.ts.
-tsc-check:
 	$(TSC) -p tools/types/tsconfig.json
-
-md-check:
 	$(RUMDL) check .
-
-## test-web: Run the Node tests, including the store and planning-logic unit tests
-test-web:
 	node tests/extension.test.mjs
 	node tests/date-format.test.mjs
 	node --test "tests/unit/*.test.mjs"
