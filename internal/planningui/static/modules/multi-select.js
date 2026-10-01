@@ -154,6 +154,9 @@ function pickerReducer(current, action) {
   }
 }
 // A labelled chip picker whose checkboxes submit with the enclosing form.
+// A checkbox commits on `input`, not `change`: a form-level `input` listener may
+// re-render between the two events, and the controlled `checked` would then
+// reset the box before `change` reports it.
 //
 // Uncontrolled pickers take `defaultValue` and report committed selections
 // through `onChange(values)`; controlled pickers take `value` and report the
@@ -343,7 +346,7 @@ export function MultiSelect({
                 checked=${selected.includes(entry)}
                 disabled=${!!disabled}
                 aria-label=${text}
-                onChange=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => toggleValue(entry, event.currentTarget.checked)}
+                onInput=${(/** @type {Flux.TargetEvent<HTMLInputElement>} */ event) => toggleValue(entry, event.currentTarget.checked)}
               /><span>${text}</span></label
             >`,
           )}
