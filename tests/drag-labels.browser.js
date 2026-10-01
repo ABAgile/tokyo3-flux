@@ -225,6 +225,63 @@ async function run(page) {
     (await board()).items.find((i) => i.id === second.id).labels.length === 0,
     'cannot clear labels',
   );
+  // While a card is dragged, holding near the edge of the board scrolls it
+  // sideways, even through the board's scroll snapping, and releasing stops it.
+  await page.setViewportSize({ width: 390, height: 900 });
+  const edgeScroll = await page.evaluate(async () => {
+    const { setState } = await import('/modules/state.js');
+    const board = document.querySelector('.board');
+    board.scrollLeft = 0;
+    board.scrollIntoView({ block: 'start' });
+    const box = board.getBoundingClientRect();
+    const hold = async (x, rounds) => {
+      for (let i = 0; i < rounds; i++) {
+        document.dispatchEvent(
+          new DragEvent('dragover', {
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: box.top + 60,
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    };
+    setState({ dragging: true });
+    await hold(box.right - 6, 8);
+    const afterRight = board.scrollLeft;
+    await hold(box.left + box.width / 2, 4);
+    const inMiddle = board.scrollLeft;
+    await hold(box.left + 6, 8);
+    const afterLeft = board.scrollLeft;
+    setState({ dragging: false });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const afterEnd = board.scrollLeft;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return {
+      room: board.scrollWidth - board.clientWidth,
+      afterRight,
+      inMiddle,
+      afterLeft,
+      stopped: board.scrollLeft === afterEnd,
+      snap: board.style.scrollSnapType,
+    };
+  });
+  check(edgeScroll.room > 100, 'the board does not scroll sideways at phone width');
+  check(edgeScroll.afterRight > 100, 'dragging to the right edge did not scroll the board');
+  check(
+    edgeScroll.inMiddle === edgeScroll.afterRight,
+    'the board scrolled with the pointer in its middle',
+  );
+  check(
+    edgeScroll.afterLeft < edgeScroll.afterRight,
+    'dragging to the left edge did not scroll back',
+  );
+  check(
+    edgeScroll.stopped && edgeScroll.snap === '',
+    'edge scrolling continued or kept snapping off after the drag',
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
   // Check viewer affordances independently of the backend authorization tests.
   await page.route('**/board', async (route) => {
     const response = await route.fetch();

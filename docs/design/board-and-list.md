@@ -23,6 +23,8 @@
   Drops use the same revision-checked commands.
   Card placement and archive state are rearranged locally as soon as the drop is accepted so the gesture feels immediate; the pending save is still announced, and a rejected or conflicting write restores the exact previous placement and shows the error.
   Nothing outside card placement, ordering, and archive state is applied before its write is acknowledged.
+  Dragging toward the edge of a scroller scrolls it: the scroller under the pointer — a column's card list, the board's sideways row or the page — moves while the pointer is in a band along its edge, a fifth of its size between 48px and 120px, faster the closer to the edge, up to about 900px per second.
+  Scroll snapping on the board is suspended while it is driven this way and returns when the drag ends.
   Accent outlines mark drop targets, with top/bottom borders marking insertion.
   Filtering never changes project or sprint membership.
   Archived cards and viewers cannot drag.

@@ -134,7 +134,7 @@ No module imports `app.js`; `app.js` sets the saved theme, renders `App` once an
 
 | Layer | Modules |
 |---|---|
-| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `error-boundary`, `dom`, `api`, `workspace-session`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
+| Base | `vendor-preact`, `vdom`, `store`, `ui-hooks`, `autoscroll`, `error-boundary`, `dom`, `api`, `workspace-session`, `format`, `markdown`, `layout`, `item-command`, `multi-select` |
 | State | `state`: the store with every shared UI value, as data; `pointer-state`: the event-rate drop mark and attachment tooltip in their own store |
 | Services | `permissions`, `notices`, `focus-request`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
 | Actions | `actions`: navigation, presentation, detail, editor, workspace and startup actions; `dialog`: `Modal`, `FormDialog`, `CommandDialog` and the dialog host; `drag` |

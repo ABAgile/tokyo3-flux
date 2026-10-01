@@ -3,7 +3,7 @@
 import { Fragment, useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
 import { html, shallowEqual } from './vdom.js';
 
-import { useStore } from './state.js';
+import { state, useStore } from './state.js';
 import { workspaceLabel } from './format.js';
 import { StatusBars, reportUnexpectedError } from './notices.js';
 import { canWrite } from './permissions.js';
@@ -17,6 +17,7 @@ import { EditorDialog } from './dialog.js';
 import { AttachmentTooltip } from './tooltip.js';
 import { isFileTransfer } from './item-attachments.js';
 import { useEventListener } from './ui-hooks.js';
+import { useEdgeAutoScroll } from './autoscroll.js';
 import { ErrorBoundary } from './error-boundary.js';
 import {
   applyHistoryNavigation,
@@ -432,6 +433,8 @@ function Shell({ dialogs }) {
   };
   useEventListener(document, 'dragover', guardFileDrop);
   useEventListener(document, 'drop', guardFileDrop);
+  // Cards and columns dragged to the edge of a scroller scroll it.
+  useEdgeAutoScroll(() => state.dragging);
   return html`<${Fragment}>
     <a class="skip" href="#main">Skip to planning</a>
     <${Sidebar} />
