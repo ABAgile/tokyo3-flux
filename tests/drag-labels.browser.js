@@ -96,6 +96,89 @@ async function run(page) {
     (await board()).items.find((i) => i.id === first.id).column_id === doing.id,
     'cross-list drop failed',
   );
+  // The card menu moves a card without dragging: Move to opens a cascade of
+  // columns and then Top or Bottom of the chosen one, the card's own column is
+  // listed but unavailable, and the keyboard reaches it all and gives focus back
+  // to the button.
+  const menuButton = card(first.id).getByRole('button', { name: /^Actions for/ });
+  const inColumn = async (id, columnID) => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if ((await board()).items.find((i) => i.id === id).column_id === columnID) return true;
+      await page.waitForTimeout(100);
+    }
+    return false;
+  };
+  await menuButton.click();
+  await page.getByRole('menuitem', { name: 'Move to' }).click();
+  const cascade = page.getByRole('menu', { name: 'Move to', exact: true });
+  const leading = cascade.getByRole('menuitem').first();
+  check(
+    (await leading.innerText()).startsWith(doing.name) &&
+      (await leading.getAttribute('aria-disabled')) === 'true' &&
+      (await leading.evaluate((e) => e.nextElementSibling?.getAttribute('role'))) === 'separator',
+    "the card's own column does not lead the Move to list as an unavailable heading above a divider",
+  );
+  // Resting the pointer on a column opens its Top and Bottom without a click,
+  // and leaves keyboard focus where it was; Bottom is the column's end.
+  await page.getByRole('menuitem', { name: ready.name, exact: true }).hover();
+  await page.getByRole('menuitem', { name: 'Top', exact: true }).waitFor();
+  check(
+    await page.evaluate(() => !document.activeElement.closest('[aria-label^="Position in"]')),
+    'opening Top and Bottom by hover moved keyboard focus into them',
+  );
+  await page.getByRole('menuitem', { name: 'Bottom', exact: true }).click();
+  check(await inColumn(first.id, ready.id), 'Move to did not move the card');
+  check(
+    (await column(ready.id).locator('.card').last().getAttribute('data-item')) === first.id,
+    'Bottom did not put the card last in the column',
+  );
+  check((await page.locator('.card-menu').count()) === 0, 'the menu stayed open after a move');
+  await menuButton.click();
+  await page.getByRole('menuitem', { name: 'Move to' }).click();
+  await page.getByRole('menuitem', { name: doing.name, exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Top', exact: true }).click();
+  check(await inColumn(first.id, doing.id), 'Move to did not move the card back');
+  check(
+    (await column(doing.id).locator('.card').first().getAttribute('data-item')) === first.id,
+    'Top did not put the card first in the column',
+  );
+  await menuButton.focus();
+  await page.keyboard.press('Enter');
+  check(
+    await page
+      .getByRole('menuitem', { name: 'Copy link', exact: true })
+      .evaluate((e) => e === document.activeElement),
+    'opening the card menu by keyboard did not focus its first item',
+  );
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowRight');
+  check(
+    await page
+      .getByRole('menuitem', { name: ready.name, exact: true })
+      .evaluate((e) => e === document.activeElement),
+    'ArrowRight did not open the cascade on the first available column',
+  );
+  await page.keyboard.press('ArrowRight');
+  check(
+    await page
+      .getByRole('menuitem', { name: 'Top', exact: true })
+      .evaluate((e) => e === document.activeElement),
+    'ArrowRight on a column did not open its Top and Bottom on Top',
+  );
+  await page.keyboard.press('ArrowLeft');
+  check(
+    await page
+      .getByRole('menuitem', { name: ready.name, exact: true })
+      .evaluate((e) => e === document.activeElement),
+    'ArrowLeft in Top and Bottom did not return to its column',
+  );
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Escape');
+  check(
+    (await page.locator('.card-menu').count()) === 0 &&
+      (await menuButton.evaluate((e) => e === document.activeElement)),
+    'Escape did not close the card menu and return focus to its button',
+  );
   // Set a real WIP policy and verify that rejected drops never move local cards.
   await page.getByRole('button', { name: 'Board setup', exact: true }).click();
   await page

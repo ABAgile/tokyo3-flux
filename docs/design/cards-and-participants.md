@@ -7,7 +7,7 @@
   Cards and List rows show only the due date.
   A date earlier than the viewer's local today gets a visible `⚠ Overdue · date` danger badge and a static danger border while the card is live and outside a Done-category column; the browser recalculates this at local midnight.
   On cards the overdue badge sits centered beneath the title; other card due dates remain in the tag row.
-  In List rows it sits below the title and is centered within its grid cell.
+  In List rows it sits below the title, centered under it, in the same title block, so the select checkbox beside them stays vertically centered in the row like any other row's.
   In both the modal and List detail editors, the overdue badge sits in the header between the title and close button; a non-overdue due date remains in the status summary.
   There is no due-soon state or date filter.
   Start and end dates appear in the editor only.

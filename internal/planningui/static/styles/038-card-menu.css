@@ -1,0 +1,81 @@
+/* The card actions menu: a "⋯" trigger at the end of the card's title row and a
+   fixed-position popup, so the column's scrolling list never clips it. */
+.card-menu-wrap {
+  display: contents;
+}
+.card-menu-trigger {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 28px;
+  height: 24px;
+  margin: 0 calc(-1 * var(--s1)) 0 0;
+  /* Lifts the dots to the middle of a title's first line. */
+  padding: 0 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.card-menu-trigger:hover,
+.card-menu-trigger[aria-expanded="true"] {
+  background: var(--inset);
+  color: var(--ink);
+}
+.card-menu {
+  position: fixed;
+  z-index: 12;
+  display: grid;
+  min-width: 168px;
+  padding: var(--s1);
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 var(--s2) var(--s4) var(--line);
+}
+.card-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s4);
+  min-height: 32px;
+  padding: var(--s1) var(--s3);
+  border: 0;
+  background: transparent;
+  font-size: 14px;
+  text-align: left;
+  white-space: nowrap;
+}
+.card-menu-item:hover,
+.card-menu-item[aria-expanded="true"] {
+  background: var(--inset);
+}
+.card-menu-item[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+.card-menu-item[aria-disabled="true"]:hover {
+  background: transparent;
+}
+/* The cascade's first entry names the card's own column, like a heading. */
+.card-menu-item.is-current {
+  font-weight: 600;
+}
+.card-menu-separator {
+  height: 1px;
+  margin: var(--s1) 0;
+  background: var(--line);
+}
+.card-menu-arrow,
+.card-menu-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+/* In a List row the button ends the title line, as it does on a card, top-aligned
+   with the title and as tall as one line of it so a single-line title and the
+   button share a centre. */
+.list-row-title-line .card-menu-trigger {
+  height: 21px;
+  padding: 0;
+}

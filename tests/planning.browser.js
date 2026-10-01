@@ -72,7 +72,7 @@ async function run(page) {
   );
   const listHeaders = await page.locator('.list-table-head .list-table-heading').allTextContents();
   check(
-    listHeaders.join('|') === 'Title|Project|People|Labels|Sprints|Links / Status',
+    listHeaders.join('|') === 'Title|Project|Participants|Sprints|Labels|Links / Status',
     'list table columns are missing',
   );
   check(
@@ -99,7 +99,38 @@ async function run(page) {
     'list section summary is missing filtered/WIP counts',
   );
   const firstListRow = page.locator('.list-row').first();
+  // A List title highlights on hover exactly as a card's title does: the inset
+  // surface behind it, with its text colour unchanged.
+  const listTitle = firstListRow.locator('.list-row-title');
+  const listTitleColour = await listTitle.evaluate((e) => getComputedStyle(e).color);
+  await listTitle.hover();
+  check(
+    await listTitle.evaluate((e, colour) => {
+      const style = getComputedStyle(e);
+      return style.color === colour && style.backgroundColor !== 'rgba(0, 0, 0, 0)';
+    }, listTitleColour),
+    'the List title does not highlight on hover like a card title',
+  );
   await firstListRow.focus();
+  // The card menu's button ends the title row, as on a card, clear of the title,
+  // and the select checkbox stays vertically centred in the row.
+  check(
+    await firstListRow.evaluate((row) => {
+      const menu = row.querySelector('.card-menu-trigger').getBoundingClientRect();
+      const box = row.querySelector('.list-row-select').getBoundingClientRect();
+      const title = row.querySelector('.list-row-title').getBoundingClientRect();
+      const line = row.querySelector('.list-row-title-line').getBoundingClientRect();
+      const whole = row.getBoundingClientRect();
+      return (
+        menu.left >= title.right - 1 &&
+        menu.left >= box.right &&
+        Math.abs(menu.right - line.right) <= 6 &&
+        Math.abs(menu.top - title.top) < 2 &&
+        Math.abs(box.top + box.height / 2 - (whole.top + whole.height / 2)) < 2
+      );
+    }),
+    'the List row menu button does not end the title row, or the checkbox is off-centre',
+  );
   await page.keyboard.press('Enter');
   await page.locator('.item-detail-pane').waitFor();
   const detailTitle = page.locator('.item-detail-pane').getByLabel('Title', { exact: true });
@@ -136,7 +167,7 @@ async function run(page) {
         .map((cell) => cell.dataset.label),
     );
   check(
-    visibleListFields.join('|') === 'Title|Project|People|Labels',
+    visibleListFields.join('|') === 'Title|Project|Participants|Labels',
     'detail pane did not compact the list columns',
   );
   await page.keyboard.press('Escape');
@@ -1040,14 +1071,32 @@ async function run(page) {
     await page
       .locator('.card .card-top .card-title')
       .filter({ hasText: title })
+      .evaluate((button) => {
+        // The title takes the row up to the card menu's button, which ends it.
+        const row = button.parentElement.getBoundingClientRect();
+        const menu = button.parentElement
+          .querySelector('.card-menu-trigger')
+          .getBoundingClientRect();
+        const gap = Number.parseFloat(getComputedStyle(button.parentElement).columnGap);
+        return (
+          Math.abs(button.getBoundingClientRect().right + gap - menu.left) < 1.5 &&
+          menu.right >= row.right - 1
+        );
+      }),
+    'card title does not fill card-top up to the card menu button',
+  );
+  check(
+    await page
+      .locator('.card .card-top .card-title')
+      .filter({ hasText: title })
       .evaluate(
         (button) =>
           Math.abs(
-            button.getBoundingClientRect().width -
-              button.parentElement.getBoundingClientRect().width,
+            button.getBoundingClientRect().top -
+              button.parentElement.querySelector('.card-menu-trigger').getBoundingClientRect().top,
           ) < 1,
       ),
-    'card title does not fill card-top',
+    'card title and menu button do not start on the same line',
   );
   const clickableCard = page
     .locator('.card')
@@ -1774,17 +1823,31 @@ async function run(page) {
       (await listTitleBadge.textContent()).startsWith('⚠ Overdue · ') &&
       (await listTitleBadge.evaluate((badge) => {
         const box = badge.getBoundingClientRect(),
-          cell = badge.closest('.list-row-title-details').getBoundingClientRect(),
+          block = badge.closest('.list-row-heading').getBoundingClientRect(),
           title = badge
-            .closest('.list-row-title-details')
+            .closest('.list-row-heading')
             .querySelector('.list-row-title')
             .getBoundingClientRect();
         return (
           box.top >= title.bottom &&
-          Math.abs(box.left + box.width / 2 - (cell.left + cell.width / 2)) < 1
+          Math.abs(box.left + box.width / 2 - (block.left + block.width / 2)) < 1
         );
       })),
-    'overdue List badge is not below its title and centered in the title grid cell',
+    'overdue List badge is not below its title and centered under it in the title block',
+  );
+  // The badge belongs to the title block, so the checkbox beside it is centred in
+  // the row as in any other row, and the menu button stays off the checkbox.
+  check(
+    await overdueRow.evaluate((row) => {
+      const box = row.querySelector('.list-row-select').getBoundingClientRect();
+      const menu = row.querySelector('.card-menu-trigger').getBoundingClientRect();
+      const whole = row.getBoundingClientRect();
+      return (
+        Math.abs(box.top + box.height / 2 - (whole.top + whole.height / 2)) < 2 &&
+        menu.left >= box.right
+      );
+    }),
+    'an overdue List row moves its checkbox off the row centre or crowds the menu button',
   );
   await page.setViewportSize({ width: 390, height: 1000 });
   check(
@@ -1794,17 +1857,17 @@ async function run(page) {
   check(
     await listTitleBadge.evaluate((badge) => {
       const box = badge.getBoundingClientRect(),
-        cell = badge.closest('.list-row-title-details').getBoundingClientRect(),
+        block = badge.closest('.list-row-heading').getBoundingClientRect(),
         title = badge
-          .closest('.list-row-title-details')
+          .closest('.list-row-heading')
           .querySelector('.list-row-title')
           .getBoundingClientRect();
       return (
         box.top >= title.bottom &&
-        Math.abs(box.left + box.width / 2 - (cell.left + cell.width / 2)) < 1
+        Math.abs(box.left + box.width / 2 - (block.left + block.width / 2)) < 1
       );
     }),
-    'mobile overdue List badge is not centered below the title in its grid cell',
+    'mobile overdue List badge is not centered below the title in the title block',
   );
   check(
     await page

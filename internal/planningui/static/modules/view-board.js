@@ -38,6 +38,7 @@ import { closeEditor, openDialog } from './dialog-state.js';
 import { CommandDialog, FormDialog } from './dialog.js';
 import { mergeEventProps, useDraggable, useDropZone } from './drag.js';
 import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
+import { CardMenu } from './card-menu.js';
 import { editItem } from './actions.js';
 import { useDismiss, useFocusRestore } from './ui-hooks.js';
 
@@ -360,6 +361,7 @@ function CardView({ item, context, isBlocked, attachmentsOpen, onAttachmentsTogg
         data-focus-key=${`item:${item.id}:title`}
         onClick=${() => editItem(item)}
       >${item.title}</button>
+      <${CardMenu} item=${item} canMove=${canWrite && !item.archived} disabled=${writeDisabled} />
       ${overdue ? dueDateBadgeTemplate(lookups, item, now, ' card-title-due') : null}
     </div>
     <div class="card-meta">

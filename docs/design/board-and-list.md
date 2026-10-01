@@ -9,7 +9,7 @@
   Compact column summaries show the count as x/n WIP or No limit, even when a project lens is active.
   Selecting a named project shows current non-archived In scope, Done, Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics.
   The project lens uses the same full-width panel flow as sprint summaries, with a standard section gap between them.
-  Desktop List rows use an Asana-like table grid with separate Title, Project, People, Labels, Sprints, and Links / Status columns plus a shared header; the People cell carries the same participant stack as a card followed by the assignee's name in text, so the column stays scannable as a table; descriptions are not shown and the title cell is title-only.
+  Desktop List rows use an Asana-like table grid with separate Title, Project, Participants, Sprints, Labels, and Links / Status columns plus a shared header, in the order a card shows them; the Participants cell carries the same participant stack as a card followed by the assignee's name in text, so the column stays scannable as a table; descriptions are not shown and the title cell is title-only.
   Links / Status owns blocked/archived state, a Board-aligned `GitLab links · count` header with View observations beside the label and left-aligned when wrapped, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width border.
   Observation status popovers are positioned against the viewport so list containers do not clip the last row.
   The Project cell shows all associated projects.
@@ -26,6 +26,16 @@
   Dragging toward the edge of a scroller scrolls it: the scroller under the pointer — a column's card list, the board's sideways row or the page — moves while the pointer is in a band along its edge, a fifth of its size between 48px and 120px, faster the closer to the edge, up to about 900px per second.
   Scroll snapping on the board is suspended while it is driven this way and returns when the drag ends.
   Accent outlines mark drop targets, with top/bottom borders marking insertion.
+  Each Board card also has a `⋯` actions button at the end of its title row, starting on the same line as the title and always visible, that opens a menu with Copy link and Move to.
+  Each List row has the same button at the end of its title row, top-aligned with the title as on a card, so it never crowds the select checkbox at the start of the row; the menu lines up with the button's right edge.
+  Move to cascades into a list of the board's columns that leads with the card's own column, bold and unavailable as the list's heading, then a divider and the other columns in board order; a column at its WIP limit is listed as unavailable.
+  A column opens a last level, Top and Bottom, when the pointer rests on it for a moment or on a click, Enter or Right; opened by the pointer it leaves keyboard focus where it was.
+  Crossing other columns on the way to Top and Bottom does not switch the list, and unavailable entries open nothing.
+  Bottom moves the card to the end of the column exactly as dropping it on the column does, and Top puts it before the first card shown there, as dropping it on the upper half of that card would; cards hidden by the filters are not counted, as for a drop.
+  Both use the same immediate placement, Undo and WIP check as a drop, so the menu is also the way to move a card without dragging.
+  Copy link is offered on every card, including archived ones and to viewers; Move to only where dragging is allowed.
+  The menu opens with the keyboard (Enter, Space or Down on the button), moves with the arrow keys, opens each level with Right and leaves it with Left, and closes with Escape, returning focus to the button.
+  The menu is positioned against the viewport, below the button or above when there is no room, with the cascade beside its item or on the other side, so a column's scrolling list never clips it; it closes when the page scrolls or resizes.
   Filtering never changes project or sprint membership.
   Archived cards and viewers cannot drag.
 - List presentation supports bulk selection.

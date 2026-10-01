@@ -222,7 +222,8 @@ async function run(page) {
     const rejection = page.waitForResponse(
       (response) => response.url().endsWith('/changes') && response.status() === 409,
     );
-    await source.dragTo(card(b), { sourcePosition });
+    // The top half of the card means "before it", which always issues a move.
+    await source.dragTo(card(b), { sourcePosition, targetPosition: { x: 24, y: 8 } });
     await rejection;
     await page
       .getByRole('alert')

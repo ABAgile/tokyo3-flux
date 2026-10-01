@@ -191,16 +191,20 @@
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
+} /* The title and the card menu's button start on the same line. */
+.card-top {
+  align-items: flex-start;
 }
 .card-top-overdue {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--s1);
 }
 .card-top-overdue .card-title {
   width: 100%;
 }
 .card-title-due {
+  grid-column: 1 / -1;
   justify-self: center;
 }
 /* Mobile browsers' dynamic viewport excludes the collapsing address bar. */

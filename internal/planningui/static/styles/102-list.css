@@ -11,8 +11,11 @@
 .list-detail-layout.has-detail {
   grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
 }
-.list-detail-layout.has-detail .list-table-heading:nth-child(n + 5),
-.list-detail-layout.has-detail .list-cell:nth-child(n + 5) {
+/* With the detail pane open the Sprints (4th) and Links / Status (6th) columns go. */
+.list-detail-layout.has-detail .list-table-heading:nth-child(4),
+.list-detail-layout.has-detail .list-table-heading:nth-child(6),
+.list-detail-layout.has-detail .list-cell:nth-child(4),
+.list-detail-layout.has-detail .list-cell:nth-child(6) {
   display: none;
 }
 .planning-list {
@@ -22,9 +25,9 @@
 }
 .list-table-head,
 .list-row {
-  grid-template-columns: minmax(0, 2.3fr) minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1.35fr) minmax(
+  grid-template-columns: minmax(0, 2.3fr) minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1.2fr) minmax(
       0,
-      1.2fr
+      1.35fr
     ) minmax(190px, 1.5fr);
 }
 .list-table-head {
@@ -210,10 +213,6 @@
   color: var(--ink);
   font-weight: 600;
 }
-.list-row-title:hover {
-  background: transparent;
-  color: var(--accent);
-}
 .list-row-observation-link {
   justify-self: start;
   padding: 0;
@@ -328,9 +327,19 @@
 .list-row-title-line > .list-row-select {
   flex: 0 0 auto;
 }
-.list-row-title-line .list-row-title {
+/* The title and, when overdue, its badge are one block, so the checkbox beside
+   it stays centred in the row whatever the block holds. */
+.list-row-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
+  gap: var(--s1);
+  min-width: 0;
 }
-.list-row-title-details > .badge-due {
+/* In a narrow title column the badge wraps within the block instead of widening it. */
+.list-row-heading > .badge-due {
   justify-self: center;
+  max-width: 100%;
+  text-align: center;
+  white-space: normal;
 }

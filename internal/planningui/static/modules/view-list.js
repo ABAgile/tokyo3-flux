@@ -25,10 +25,11 @@ import { useFocusRestore } from './ui-hooks.js';
 import { ErrorBoundary } from './error-boundary.js';
 import { useFocusRequest } from './focus-request.js';
 import { cardDropZones, columnDropZones, useBlockedIDs, useRowContext } from './view-board.js';
+import { CardMenu } from './card-menu.js';
 
 // Rows and the complete detail form are rendered from shared state. The keyed
 // detail component keeps one uncontrolled form lifetime per opened item.
-const LIST_HEADINGS = ['Title', 'Project', 'People', 'Labels', 'Sprints', 'Links / Status'];
+const LIST_HEADINGS = ['Title', 'Project', 'Participants', 'Sprints', 'Labels', 'Links / Status'];
 /**
  * @param {string} label
  * @param {string} className
@@ -97,14 +98,17 @@ function titleCellTemplate(item, overdue, bulkSelected, context) {
               />`
             : null
         }
-        <button
-          type="button"
-          class="list-row-title"
-          data-focus-key=${`item:${item.id}:list-title`}
-          onClick=${() => selectItem(item.id, rowFocusKey(item))}
-        >${item.title}</button>
+        <div class="list-row-heading">
+          <button
+            type="button"
+            class="list-row-title"
+            data-focus-key=${`item:${item.id}:list-title`}
+            onClick=${() => selectItem(item.id, rowFocusKey(item))}
+          >${item.title}</button>
+          ${overdue ? dueDateBadgeTemplate(context.lookups, item, context.now, ' list-title-due') : null}
+        </div>
+        <${CardMenu} item=${item} canMove=${context.canWrite && !item.archived} disabled=${context.writeDisabled} />
       </div>
-      ${overdue ? dueDateBadgeTemplate(context.lookups, item, context.now, ' list-title-due') : null}
     </div>`,
   );
 }
@@ -220,17 +224,12 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
       html`<span class="list-row-project">${projectBadgesTemplate(lookups, item)}</span>`,
     )}
     ${listCellTemplate(
-      'People',
+      'Participants',
       'list-cell-people',
       html`<div class="list-row-people">
         ${participantStackTemplate(lookups, item)}
         <span class="list-row-assignee-name">${memberName(lookups, item.assignee)}</span>
       </div>`,
-    )}
-    ${listCellTemplate(
-      'Labels',
-      'list-cell-labels',
-      item.labels.length ? item.labels.map((name) => labelBadgeTemplate(lookups, name)) : emptyCell,
     )}
     ${listCellTemplate(
       'Sprints',
@@ -240,6 +239,11 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
             (id) => html`<span key=${id} class="badge badge-sprint">${sprintName(id)}</span>`,
           )
         : emptyCell,
+    )}
+    ${listCellTemplate(
+      'Labels',
+      'list-cell-labels',
+      item.labels.length ? item.labels.map((name) => labelBadgeTemplate(lookups, name)) : emptyCell,
     )}
     ${statusCellTemplate(lookups, item, due, isBlocked, links, total, now)}
   </article>`;

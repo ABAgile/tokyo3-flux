@@ -138,7 +138,7 @@ No module imports `app.js`; `app.js` sets the saved theme, renders `App` once an
 | State | `state`: the store with every shared UI value, as data; `pointer-state`: the event-rate drop mark and attachment tooltip in their own store |
 | Services | `permissions`, `notices`, `focus-request`, `lookups`, `items`, `people`, `tooltip`, `dialog-state`, `page-data`, `gate-components`, `gitlab-catalog`, `due-dates`, `filters`, `item-attachments`, `item-comments`, `url-state`, `view-burndown`, `view-velocity`, `sync`, `commands` |
 | Actions | `actions`: navigation, presentation, detail, editor, workspace and startup actions; `dialog`: `Modal`, `FormDialog`, `CommandDialog` and the dialog host; `drag` |
-| Item | `gitlab`, `item-links`, `item-editor`, `item-detail` |
+| Item | `gitlab`, `item-links`, `card-menu`, `item-editor`, `item-detail` |
 | Views | `planning-filters`, `view-board`, `view-archive`, `bulk`, `view-list`, `view-sprints`, `view-integration`, `view-projects`, `view-labels`, `view-members`, `view-proposals`, `view-history`, `view-gate`, `shortcuts` |
 | Shell | `app-shell`: the body-level `App`, its effects (shortcuts, polling, URL, due-date clock) and the `DIALOGS` map |
 
@@ -153,6 +153,7 @@ Each file holds one feature, including its media queries; a feature's responsive
 | `app-shell`, `app.js`, `actions`, `layout`, `error-boundary` | `010-tokens`, `020-base`, `030-shell` (sidebar, notices, section heads, page stack, empty state, skip link), `130-motion` |
 | `view-sprints` | `031-panels` (panels, sprint panel, metrics), `210-sprint-goal` |
 | `view-board`, `drag` | `032-board` (columns, cards, drag cursors, drop marks), `036-summaries` (project lens) |
+| `card-menu` | `038-card-menu` (card actions button and cascading menu) |
 | `view-gate` | `033-workspace-gate` (workspace choice and first run) |
 | `item-comments` | `034-comments` |
 | `markdown` | `035-markdown` |
