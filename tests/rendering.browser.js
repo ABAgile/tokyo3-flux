@@ -99,22 +99,10 @@ async function run(page) {
     throw new Error('Board update reset the detail editor draft');
   await detailTitle.fill('Renderer detail-save regression');
   await pane.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await page.waitForFunction(() =>
-    document
-      .querySelector('.item-detail-title')
-      ?.textContent.includes('Renderer detail-save regression'),
-  );
-  const help = pane.getByRole('button', { name: 'Help: Work item details', exact: true });
-  await help.click();
-  const revision = await page.evaluate(async () => {
-    const { state } = await import('/modules/state.js');
-    return state.detail.item.revision;
-  });
+  await page.waitForFunction(() => document.querySelector('.item-detail-pane')?.hidden);
   if (
-    !(await pane.locator('.item-detail-title .help-popover-content').textContent()).includes(
-      `Revision: ${revision}`,
-    )
+    !(await page.locator('.list-row-title', { hasText: 'Renderer detail-save regression' }).count())
   )
-    throw new Error('Saved detail header did not retain a fresh revision popover');
-  return `PASS: ${result}, saved detail header and revision popover.`;
+    throw new Error('Saving the detail pane did not close it with the saved title in its row');
+  return `PASS: ${result}, detail save closing the pane.`;
 }

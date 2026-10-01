@@ -4,6 +4,7 @@ import { html } from './vdom.js';
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -47,15 +48,21 @@ export function Modal({ id, labelledBy, open, onCancel, onBackdrop, onClosed, ch
     else if (!open && dialog.open) dialog.close();
   }, [open]);
   // A click on the dialog element itself lands on its backdrop or padding,
-  // never on its content.
+  // never on its content. It counts only when the press began there too, so
+  // dragging a text selection out of the content does not dismiss the dialog.
+  const pressedOnBackdrop = useRef(false);
+  const press = (/** @type {PointerEvent} */ event) => {
+    pressedOnBackdrop.current = event.target === ref.current;
+  };
   const click = (/** @type {MouseEvent} */ event) => {
-    if (event.target === ref.current) onBackdrop?.(event);
+    if (event.target === ref.current && pressedOnBackdrop.current) onBackdrop?.(event);
   };
   return html`<dialog
     id=${id}
     aria-labelledby=${labelledBy}
     ref=${ref}
     onCancel=${onCancel}
+    onPointerDown=${press}
     onClick=${click}
     onClose=${onClosed}
   >${children}</dialog>`;
@@ -85,6 +92,29 @@ function dialogFallback(label, retry) {
       <button type="button" onClick=${retry}>Retry</button>
     </div>
   </div>`;
+}
+// The open dialog's say over a close request: `reason` is 'backdrop' for a
+// click outside it and 'dismiss' for Cancel, the close button or Escape. The
+// guard returns true when it has taken over the close, for example to offer
+// saving unsaved input first, and false to let the dialog close.
+/** @typedef {'backdrop' | 'dismiss'} CloseReason */
+/** @type {((reason: CloseReason) => boolean) | undefined} */
+let closeGuard;
+/** @param {(reason: CloseReason) => boolean} guard */
+export function useCloseGuard(guard) {
+  const latest = useRef(guard);
+  latest.current = guard;
+  useEffect(() => {
+    const run = (/** @type {CloseReason} */ reason) => latest.current(reason);
+    closeGuard = run;
+    return () => {
+      if (closeGuard === run) closeGuard = undefined;
+    };
+  }, []);
+}
+/** @param {CloseReason} reason */
+function requestClose(reason) {
+  if (!state.busy && !closeGuard?.(reason)) closeEditor();
 }
 // Hosts the open dialog. `dialogs` maps a dialog type to its component; a
 // component's optional static `onClose(props)` runs when its dialog is closed
@@ -123,11 +153,9 @@ export function EditorDialog({ dialogs }) {
   }, [record]);
   const cancel = (/** @type {Event} */ event) => {
     event.preventDefault();
-    if (!state.busy) closeEditor();
+    requestClose('dismiss');
   };
-  const backdrop = () => {
-    if (!state.busy) closeEditor();
-  };
+  const backdrop = () => requestClose('backdrop');
   const closed = (/** @type {Flux.TargetEvent<HTMLDialogElement>} */ event) => {
     if (event.currentTarget.open || !state.editorDialog) return;
     setState({ editorDialog: undefined, editorError: '' });
@@ -198,9 +226,7 @@ export function FormDialog({
       setSaving(false);
     }
   }
-  const dismiss = () => {
-    if (!state.busy) closeEditor();
-  };
+  const dismiss = () => requestClose('dismiss');
   return html`<form
     id="editor-form"
     class=${className || null}

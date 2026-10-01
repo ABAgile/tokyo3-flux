@@ -13,7 +13,11 @@
   GitLab links have a paste-URL field below the picker; Enter or Get resolves and appends an approved MR link.
   Add link opens the quick-scope and search fallback.
   Static field guidance uses an opaque `?` popover with a line-colored shadow; the work-item header popover shows Card ID and Revision on separate lines.
-  Modal cards close when clicking outside them.
+  Modal cards and the List detail pane close when clicking outside them; a press that starts inside and ends outside, as when selecting text, does not count.
+  In the List, controls, rows and dialogs outside the pane keep their own click behavior, and clicking another row keeps its discard confirmation.
+  With unsaved input, including an unsent comment, the outside click asks whether to save before closing; agreeing saves and then closes, and declining keeps the editor open with the input intact.
+  In the modal, Cancel, the close button and Escape with unsaved input ask before discarding, as the List pane does; changes are measured against the form as it opened.
+  Save changes in the List detail pane saves and then closes it, like the modal; a failed save keeps it open with the input and the error.
   Closed-sprint membership is displayed read-only.
   Descriptions, comments and sprint goals use a GitLab-like Markdown editor with a compact single-row icon bar fused to the top of its input.
   Preview mode has only a text Edit control; edit mode starts with text Preview followed by flat, denser formatting icons with 28px hit areas.

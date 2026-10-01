@@ -283,6 +283,10 @@ async function run(page) {
         await editLabels.evaluate((e) => e === document.activeElement),
         'multi-select focus return',
       );
+      // The label toggled above is unsaved input, so Cancel asks before discarding.
+      await page.evaluate(() => {
+        window.confirm = () => true;
+      });
       await page.getByRole('button', { name: 'Cancel', exact: true }).click();
       check(
         await page

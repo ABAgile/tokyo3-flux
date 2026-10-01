@@ -158,6 +158,79 @@ async function run(page) {
       !(await firstListRow.evaluate((row) => row.classList.contains('is-selected'))),
     'closing the detail pane did not clear the Preact-owned row selection',
   );
+  // A dropdown option takes effect on the first click in a freshly opened pane,
+  // where the first change flips the pane's dirty flag mid-event; and an outside
+  // click offers to save unsaved input, otherwise just closes the pane.
+  await firstListRow.click();
+  await page.locator('.item-detail-pane').waitFor();
+  const paneLabels = page.locator(
+    '.item-detail-pane .multi-select-field:has(.multi-select[aria-label="Labels"])',
+  );
+  await paneLabels.getByRole('button', { name: 'Edit Labels', exact: true }).click();
+  const paneLabel = paneLabels.locator('.multi-select-option input').first();
+  const paneLabelWas = await paneLabel.isChecked();
+  await paneLabel.click();
+  check(
+    (await paneLabel.isChecked()) !== paneLabelWas,
+    'the first dropdown click in the detail pane had no effect',
+  );
+  // run-code fails on native dialogs, so the save offer is answered by a stub.
+  await page.evaluate(() => {
+    window.savePrompts = [];
+    window.confirm = (message) => {
+      window.savePrompts.push(message);
+      return false;
+    };
+  });
+  const outsidePane = () => page.locator('.list-table-head').click({ position: { x: 2, y: 2 } });
+  await outsidePane();
+  const savePrompts = await page.evaluate(() => window.savePrompts);
+  check(
+    savePrompts.length === 1 &&
+      savePrompts[0].startsWith('Save changes to') &&
+      (await page.locator('.item-detail-pane').isVisible()),
+    'an outside click with unsaved input did not offer to save and stay open on decline',
+  );
+  await paneLabels.getByRole('button', { name: 'Edit Labels', exact: true }).click();
+  await paneLabel.click();
+  await outsidePane();
+  await page.waitForFunction(() => document.querySelector('.item-detail-pane')?.hidden);
+  check(
+    (await page.evaluate(() => window.savePrompts.length)) === 1,
+    'an outside click on an unchanged pane asked to save',
+  );
+  // The modal editor protects typed input the same way: Escape and Cancel ask
+  // before discarding, and an untouched editor closes without asking.
+  await page.getByRole('button', { name: '＋ New item', exact: true }).click();
+  await page.locator('#editor[open]').waitFor();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('#editor[open]'));
+  await page.getByRole('button', { name: '＋ New item', exact: true }).click();
+  await page.locator('#editor[open]').waitFor();
+  // A click gives the page user activation, without which Chrome would close the
+  // dialog on Escape even though its cancel event is prevented.
+  const modalTitle = page.locator('#editor').getByLabel('Title', { exact: true });
+  await modalTitle.click();
+  await modalTitle.fill('Unsaved modal input');
+  await page.evaluate(() => {
+    window.savePrompts = [];
+  });
+  await page.keyboard.press('Escape');
+  const discardPrompts = await page.evaluate(() => window.savePrompts);
+  check(
+    discardPrompts.length === 1 &&
+      discardPrompts[0].startsWith('Discard unsaved changes') &&
+      (await page.locator('#editor[open]').count()) === 1,
+    'Escape with unsaved modal input did not ask before discarding and stay open on decline',
+  );
+  await page.evaluate(() => {
+    window.confirm = () => true;
+  });
+  await page.locator('#editor').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('#editor[open]'));
+  await page.evaluate(() => {
+    delete window.confirm;
+  });
   await boardToggle.click();
   await page.getByRole('heading', { name: 'Kanban board', exact: true }).waitFor();
   const initialScopeLabels = await page
@@ -1534,6 +1607,10 @@ async function run(page) {
     .selectOption({ label: 'In progress' });
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'WIP limit' }).waitFor();
+  // The rejected input is still unsaved, so Cancel asks before discarding.
+  await page.evaluate(() => {
+    window.confirm = () => true;
+  });
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   // A single card can belong to both sprints without duplication.
   await nav('Kanban board');
@@ -1776,6 +1853,10 @@ async function run(page) {
     (await page.getByLabel('Title', { exact: true }).inputValue()) === 'Retained stale draft',
     'draft lost',
   );
+  // The retained draft is still unsaved, so Cancel asks before discarding.
+  await page.evaluate(() => {
+    window.confirm = () => true;
+  });
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   const explicitCard = page.locator(`[data-item="${editedItemID}"]`);
   await explicitCard.waitFor();

@@ -241,6 +241,10 @@ async function run(page) {
       'Retained draft during background refresh',
     'background poll replaced draft',
   );
+  // The retained draft is unsaved input, so Cancel asks before discarding.
+  await page.evaluate(() => {
+    window.confirm = () => true;
+  });
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   for (const theme of ['light', 'dark']) {
     await page.evaluate((t) => (document.documentElement.dataset.theme = t), theme);

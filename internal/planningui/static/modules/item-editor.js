@@ -21,7 +21,7 @@ import { UNDO_TTL, offerUndo } from './notices.js';
 import { quick } from './commands.js';
 import { itemAttachmentsTemplate } from './item-attachments.js';
 import { closeEditor, openDialog } from './dialog-state.js';
-import { CommandDialog } from './dialog.js';
+import { CommandDialog, useCloseGuard } from './dialog.js';
 import { linkDisplayName, cardObservationIconTemplate, showLinks } from './gitlab.js';
 import { itemCommentsTemplate } from './item-comments.js';
 import { copyCardLink } from './url-state.js';
@@ -50,6 +50,38 @@ export function itemEditorDraft(form) {
     dependencies: all('dependencies'),
     link_ids: all('link_ids'),
   };
+}
+// A comparable snapshot of the form's editable fields.
+/** @param {HTMLFormElement | null} form */
+export function draftSignature(form) {
+  try {
+    return JSON.stringify(itemEditorDraft(/** @type {HTMLFormElement} */ (form)));
+  } catch {
+    return '';
+  }
+}
+// Whether the form differs from the snapshot taken when it opened, counting an
+// unsent comment as unsaved input.
+/**
+ * @param {HTMLFormElement} form
+ * @param {string} initial
+ */
+export function editorDirty(form, initial) {
+  const comment = String(new FormData(form).get('comment_body') || '').trim();
+  return draftSignature(form) !== initial || !!comment;
+}
+// Offers to save unsaved input before an outside click closes the editor.
+// Declining keeps the editor open, so nothing is discarded by accident.
+/**
+ * @param {HTMLFormElement} form
+ * @param {string} title
+ */
+export function confirmSaveBeforeClose(form, title) {
+  if (!form.checkValidity()) {
+    form.reportValidity();
+    return false;
+  }
+  return window.confirm(`Save changes to “${title || 'this item'}” before closing?`);
 }
 /** @type {['start_date' | 'end_date' | 'due_date', string][]} */
 const DATE_FIELDS = [
@@ -557,6 +589,23 @@ export function ItemEditorDialog({ item, draft, readOnly }) {
   const form = useRef(/** @type {HTMLFormElement | null} */ (null));
   const desiredLinkIDs = useRef(/** @type {FormDataEntryValue[]} */ ([]));
   const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
+  // Like the List pane, changes are measured against the form as it opened,
+  // including a draft carried over from the Add link dialog.
+  const initial = useRef('');
+  useLayoutEffect(() => {
+    initial.current = draftSignature(form.current);
+  }, []);
+  // Unsaved input is never lost silently: a click outside offers to save, and
+  // Cancel, the close button or Escape ask before discarding.
+  useCloseGuard((reason) => {
+    const node = form.current;
+    if (readOnly || !node || !editorDirty(node, initial.current)) return false;
+    const title = String(new FormData(node).get('title') || item.title);
+    if (reason === 'dismiss')
+      return !window.confirm(`Discard unsaved changes to “${title || 'this item'}”?`);
+    if (confirmSaveBeforeClose(node, title)) node.requestSubmit();
+    return true;
+  });
   return h(
     CommandDialog,
     {

@@ -10,20 +10,16 @@ import { reconcileItemLinks } from './item-links.js';
 import {
   ItemEditorFields,
   ItemFooterActions,
+  confirmSaveBeforeClose,
+  draftSignature,
+  editorDirty,
   itemEditorDraft,
   itemEditorTitleExtrasTemplate,
 } from './item-editor.js';
 import { EditorDueBadge } from './due-dates.js';
 import { closeDetail, setDetailDirty } from './actions.js';
+import { useEventListener } from './ui-hooks.js';
 
-/** @param {HTMLFormElement | null} form */
-function draftSignature(form) {
-  try {
-    return JSON.stringify(itemEditorDraft(/** @type {HTMLFormElement} */ (form)));
-  } catch {
-    return '';
-  }
-}
 /** @param {Flux.State} current */
 function selectBusy(current) {
   return current.busy;
@@ -36,6 +32,9 @@ function selectDetailError(current) {
 function selectRole(current) {
   return current.board?.role;
 }
+// Controls and rows own their clicks (list rows select their card, which asks
+// before discarding), and a dialog opened from the pane is not "outside".
+const OWN_CLICK = 'a,button,input,select,textarea,summary,label,dialog,.list-row';
 // One form lifetime per opened card: the pane is keyed by the detail's form
 // key, so native drafts and widget state survive unrelated renders. Its input
 // and change handlers report whether the draft differs from what was opened.
@@ -45,6 +44,7 @@ export function ItemDetailPane({ detail }) {
   const title = useRef(/** @type {HTMLInputElement | null} */ (null));
   const initial = useRef('');
   const pending = useRef({ serialized: '', key: '' });
+  const pressedOutside = useRef(false);
   const busy = useStore(selectBusy);
   const error = useStore(selectDetailError);
   const role = useStore(selectRole);
@@ -60,10 +60,22 @@ export function ItemDetailPane({ detail }) {
   const checkDirty = () => {
     const node = form.current;
     if (!node) return;
-    const comment = String(new FormData(node).get('comment_body') || '').trim();
-    setDetailDirty(detail.formKey, draftSignature(node) !== initial.current || !!comment);
+    setDetailDirty(detail.formKey, editorDirty(node, initial.current));
   };
   const getDraft = () => (form.current ? itemEditorDraft(form.current) : undefined);
+  // A press and click that both land outside the pane close it; unsaved input
+  // is saved first, after the user agrees.
+  useEventListener(document, 'pointerdown', (event) => {
+    pressedOutside.current = !form.current?.contains(/** @type {Node | null} */ (event.target));
+  });
+  useEventListener(document, 'click', (event) => {
+    const node = form.current;
+    const target = /** @type {Element | null} */ (event.target);
+    if (!node || !pressedOutside.current || state.busy || !target?.isConnected) return;
+    if (node.contains(target) || target.closest?.(OWN_CLICK)) return;
+    if (!detail.dirty) closeDetail();
+    else if (!readOnly && confirmSaveBeforeClose(node, item.title)) node.requestSubmit();
+  });
   async function onSubmit(/** @type {SubmitEvent} */ event) {
     event.preventDefault();
     const node = form.current;
@@ -89,23 +101,8 @@ export function ItemDetailPane({ detail }) {
       await reconcileItemLinks(item.id, desiredLinkIDs);
       const current = state.detail;
       if (current?.formKey !== detail.formKey || !state.board) return;
-      const latest = state.board.items.find((value) => value.id === item.id);
-      if (!latest) {
-        closeDetail({ force: true });
-        return;
-      }
-      initial.current = draftSignature(node);
-      setState({
-        detail: {
-          ...current,
-          item: latest,
-          itemRevision: latest.revision,
-          draft: undefined,
-          dirty: false,
-        },
-        detailError: '',
-      });
       notice('Changes saved.');
+      closeDetail({ force: true });
     } catch (submitError) {
       const current = state.detail;
       if (current?.formKey === detail.formKey)
