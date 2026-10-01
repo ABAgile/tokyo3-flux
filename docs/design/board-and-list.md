@@ -1,6 +1,8 @@
 # Board and List
 
-- Board columns use a responsive grid with a minimum 240px width; wrap columns rather than causing page-level horizontal scroll.
+- Board columns sit in one row of equal height, each at least 240px wide, and the row never grows taller than the viewport minus the 32px gutter used by the List detail pane.
+  A column keeps its head in place and scrolls its own cards, so every column's drop area stays on screen while a card is dragged from a long list to a short one; a short column is stretched to the row height so its empty space is a drop target too.
+  When the columns do not fit the width, the row scrolls sideways inside the board rather than wrapping or causing page-level horizontal scroll; at 640px and below each column takes most of the width and the row snaps from column to column.
 - The planning filter bar also offers a Board/List presentation toggle; Kanban is the default, while List groups the same filtered work by the ordered board columns without changing navigation or scope semantics.
 - WIP counts the whole workspace column, regardless of filtering.
   List sections remain visible when empty and can be expanded, collapsed, and used as drop targets.

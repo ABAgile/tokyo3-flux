@@ -451,17 +451,19 @@ function Column({ column, peers, total, context, blockedIDs, expanded, onAttachm
       <h3>${column.name}</h3>
       <small>${`${peers.length} shown · ${columnWIPLabel(column, total)}`}</small>
     </div>
-    ${peers.map((item) =>
-      h(Card, {
-        key: item.id,
-        item,
-        context,
-        isBlocked: blockedIDs.has(item.id),
-        attachmentsOpen: expanded.has(item.id),
-        onAttachmentsToggle,
-      }),
-    )}
-    ${peers.length ? null : emptyStateTemplate('No work here')}
+    <div class="column-cards">
+      ${peers.map((item) =>
+        h(Card, {
+          key: item.id,
+          item,
+          context,
+          isBlocked: blockedIDs.has(item.id),
+          attachmentsOpen: expanded.has(item.id),
+          onAttachmentsToggle,
+        }),
+      )}
+      ${peers.length ? null : emptyStateTemplate('No work here')}
+    </div>
   </section>`;
 }
 /** @param {{ items: readonly Flux.Item[] }} props */

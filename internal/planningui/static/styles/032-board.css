@@ -1,16 +1,33 @@
+/* One row of equal-height columns that fits the viewport: each column scrolls
+   its own cards, so a drag from a long list to a short one never needs the
+   page to scroll. The padding and negative margin leave room for the drop
+   outline, which the board's overflow would otherwise clip. */
 .board {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  display: flex;
+  align-items: stretch;
   gap: var(--s4);
-  align-items: start;
+  max-height: calc(100vh - var(--s8));
+  margin: calc(-1 * var(--s2));
+  padding: var(--s2);
+  overflow-x: auto;
 }
 .column {
+  display: flex;
+  flex: 1 0 240px;
+  flex-direction: column;
   min-width: 0;
+  min-height: 240px;
   background: var(--inset);
   border: 1px solid var(--line);
   border-radius: var(--r2);
   padding: var(--s3);
-  min-height: 240px;
+}
+.column-cards {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: calc(-1 * var(--s2)) calc(-1 * var(--s2)) 0;
+  padding: var(--s2) var(--s2) 0;
 }
 .column:hover {
   border-color: var(--accent);
@@ -185,4 +202,19 @@
 }
 .card-title-due {
   justify-self: center;
+}
+/* Mobile browsers' dynamic viewport excludes the collapsing address bar. */
+@supports (height: 100dvh) {
+  .board {
+    max-height: calc(100dvh - var(--s8));
+  }
+}
+@media (max-width: 640px) {
+  .board {
+    scroll-snap-type: x proximity;
+  }
+  .column {
+    flex-basis: 85%;
+    scroll-snap-align: start;
+  }
 }
