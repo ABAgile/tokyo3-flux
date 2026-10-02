@@ -176,7 +176,7 @@ function selectSidebar(current) {
     disabled: blocked(current),
   };
 }
-// Below 900px the sidebar is a top bar with a menu button at its left, and
+// Below 1100px the sidebar is a top bar with a menu button at its left, and
 // everything else folds into a dropdown that looks like the sidebar. The menu is
 // the bar's own state: it opens by the button and closes by it, by Escape, by a
 // click elsewhere, and whenever another view is shown.

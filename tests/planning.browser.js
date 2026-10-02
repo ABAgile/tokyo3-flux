@@ -1964,7 +1964,7 @@ async function run(page) {
       .isVisible(),
     'responsive List rows do not expose labeled stacked fields',
   );
-  // Below 900px the sidebar is a compact top bar: the brand and a menu button,
+  // Below 1100px the sidebar is a compact top bar: the brand and a menu button,
   // with workspace, navigation and account folded away until it is opened.
   const menuToggle = page.getByRole('button', { name: 'Menu', exact: true });
   const planningNav = page.getByRole('navigation', { name: 'Planning views' });
@@ -1978,7 +1978,7 @@ async function run(page) {
         const brand = document.querySelector('.brand').getBoundingClientRect();
         return toggle.left < 32 && toggle.right <= brand.left;
       })),
-    'below 900px the sidebar is not a compact bar with the menu button at its left, folded',
+    'below 1100px the sidebar is not a compact bar with the menu button at its left, folded',
   );
   // Measured within the document: clicking the button may scroll the page.
   const mainTop = () =>

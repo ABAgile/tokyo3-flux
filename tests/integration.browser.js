@@ -26,7 +26,7 @@ async function run(page) {
     await saved();
   };
   const nav = async (name) => {
-    // Below 900px the navigation folds behind the menu button.
+    // Below 1100px the navigation folds behind the menu button.
     const toggle = page.getByRole('button', { name: 'Menu', exact: true });
     if ((await toggle.isVisible()) && (await toggle.getAttribute('aria-expanded')) === 'false')
       await toggle.click();

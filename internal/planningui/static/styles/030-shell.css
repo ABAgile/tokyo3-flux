@@ -232,7 +232,7 @@ main {
 .skip:focus {
   transform: none;
 }
-@media (max-width: 899px) {
+@media (max-width: 1099px) {
   /* A compact top bar: the menu button at the left, then the brand. Workspace,
      navigation and account fold into a dropdown laid out like the sidebar, a
      fixed width at any screen size, that opens over the page. */
