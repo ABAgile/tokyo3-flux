@@ -10,6 +10,15 @@
   gap: var(--s6);
   overflow-y: auto;
 }
+/* On desktop the bar and the menu add no boxes of their own: the brand and the
+   menu's contents lay out as direct children of the sidebar, as before. */
+.sidebar-bar,
+.sidebar-menu {
+  display: contents;
+}
+.sidebar .sidebar-toggle {
+  display: none;
+}
 .brand {
   display: flex;
   align-items: center;
@@ -224,42 +233,49 @@ main {
   transform: none;
 }
 @media (max-width: 899px) {
+  /* A compact top bar: the menu button at the left, then the brand. Workspace,
+     navigation and account fold into a dropdown laid out like the sidebar, a
+     fixed width at any screen size, that opens over the page. */
   .sidebar {
-    position: static;
+    position: relative;
+    inset: auto;
     width: auto;
-    padding: var(--s4);
+    padding: var(--s2) var(--s4);
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    display: block;
+    overflow: visible;
+  }
+  .sidebar-bar {
+    display: flex;
+    align-items: center;
     gap: var(--s3);
+  }
+  .brand {
+    font-size: 22px;
+  }
+  .sidebar .sidebar-toggle {
     display: grid;
-    grid-template-columns: 1fr 1fr;
   }
-  .brand,
-  .workspace-field,
-  nav,
-  .sidebar-foot {
-    grid-column: 1 / -1;
-  }
-  .workspace-field {
-    min-width: 0;
-  }
-  nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--s1);
-  }
-  .sidebar-foot {
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-  }
-  .sidebar-foot p {
+  .sidebar-menu {
     display: none;
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + var(--s1));
+    left: var(--s2);
+    flex-direction: column;
+    gap: var(--s4);
+    width: min(280px, calc(100vw - var(--s4)));
+    max-height: calc(100vh - var(--s8) - var(--s8));
+    padding: var(--s4);
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--r2);
+    background: var(--panel);
+    box-shadow: 0 var(--s2) var(--s4) var(--line);
   }
-  .sidebar-session {
-    flex: 1 1 180px;
-    min-width: 180px;
+  .sidebar.is-open .sidebar-menu {
+    display: flex;
   }
   main {
     margin-left: 0;

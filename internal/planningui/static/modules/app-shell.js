@@ -1,6 +1,13 @@
 // The body-level App: sidebar, page frame, planning content, the editor dialog
 // host with its dialog map, and the App-lifetime effects.
-import { Fragment, useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
+import {
+  Fragment,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from './vendor-preact.js';
 import { html, shallowEqual } from './vdom.js';
 
 import { state, useStore } from './state.js';
@@ -16,7 +23,7 @@ import { usePlanningURL } from './url-state.js';
 import { EditorDialog } from './dialog.js';
 import { AttachmentTooltip } from './tooltip.js';
 import { isFileTransfer } from './item-attachments.js';
-import { useEventListener } from './ui-hooks.js';
+import { useDismiss, useEventListener } from './ui-hooks.js';
 import { useEdgeAutoScroll } from './autoscroll.js';
 import { ErrorBoundary } from './error-boundary.js';
 import {
@@ -169,6 +176,10 @@ function selectSidebar(current) {
     disabled: blocked(current),
   };
 }
+// Below 900px the sidebar is a top bar with a menu button at its left, and
+// everything else folds into a dropdown that looks like the sidebar. The menu is
+// the bar's own state: it opens by the button and closes by it, by Escape, by a
+// click elsewhere, and whenever another view is shown.
 function Sidebar() {
   const { board, root, session, workspaces, view, theme, workspaceGate, disabled } = useStore(
     selectSidebar,
@@ -176,6 +187,18 @@ function Sidebar() {
   );
   // A refused workspace change renders again so the select shows the current one.
   const [, rerender] = useReducer((value) => value + 1, 0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButton = useRef(/** @type {HTMLButtonElement | null} */ (null));
+  const bar = useRef(/** @type {HTMLElement | null} */ (null));
+  useEffect(() => setMenuOpen(false), [view]);
+  useDismiss(bar, menuOpen, () => setMenuOpen(false), { closeOnEscape: false });
+  const closeOnEscape = (/** @type {KeyboardEvent} */ event) => {
+    if (event.key !== 'Escape' || !menuOpen) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuOpen(false);
+    menuButton.current?.focus();
+  };
   const currentWorkspace =
     board?.workspace?.id ||
     workspaces.find(
@@ -184,28 +207,34 @@ function Sidebar() {
     '';
   const changeWorkspace = async (/** @type {Flux.TargetEvent<HTMLSelectElement>} */ event) => {
     if (!(await chooseWorkspace(event.currentTarget.value))) rerender();
+    else setMenuOpen(false);
   };
-  return html`<aside class="sidebar">
-    <a class="brand" href="/" aria-label="Flux home"><span class="mark">F</span> flux <small>PLANNING</small></a>
-    <div id="workspace-field" class="workspace-field" hidden=${!board && workspaceGate !== 'loading'}>
-      <div class="workspace-label-row">
-        <label for="workspace">Workspace</label>
-        <div class="workspace-actions">
-          <button id="new-workspace" class="icon-button" type="button" aria-label="Create workspace" title="Create workspace" disabled=${!session || disabled} onClick=${showWorkspaceCreate}><span aria-hidden="true">＋</span></button>
-          <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh workspace" disabled=${disabled} onClick=${refreshWorkspace}><span aria-hidden="true">↻</span></button>
-        </div>
-      </div>
-      <select id="workspace" aria-label="Workspace" value=${currentWorkspace} disabled=${!board || disabled} onChange=${changeWorkspace}>
-        ${workspaces.map((workspace) => html`<option key=${workspace.id} value=${workspace.id}>${workspaceLabel(workspace)}</option>`)}
-      </select>
+  return html`<aside class=${menuOpen ? 'sidebar is-open' : 'sidebar'} ref=${bar} onKeydown=${closeOnEscape}>
+    <div class="sidebar-bar">
+      <button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label="Menu" title=${menuOpen ? 'Hide menu' : 'Show menu'} aria-expanded=${String(menuOpen)} aria-controls="sidebar-menu" ref=${menuButton} onClick=${() => setMenuOpen((open) => !open)}><span aria-hidden="true">${menuOpen ? '✕' : '☰'}</span></button>
+      <a class="brand" href="/" aria-label="Flux home"><span class="mark">F</span> flux <small>PLANNING</small></a>
     </div>
-    <nav aria-label="Planning views" hidden=${!board}>
-      ${VIEWS.map(([id, icon, label]) => html`<button key=${id} data-view=${id} aria-current=${view === id ? 'page' : null} disabled=${disabled} onClick=${() => navigate(id)}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`)}
-    </nav>
-    <div class="sidebar-foot">
-      <div class="sidebar-session">
-        <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title=${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick=${toggleTheme}><span aria-hidden="true">${theme === 'dark' ? '☀' : '☾'}</span></button>
-        <div class="sidebar-account"><span id="identity">${session?.name || session?.subject || 'Loading session…'}</span><a href="/auth/logout">Sign out</a></div>
+    <div id="sidebar-menu" class="sidebar-menu">
+      <div id="workspace-field" class="workspace-field" hidden=${!board && workspaceGate !== 'loading'}>
+        <div class="workspace-label-row">
+          <label for="workspace">Workspace</label>
+          <div class="workspace-actions">
+            <button id="new-workspace" class="icon-button" type="button" aria-label="Create workspace" title="Create workspace" disabled=${!session || disabled} onClick=${showWorkspaceCreate}><span aria-hidden="true">＋</span></button>
+            <button id="refresh" class="icon-button" type="button" aria-label="Refresh" title="Refresh workspace" disabled=${disabled} onClick=${refreshWorkspace}><span aria-hidden="true">↻</span></button>
+          </div>
+        </div>
+        <select id="workspace" aria-label="Workspace" value=${currentWorkspace} disabled=${!board || disabled} onChange=${changeWorkspace}>
+          ${workspaces.map((workspace) => html`<option key=${workspace.id} value=${workspace.id}>${workspaceLabel(workspace)}</option>`)}
+        </select>
+      </div>
+      <nav aria-label="Planning views" hidden=${!board}>
+        ${VIEWS.map(([id, icon, label]) => html`<button key=${id} data-view=${id} aria-current=${view === id ? 'page' : null} disabled=${disabled} onClick=${() => navigate(id)}><span class="nav-icon" aria-hidden="true">${icon}</span><span>${label}</span></button>`)}
+      </nav>
+      <div class="sidebar-foot">
+        <div class="sidebar-session">
+          <button id="theme" class="icon-button theme-toggle" type="button" aria-label="Switch theme" title=${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'} onClick=${toggleTheme}><span aria-hidden="true">${theme === 'dark' ? '☀' : '☾'}</span></button>
+          <div class="sidebar-account"><span id="identity">${session?.name || session?.subject || 'Loading session…'}</span><a href="/auth/logout">Sign out</a></div>
+        </div>
       </div>
     </div>
   </aside>`;

@@ -1878,6 +1878,56 @@ async function run(page) {
       .isVisible(),
     'responsive List rows do not expose labeled stacked fields',
   );
+  // Below 900px the sidebar is a compact top bar: the brand and a menu button,
+  // with workspace, navigation and account folded away until it is opened.
+  const menuToggle = page.getByRole('button', { name: 'Menu', exact: true });
+  const planningNav = page.getByRole('navigation', { name: 'Planning views' });
+  check(
+    (await menuToggle.isVisible()) &&
+      (await menuToggle.getAttribute('aria-expanded')) === 'false' &&
+      !(await planningNav.isVisible()) &&
+      (await page.locator('.sidebar').evaluate((bar) => bar.getBoundingClientRect().height)) < 80 &&
+      (await page.evaluate(() => {
+        const toggle = document.getElementById('sidebar-toggle').getBoundingClientRect();
+        const brand = document.querySelector('.brand').getBoundingClientRect();
+        return toggle.left < 32 && toggle.right <= brand.left;
+      })),
+    'below 900px the sidebar is not a compact bar with the menu button at its left, folded',
+  );
+  // Measured within the document: clicking the button may scroll the page.
+  const mainTop = () =>
+    page.locator('main').evaluate((main) => main.getBoundingClientRect().top + scrollY);
+  const mainTopBefore = await mainTop();
+  await menuToggle.click();
+  // The open menu is the sidebar's layout in a fixed-width panel over the page.
+  check(
+    (await planningNav.isVisible()) &&
+      (await menuToggle.getAttribute('aria-expanded')) === 'true' &&
+      (await page.locator('#sidebar-menu').evaluate((menu) => {
+        const box = menu.getBoundingClientRect();
+        return (
+          getComputedStyle(menu).position === 'absolute' &&
+          box.width <= 320 &&
+          box.right <= innerWidth &&
+          menu.querySelector('nav').getBoundingClientRect().height > 150
+        );
+      })) &&
+      Math.abs((await mainTop()) - mainTopBefore) < 1,
+    'the open menu is not a fixed-width dropdown over the page laid out like the sidebar',
+  );
+  // main's own padding, at its top-right: outside the menu, with no control in it.
+  const mainSize = await page
+    .locator('main')
+    .evaluate((main) => main.getBoundingClientRect().width);
+  await page.locator('main').click({ position: { x: mainSize - 6, y: 6 } });
+  check(!(await planningNav.isVisible()), 'a click outside did not close the menu');
+  await menuToggle.click();
+  await page.keyboard.press('Escape');
+  check(
+    !(await planningNav.isVisible()) &&
+      (await menuToggle.evaluate((button) => button === document.activeElement)),
+    'Escape did not fold the menu and return focus to its button',
+  );
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('all');

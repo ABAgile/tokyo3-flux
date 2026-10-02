@@ -8,7 +8,9 @@
   The stack is a single column with one 16px gap, so every page spaces its sections alike.
   Pages are assembled from shared components rather than per-page markup: `section-head` (title with right-aligned actions), `help` guidance text, the `empty` state, the bordered `panel` surface shared by sprint, project-lens, delivery-trend, burn-down, workspace-gate, first-run and maintenance panels, the `metrics` row of value/caption pairs, the filter slot/bar/chips, and the maintenance list/row used by Projects, Members and Labels.
   Board/List, GitLab integration, delivery trend and History stay page-specific compositions built from those same parts.
-- Sidebar 208px on desktop, top navigation below 900px.
+- Sidebar 208px on desktop, a top bar below 900px.
+  The bar holds the menu button at its left and then the brand; the workspace control, navigation and account fold into a dropdown that is laid out like the sidebar and is the same fixed width at any screen size.
+  It starts closed and opens over the page without moving it; it closes on Escape, returning focus to its button, on a click elsewhere, and whenever another view is shown or a workspace is chosen.
   Main padding 32px on desktop, 16px below 900px.
   Navigation icons use a fixed 24px column so menu labels align.
   The workspace control has icon-only Create and Refresh actions beside its label.
