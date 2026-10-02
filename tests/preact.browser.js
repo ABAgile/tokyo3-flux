@@ -821,18 +821,33 @@ async function run(page) {
     const add = document.addEventListener;
     const remove = document.removeEventListener;
     document.addEventListener = function (type, listener, options) {
-      if (type === 'click') listeners.add(listener);
+      if (type === 'click' || type === 'pointerdown') listeners.add(listener);
       return add.call(this, type, listener, options);
     };
     document.removeEventListener = function (type, listener, options) {
-      if (type === 'click') listeners.delete(listener);
+      if (type === 'click' || type === 'pointerdown') listeners.delete(listener);
       return remove.call(this, type, listener, options);
     };
+    const realMatchMedia = window.matchMedia;
     try {
+      // A hint ignores a click where the pointer can hover; on a touch screen a tap
+      // pins it until a tap elsewhere, which is when it listens outside itself.
       renderIsland(host, helpPopoverTemplate('Context', 'Card'));
       host.querySelector('button').click();
       await flush();
-      check(listeners.size === 1, 'popover registers its outside listener');
+      check(
+        listeners.size === 0 && host.querySelector('.help-popover-content').hidden,
+        'a click on a hint is ignored where the pointer can hover',
+      );
+      window.matchMedia = (query) =>
+        query.includes('hover: hover') ? { matches: false } : realMatchMedia.call(window, query);
+      host.querySelector('button').click();
+      await flush();
+      check(
+        listeners.size === 1 && !host.querySelector('.help-popover-content').hidden,
+        'a tap pins a hint and registers its outside listener',
+      );
+      window.matchMedia = realMatchMedia;
       renderIsland(host, null);
       check(listeners.size === 0, 'popover releases its outside listener on removal');
       let changedValues;
@@ -877,6 +892,7 @@ async function run(page) {
       renderIsland(host, null);
       check(listeners.size === 0, 'picker releases its outside listener on removal');
     } finally {
+      window.matchMedia = realMatchMedia;
       document.addEventListener = add;
       document.removeEventListener = remove;
     }

@@ -1,7 +1,7 @@
 // Multi-select fields, the label color picker and help popovers.
 import { html } from './vdom.js';
-import { useId, useLayoutEffect, useReducer, useRef, useState } from './vendor-preact.js';
-import { useCommittedChange, useDismiss } from './ui-hooks.js';
+import { useId, useLayoutEffect, useReducer, useRef } from './vendor-preact.js';
+import { useCommittedChange, useDismiss, useHoverHint } from './ui-hooks.js';
 
 const LABEL_PALETTE = Object.freeze([
   '#ff6b6b',
@@ -69,45 +69,35 @@ const LABEL_PALETTE = Object.freeze([
   '#5a189a',
   '#3c096c',
 ]);
-// A help popover toggles its tooltip and closes on Escape or an outside click.
-/** @param {{ text: unknown, name: string }} props */
-function HelpPopover({ text, name }) {
+// A hint beside a label or a title: `?` for guidance, `i` for details. Both show
+// on hover or keyboard focus and ignore a click, as every hint does.
+/** @typedef {'help' | 'info'} HintKind */
+/** @param {{ text: unknown, name: string, kind: HintKind }} props */
+function HelpPopover({ text, name, kind }) {
   const contentID = `help-${useId()}`;
-  const [open, setOpen] = useState(false);
   const wrapper = useRef(/** @type {HTMLElement | null} */ (null));
-  const trigger = useRef(/** @type {HTMLButtonElement | null} */ (null));
-  useDismiss(wrapper, open, () => setOpen(false), { closeOnEscape: false, event: 'click' });
-  const close = () => {
-    setOpen(false);
-    trigger.current?.focus();
-  };
-  return html`<span class="help-popover" ref=${wrapper}
+  const hint = useHoverHint(wrapper);
+  return html`<span class="help-popover" ref=${wrapper} ...${hint.wrapperProps}
     ><button
       type="button"
-      class="help-trigger"
-      aria-label=${`Help: ${name}`}
-      aria-expanded=${String(open)}
+      class=${kind === 'info' ? 'help-trigger is-info' : 'help-trigger'}
+      aria-label=${kind === 'info' ? name : `Help: ${name}`}
+      aria-expanded=${String(hint.open)}
       aria-controls=${contentID}
       aria-describedby=${contentID}
-      ref=${trigger}
-      onClick=${() => setOpen((previous) => !previous)}
-      onKeydown=${(/** @type {KeyboardEvent} */ event) => {
-        if (event.key !== 'Escape') return;
-        event.preventDefault();
-        event.stopPropagation();
-        close();
-      }}
-    >?</button
-    ><span class="help-popover-content" id=${contentID} hidden=${!open} role="tooltip">${text}</span
+      ...${hint.triggerProps}
+    >${kind === 'info' ? 'i' : '?'}</button
+    ><span class="help-popover-content" id=${contentID} hidden=${!hint.open} role="tooltip">${text}</span
     ></span
   >`;
 }
 /**
  * @param {unknown} text
  * @param {string} [name]
+ * @param {HintKind} [kind]
  */
-export function helpPopoverTemplate(text, name = 'Help') {
-  return html`<${HelpPopover} text=${text} name=${name} />`;
+export function helpPopoverTemplate(text, name = 'Help', kind = 'help') {
+  return html`<${HelpPopover} text=${text} name=${name} kind=${kind} />`;
 }
 /**
  * @param {readonly (readonly Flux.SelectValue[])[]} entries

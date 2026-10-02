@@ -1485,10 +1485,22 @@ async function run(page) {
       .count()) === 0,
     'item revision still consumes control-pane space',
   );
-  const itemInfo = page.getByRole('button', { name: 'Help: Work item details', exact: true });
-  check((await itemInfo.count()) === 1, 'work-item details popover is missing');
-  await itemInfo.click();
+  // Work item details are an `i` hint, guidance a `?` hint, and both show on hover
+  // or keyboard focus and ignore a click.
+  const itemInfo = page.getByRole('button', { name: 'Work item details', exact: true });
+  check(
+    (await itemInfo.count()) === 1 && (await itemInfo.textContent()) === 'i',
+    'work-item details popover is missing or is not an i',
+  );
   const itemTooltip = page.getByRole('tooltip').filter({ hasText: 'Card ID' });
+  await itemInfo.click();
+  await page.mouse.move(2, 2);
+  await page.waitForTimeout(400);
+  check(
+    !(await itemTooltip.isVisible()),
+    'clicking the work-item details icon left its popover on screen',
+  );
+  await itemInfo.hover();
   await itemTooltip.waitFor();
   const itemTooltipText = await itemTooltip.textContent();
   check(
@@ -1531,7 +1543,9 @@ async function run(page) {
         layoutColumns.controls.bottom <= layoutColumns.comments.top),
     'stacked item editor does not place controls between description and comments',
   );
-  await page.getByRole('button', { name: 'Help: Open sprints', exact: true }).click();
+  const sprintHelp = page.getByRole('button', { name: 'Help: Open sprints', exact: true });
+  check((await sprintHelp.textContent()) === '?', 'field guidance is not a ? hint');
+  await sprintHelp.hover();
   const sprintTooltip = page.getByRole('tooltip').filter({ hasText: 'Select no open sprint' });
   await sprintTooltip.waitFor();
   check(

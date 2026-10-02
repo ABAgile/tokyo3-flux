@@ -146,6 +146,72 @@ export function useDismiss(
   }, [ref, open, closeOnEscape, event]);
 }
 
+const canHover = () => matchMedia('(hover: hover)').matches;
+// How long the pointer must rest on, or leave, a hint before it opens or closes,
+// so passing over it does not flash it and the pointer can cross the gap to the
+// hint's own text.
+const HINT_DELAY = 150;
+// The behaviour every hint shares, the `?` guidance and the `i` details alike:
+// it shows when the pointer rests on its button or on the hint, and when its
+// button has keyboard focus. A mouse click does nothing, so a hint never stays
+// behind after the pointer leaves. Only a device that cannot hover has no other
+// way to open one, so there a tap pins it until a tap elsewhere. Escape closes
+// it. `ref` is the element holding both the button and the hint.
+/** @param {{ current: Element | null }} ref */
+export function useHoverHint(ref) {
+  const [hovering, setHovering] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  // The hint was closed although something still holds it open, as by Escape
+  // while the pointer rests on it, or by the page scrolling under a hint that
+  // lingers for its close delay. It lasts only until nothing holds it open, so
+  // it can never block the next time the hint is asked for.
+  const [dismissed, setDismissed] = useState(false);
+  const hovered = useDebouncedValue(hovering, HINT_DELAY);
+  const held = pinned || focused || hovered;
+  useEffect(() => {
+    if (!held) setDismissed(false);
+  }, [held]);
+  const open = !dismissed && held;
+  const close = () => {
+    setPinned(false);
+    setDismissed(true);
+  };
+  useDismiss(ref, pinned, () => setPinned(false), { closeOnEscape: false });
+  return {
+    open,
+    close,
+    wrapperProps: {
+      // A touch screen emulates hover on a tap and keeps it, which would stop a
+      // second tap from closing the hint, so there only the tap decides.
+      onMouseEnter: () => {
+        // Coming back is a new request, even within the close delay.
+        setDismissed(false);
+        setHovering(canHover());
+      },
+      onMouseLeave: () => setHovering(false),
+      onKeydown: (/** @type {KeyboardEvent} */ event) => {
+        if (event.key !== 'Escape' || !open) return;
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      },
+    },
+    triggerProps: {
+      // Only focus that came from the keyboard counts: a click also focuses the button.
+      onFocus: (/** @type {FocusEvent} */ event) => {
+        setDismissed(false);
+        setFocused(/** @type {Element} */ (event.currentTarget).matches(':focus-visible'));
+      },
+      onBlur: () => setFocused(false),
+      onClick: () => {
+        if (canHover()) return;
+        setPinned((previous) => !previous);
+      },
+    },
+  };
+}
+
 // A document or window listener for the lifetime of the component, optionally
 // only while `active`. The handler stays current without reinstalling.
 /**

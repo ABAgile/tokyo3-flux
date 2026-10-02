@@ -52,6 +52,13 @@
 .help-trigger:hover {
   background: var(--inset);
   color: var(--ink);
+} /* The details hint: a bold italic serif i, as a classic info mark; a plain 12px
+   i is too thin beside the ?. */
+.help-trigger.is-info {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 16px;
+  font-style: italic;
+  font-weight: 700;
 }
 .help-popover-content {
   position: absolute;

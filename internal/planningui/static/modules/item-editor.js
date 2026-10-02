@@ -555,7 +555,7 @@ function CopyCardLinkButton({ item }) {
  * @param {number | undefined} [revision]
  */
 export function itemEditorTitleExtrasTemplate(item, revision = item.revision) {
-  return html` ${helpPopoverTemplate(`Card ID: ${item.id}\nRevision: ${revision}`, 'Work item details')} <${CopyCardLinkButton} item=${item} />`;
+  return html` ${helpPopoverTemplate(`Card ID: ${item.id}\nRevision: ${revision}`, 'Work item details', 'info')} <${CopyCardLinkButton} item=${item} />`;
 }
 // Archive and restore sit before Cancel in either editor surface.
 /** @param {{ item: Flux.Item, readOnly?: boolean, mode: Flux.EditorMode }} props */

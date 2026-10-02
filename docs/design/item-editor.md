@@ -12,7 +12,8 @@
   Multi-select values remain removable chips while editing, with a token-based shadow.
   GitLab links have a paste-URL field below the picker; Enter or Get resolves and appends an approved MR link.
   Add link opens the quick-scope and search fallback.
-  Static field guidance uses an opaque `?` popover with a line-colored shadow; the work-item header popover shows Card ID and Revision on separate lines.
+  Static field guidance uses an opaque `?` popover with a line-colored shadow; the work-item header uses an `i` popover of the same kind, since it states details rather than guidance, showing Card ID and Revision on separate lines.
+  Both open on hover or keyboard focus and ignore a click, as every hint does.
   Modal cards and the List detail pane close when clicking outside them; a press that starts inside and ends outside, as when selecting text, does not count.
   In the List, controls, rows and dialogs outside the pane keep their own click behavior, and clicking another row keeps its discard confirmation.
   With unsaved input, including an unsent comment, the outside click asks whether to save before closing; agreeing saves and then closes, and declining keeps the editor open with the input intact.

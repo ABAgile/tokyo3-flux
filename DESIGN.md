@@ -61,6 +61,9 @@ No external fonts or assets are required for the base UI; optional GitLab avatar
   A failure outside rendering, such as a rejected background action or an exception in an event handler, appears in the error bar; cancelled work stays silent.
 - Loading, no-work, no-workspace, unavailable, and stale-revision states must be explicit.
   Render user Markdown through the safe renderer; never execute raw HTML.
+- Hints behave alike wherever they appear: a `?` beside a label for guidance, an `i` (bold italic serif, 16px in the same 20px circle) for details such as a work item's identity or a sprint's goal.
+  A hint shows when the pointer rests on its button or on the hint for a moment, or when its button has keyboard focus, and it closes when the pointer leaves, on Escape, or when the page scrolls under a fixed hint.
+  A mouse click does nothing, so a hint never stays on screen after the pointer has gone; only a device that cannot hover has no other way to open one, so there a tap toggles it and a tap elsewhere closes it.
 - Theme toggle persists preference; initial theme follows system.
   Verify both themes at 1440px, 768px, and 390px and keyboard-only planning workflows.
 
