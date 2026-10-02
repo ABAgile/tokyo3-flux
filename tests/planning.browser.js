@@ -166,6 +166,10 @@ async function run(page) {
       (await firstListRow.evaluate((row) => row.classList.contains('is-selected'))),
     'selected list row is not marked',
   );
+  // The columns shown depend on the width the list gets, so pin the viewport
+  // rather than rely on the browser's default size.
+  const defaultViewport = page.viewportSize();
+  await page.setViewportSize({ width: 1280, height: defaultViewport?.height ?? 900 });
   const visibleListFields = await firstListRow
     .locator(':scope > .list-cell')
     .evaluateAll((cells) =>
@@ -177,6 +181,7 @@ async function run(page) {
     visibleListFields.join('|') === 'Title|Participants|Labels',
     'detail pane did not compact the list columns to what the narrowed list can hold',
   );
+  if (defaultViewport) await page.setViewportSize(defaultViewport);
   await page.keyboard.press('Escape');
   check(
     await firstListRow.evaluate((row) => row === document.activeElement),
