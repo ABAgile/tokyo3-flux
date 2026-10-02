@@ -500,6 +500,7 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set(APIVersionHeader, APIVersion)
 		ctx, cancel := context.WithTimeout(r.Context(), timeoutFor(r.URL.Path))
 		defer cancel()
 		// One identifier per request, echoed to the client and reused by every
@@ -516,6 +517,14 @@ func (h *HTTP) Handler(machine bool) http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
+// APIVersion names the /api/v2 contract. Every planning response carries it in
+// APIVersionHeader so a CLI or Pi build can refuse a server it was not written
+// for instead of misreading its payloads.
+const (
+	APIVersion       = "2"
+	APIVersionHeader = "X-Flux-API-Version"
+)
 
 type requestIDKey struct{}
 

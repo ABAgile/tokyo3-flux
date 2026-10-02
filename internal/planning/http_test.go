@@ -786,6 +786,28 @@ func TestItemAttachmentListing(t *testing.T) {
 // A shared card link must open the current card whether it is active or
 // archived, and must fail identically for a missing card and for a workspace
 // the reader cannot enter.
+func TestAPIVersionHeader(t *testing.T) {
+	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHTTP(&fakeRepository{}, manager, "machine-viewer", true, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	// An unauthenticated request is refused, and the refusal still names the version.
+	response := httptest.NewRecorder()
+	h.Handler(false).ServeHTTP(response, httptest.NewRequest("GET", "http://localhost/api/v2/workspaces/w/revision", nil))
+	if got := response.Header().Get(APIVersionHeader); got != APIVersion {
+		t.Fatalf("%s = %q, status %d", APIVersionHeader, got, response.Code)
+	}
+	// A served response carries it too.
+	request := httptest.NewRequest("GET", "http://localhost/api/v2/workspaces/w/revision", nil)
+	request.Header.Set("Authorization", "Bearer x")
+	response = httptest.NewRecorder()
+	h.Handler(true).ServeHTTP(response, request)
+	if response.Code != 200 || response.Header().Get(APIVersionHeader) != APIVersion {
+		t.Fatalf("served: %d %q", response.Code, response.Header().Get(APIVersionHeader))
+	}
+}
+
 func TestSharedItemLink(t *testing.T) {
 	manager, err := session.New(session.Config{SessionKey: []byte(strings.Repeat("s", 32)), CookiePrefix: "test"})
 	if err != nil {

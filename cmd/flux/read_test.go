@@ -74,3 +74,24 @@ func TestNativeClientDoesNotFollowRedirects(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeClientChecksAPIVersion(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{{p.APIVersion, true}, {"", true}, {"3", false}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if tc.version != "" {
+				w.Header().Set(p.APIVersionHeader, tc.version)
+			}
+			_, _ = w.Write([]byte("{}"))
+		}))
+		t.Setenv("FLUX_API_URL", server.URL)
+		t.Setenv("FLUX_API_TOKEN", "fixture-token")
+		_, err := fetchNative("/api/v2/workspaces/w/read/board")
+		server.Close()
+		if tc.ok && err != nil || !tc.ok && (err == nil || !strings.Contains(err.Error(), "version 3")) {
+			t.Fatalf("version %q: %v", tc.version, err)
+		}
+	}
+}

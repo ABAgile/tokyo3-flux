@@ -41,6 +41,9 @@ func fetchNative(path string) ([]byte, error) {
 		return nil, errors.New("native API request failed")
 	}
 	defer response.Body.Close()
+	if got := response.Header.Get(p.APIVersionHeader); got != "" && got != p.APIVersion {
+		return nil, fmt.Errorf("native API version %s is not supported by this flux build (expects %s); upgrade flux", got, p.APIVersion)
+	}
 	if response.StatusCode != 200 {
 		return nil, fmt.Errorf("native API returned HTTP %d; check membership, revision and configuration", response.StatusCode)
 	}
