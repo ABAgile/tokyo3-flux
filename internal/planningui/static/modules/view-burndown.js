@@ -9,11 +9,11 @@ import {
   metricListTemplate,
 } from './layout.js';
 import { html } from './vdom.js';
-import { useEffect } from './vendor-preact.js';
+import { useEffect, useRef } from './vendor-preact.js';
 import { setState, state, subscribe, useStore } from './state.js';
 import { singleFilterValue, selectedFilterText } from './filters.js';
 import { selectLookups } from './lookups.js';
-import { useRequest, waitUntil } from './ui-hooks.js';
+import { useElementWidth, useRequest, waitUntil } from './ui-hooks.js';
 import { usePermissions } from './permissions.js';
 
 /** @param {number | null} value @returns {value is number} */
@@ -43,14 +43,19 @@ function burndownSegments(points, key, x, y) {
   flush();
   return segments;
 }
-/** @param {Flux.Burndown} data */
-function burndownSVG(data) {
-  const width = 760,
-    height = 220,
-    left = 48,
-    right = 20,
-    top = 16,
-    bottom = 36,
+// Drawn at its real width, so it stays crisp and its height does not grow with
+// the panel. Sprint counts are small, so the plot is short and a few gridlines
+// are enough to read it.
+/**
+ * @param {Flux.Burndown} data
+ * @param {number} width
+ */
+function burndownSVG(data, width) {
+  const height = 112,
+    left = 34,
+    right = 12,
+    top = 8,
+    bottom = 22,
     plotWidth = width - left - right,
     plotHeight = height - top - bottom,
     points = data.points;
@@ -61,7 +66,7 @@ function burndownSVG(data) {
   const y = (/** @type {number} */ value) => top + ((maximum - value) / maximum) * plotHeight;
   const title = `Burn down for ${data.sprint.name}`;
   const grid = [
-    ...new Set(Array.from({ length: 5 }, (_, index) => Math.round(maximum * (1 - index / 4)))),
+    ...new Set(Array.from({ length: 3 }, (_, index) => Math.round(maximum * (1 - index / 2)))),
   ].map(
     (value) =>
       html`<line class="burndown-grid" x1=${left} x2=${width - right} y1=${y(value)} y2=${y(value)}></line><text class="burndown-axis-label" x=${left - 8} y=${y(value) + 4} text-anchor="end">${String(value)}</text>`,
@@ -87,15 +92,23 @@ function burndownSVG(data) {
     (index) => {
       if (index < 0 || !points[index]) return null;
       const anchor = index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle';
-      return html`<text class="burndown-axis-label" x=${x(index)} y=${height - 16} text-anchor=${anchor}>${burndownDateLabel(points[index].date)}</text>`;
+      return html`<text class="burndown-axis-label" x=${x(index)} y=${height - 6} text-anchor=${anchor}>${burndownDateLabel(points[index].date)}</text>`;
     },
   );
   return html`<svg
+    width=${width}
+    height=${height}
     viewBox=${`0 0 ${width} ${height}`}
     role="img"
     aria-label=${title}
     class="burndown-svg"
   ><title>${title}</title>${grid}${ideal}${lines('scope', 'burndown-scope')}${lines('remaining', 'burndown-actual')}${dots}${dates}</svg>`;
+}
+/** @param {{ data: Flux.Burndown }} props */
+function BurndownChart({ data }) {
+  const plot = useRef(/** @type {HTMLDivElement | null} */ (null));
+  const width = useElementWidth(plot);
+  return html`<div class="burndown-plot" ref=${plot}>${burndownSVG(data, width || 640)}</div>`;
 }
 /**
  * @param {string} className
@@ -185,15 +198,18 @@ function burndownBody(result, context, busy) {
     ],
     'burndown-metrics',
   );
+  // The note runs under the whole row, on one line where it can, instead of
+  // filling the narrow column beside the chart.
   return html`<div class="burndown-chart-row">
-      ${context(metrics, helpTextTemplate(data.warning, 'burndown-note'))}
+      ${context(metrics)}
       <figure class="burndown-figure">
-        ${burndownSVG(data)}
+        <${BurndownChart} data=${data} />
         <div class="burndown-legend">
           ${burndownLegendItem('actual', 'Remaining')}${burndownLegendItem('ideal', 'Ideal')}${burndownLegendItem('scope', 'Scope')}
         </div>
       </figure>
     </div>
+    ${data.warning ? helpTextTemplate(data.warning, 'burndown-note') : null}
     ${burndownTable(data)}`;
 }
 /**

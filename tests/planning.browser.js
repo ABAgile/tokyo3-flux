@@ -37,6 +37,16 @@ async function run(page) {
   const saved = async () => {
     await page.getByRole('status').filter({ hasText: 'Changes saved.' }).waitFor();
   };
+  // A sprint's goal is a hint beside its name while the panel is folded, shown by
+  // resting the pointer on it, and a block under the title once the panel is open.
+  const showGoal = async (panel) => {
+    const hint = panel.getByRole('button', { name: /^Goal of/ });
+    if ((await hint.count()) === 0) return panel.locator('.sprint-goal-display');
+    await hint.hover();
+    const popover = page.locator('.sprint-goal-popover');
+    await popover.waitFor();
+    return popover;
+  };
   const save = async () => {
     await page.getByRole('button', { name: 'Save changes', exact: true }).click();
     await saved();
@@ -348,39 +358,42 @@ async function run(page) {
   );
   const sprintBox = page.locator('#sprint-summary .sprint-panel').first();
   const sprintMetricLabels = await sprintBox
-    .locator(':scope > .metrics .metric')
+    .locator('.sprint-side .metrics .metric')
     .evaluateAll((metrics) => metrics.map((metric) => metric.lastElementChild?.textContent));
   check(
     sprintMetricLabels.join('|') === 'In scope|Done|Blocked',
     'sprint metrics use the expected labels',
   );
   await page.setViewportSize({ width: 1024, height: 1000 });
+  // Collapsed, a sprint panel is one header row: the name on the left, the counts
+  // and actions on the right, and none of the goal.
   const compactSprintLayout = await page
     .locator('#sprint-summary .sprint-panel')
     .first()
     .evaluate((panel) => {
-      const info = panel.querySelector(':scope > .sprint-info')?.getBoundingClientRect();
-      const metrics = panel.querySelector(':scope > .metrics')?.getBoundingClientRect();
-      const title = panel
-        .querySelector(':scope > .sprint-info > .sprint-title-row > .sprint-title-copy')
+      const info = panel
+        .querySelector(':scope > .sprint-head > .sprint-info')
         ?.getBoundingClientRect();
-      const actions = panel.querySelector(':scope > .sprint-actions')?.getBoundingClientRect();
-      if (!info || !metrics || !title || !actions) return false;
-      const titleAndActionsSeparate =
-        title.right <= actions.left ||
-        actions.right <= title.left ||
-        title.bottom <= actions.top ||
-        actions.bottom <= title.top;
-      return info.bottom <= metrics.top && titleAndActionsSeparate;
+      const side = panel
+        .querySelector(':scope > .sprint-head > .sprint-side')
+        ?.getBoundingClientRect();
+      const whole = panel.getBoundingClientRect();
+      if (!info || !side) return false;
+      return (
+        info.right <= side.left + 1 &&
+        whole.height < 110 &&
+        !panel.querySelector('.burndown-panel') &&
+        panel.querySelector('.sprint-toggle')?.getAttribute('aria-expanded') === 'false'
+      );
     });
   check(
     compactSprintLayout &&
       (await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)),
-    'sprint summary overlaps or overflows at the narrow desktop content width',
+    'the collapsed sprint panel is not a short single header row at the narrow desktop width',
   );
   await page.setViewportSize({ width: 390, height: 1000 });
   const mobileSprintLayout = await sprintBox.evaluate((panel) => {
-    const actions = [...panel.querySelectorAll(':scope > .sprint-actions .action-icon')].map(
+    const actions = [...panel.querySelectorAll('.sprint-side .sprint-actions .action-icon')].map(
       (button) => button.getBoundingClientRect(),
     );
     const noActionOverlap = actions.every((box, index) =>
@@ -403,9 +416,11 @@ async function run(page) {
   );
   await page.setViewportSize({ width: 1280, height: 1000 });
   const wideMetricPlacement = await sprintBox.evaluate((panel) => {
-    const info = panel.querySelector(':scope > .sprint-info')?.getBoundingClientRect();
-    const metrics = panel.querySelector(':scope > .metrics')?.getBoundingClientRect();
-    const actions = panel.querySelector(':scope > .sprint-actions')?.getBoundingClientRect();
+    const info = panel
+      .querySelector(':scope > .sprint-head > .sprint-info')
+      ?.getBoundingClientRect();
+    const metrics = panel.querySelector('.sprint-side .metrics')?.getBoundingClientRect();
+    const actions = panel.querySelector('.sprint-side .sprint-actions')?.getBoundingClientRect();
     const panelBox = panel.getBoundingClientRect();
     const paddingRight = Number.parseFloat(getComputedStyle(panel).paddingRight) || 0;
     return (
@@ -413,12 +428,66 @@ async function run(page) {
       !!metrics &&
       !!actions &&
       metrics.left >= info.right &&
+      actions.left >= metrics.right &&
       actions.right >= panelBox.right - paddingRight - 1 &&
-      actions.bottom <= metrics.top
+      Math.abs(actions.top + actions.height / 2 - (metrics.top + metrics.height / 2)) < 12
     );
   });
-  check(wideMetricPlacement, 'sprint metrics did not move beside the summary on a wide layout');
-  await sprintBox.getByRole('button', { name: 'Show burn down', exact: true }).click();
+  check(wideMetricPlacement, 'sprint counts and actions are not one row to the right of the name');
+  // The whole panel is the toggle for its burn-down: its name, or any part of it
+  // that is not a control, expands it, and the chart folds it back. The goal is
+  // never in the way, since it is a hint.
+  const sprintToggle = sprintBox.locator('.sprint-toggle');
+  await sprintToggle.click();
+  check(
+    (await sprintToggle.getAttribute('aria-expanded')) === 'true' &&
+      (await sprintBox.locator(':scope > .burndown-panel').count()) === 1 &&
+      (await sprintToggle.getAttribute('aria-controls')) ===
+        (await sprintBox.locator(':scope > .burndown-panel').getAttribute('id')),
+    'clicking the sprint name did not expand its burn down',
+  );
+  await sprintBox.locator('.burndown-svg').waitFor();
+  // Expanded, the goal is stated under the title in place of the hint.
+  check(
+    (await sprintBox.getByRole('button', { name: /^Goal of/ }).count()) === 0 &&
+      (await sprintBox.locator(':scope > .sprint-goal-display .sprint-goal-content').count()) ===
+        1 &&
+      (await sprintBox.evaluate((panel) => {
+        const title = panel.querySelector('.sprint-title-row').getBoundingClientRect();
+        const goal = panel.querySelector('.sprint-goal-display').getBoundingClientRect();
+        const chart = panel.querySelector('.burndown-panel').getBoundingClientRect();
+        return goal.top >= title.bottom && goal.bottom <= chart.top;
+      })),
+    'an expanded sprint does not state its goal under the title, above the chart',
+  );
+  await sprintBox.locator('.burndown-svg').click({ position: { x: 40, y: 20 } });
+  check(
+    (await sprintBox.getByRole('button', { name: /^Goal of/ }).count()) === 1 &&
+      (await sprintBox.locator('.sprint-goal-display').count()) === 0,
+    'folding a sprint did not bring its goal hint back',
+  );
+  await sprintToggle.click();
+  await sprintBox.locator('.burndown-svg').waitFor();
+  await sprintBox.locator('.burndown-svg').click({ position: { x: 40, y: 20 } });
+  check(
+    (await sprintToggle.getAttribute('aria-expanded')) === 'false' &&
+      (await sprintBox.locator('.burndown-panel').count()) === 0,
+    'clicking the burn down chart did not fold the sprint panel',
+  );
+  await sprintBox.click({ position: { x: 6, y: 6 } });
+  check(
+    (await sprintToggle.getAttribute('aria-expanded')) === 'true',
+    'clicking the sprint panel itself did not expand it',
+  );
+  await sprintBox.locator('.burndown-data summary').click();
+  await sprintBox.locator('.burndown-data td').first().click();
+  await sprintBox.getByRole('button', { name: 'Edit sprint', exact: true }).click();
+  await page.getByRole('dialog').waitFor();
+  await page.keyboard.press('Escape');
+  check(
+    (await sprintBox.locator(':scope > .burndown-panel').count()) === 1,
+    'using a control inside the sprint panel folded it',
+  );
   await sprintBox.getByRole('heading', { name: 'Remaining work', exact: true }).waitFor();
   const fullWidthBurndown = await sprintBox.evaluate((panel) => {
     const panelBox = panel.getBoundingClientRect();
@@ -435,16 +504,19 @@ async function run(page) {
     );
   });
   check(fullWidthBurndown, 'burn down panel does not use the sprint panel width');
-  await sprintBox.getByRole('button', { name: 'Hide burn down', exact: true }).click();
+  // Sprint counts are small, so the chart is short however wide the panel is.
+  check(
+    await sprintBox
+      .locator('.burndown-svg')
+      .evaluate((svg) => svg.getBoundingClientRect().height <= 120),
+    'the burn down chart is taller than a few gridlines need',
+  );
+  await sprintToggle.click();
   check(
     (await page.locator('#sprint-summary .burndown-panel').count()) === 0,
     'burn down did not collapse',
   );
-  await page
-    .locator('#sprint-summary .sprint-panel')
-    .first()
-    .getByRole('button', { name: 'Show burn down', exact: true })
-    .click();
+  await sprintToggle.click();
   await page.locator('#sprint-summary .burndown-svg').waitFor();
   check(
     (await page
@@ -1942,6 +2014,20 @@ async function run(page) {
       (await menuToggle.evaluate((button) => button === document.activeElement)),
     'Escape did not fold the menu and return focus to its button',
   );
+  // The sprint panel reflows into a short one: its counts become a slim inline row.
+  check(
+    await page
+      .locator('.sprint-panel .metrics .metric')
+      .first()
+      .evaluate((metric) => {
+        const figure = metric.querySelector('strong');
+        return (
+          getComputedStyle(metric).display === 'flex' &&
+          Number.parseFloat(getComputedStyle(figure).fontSize) <= 18
+        );
+      }),
+    'the stacked sprint panel does not show its counts as a compact inline row',
+  );
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.getByRole('button', { name: 'Board', exact: true }).click();
   await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('all');
@@ -2206,29 +2292,37 @@ ${'unbrokencode'.repeat(12)}
   const renderedSprint = page.locator('.sprint-planning .sprint-panel').filter({
     has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
   });
-  const renderedGoal = renderedSprint.locator('.sprint-goal-content');
-  const showMore = renderedSprint.getByRole('button', { name: 'Show more', exact: true });
-  await showMore.waitFor();
+  // The goal is a hint on the sprint's name, hidden until asked for. Resting the
+  // pointer on it shows the rendered goal; a click changes nothing and leaves
+  // nothing on screen once the pointer is gone; keyboard focus shows it, and
+  // Escape hides it.
+  const goalHint = renderedSprint.getByRole('button', { name: /^Goal of/ });
   check(
-    await renderedGoal.evaluate((content) => content.inert),
-    'collapsed sprint-goal content remains keyboard reachable',
+    (await page.locator('.sprint-goal-popover').count()) === 0 &&
+      (await goalHint.getAttribute('aria-expanded')) === 'false',
+    'the sprint goal is not hidden until asked for',
   );
-  await showMore.focus();
-  await page.keyboard.press('Enter');
+  const renderedGoal = await showGoal(renderedSprint);
   check(
-    (await renderedSprint
-      .getByRole('button', { name: 'Show less', exact: true })
-      .getAttribute('aria-expanded')) === 'true' &&
-      !(await renderedGoal.evaluate((content) => content.inert)),
-    'Show more is not a keyboard-operable disclosure',
+    (await goalHint.getAttribute('aria-expanded')) === 'true' &&
+      (await renderedGoal.locator('h2').textContent()) === 'Outcome that fits the sprint',
+    'the sprint goal hint did not show the rendered goal on hover',
   );
-  await page.keyboard.press('Enter');
+  await goalHint.click();
+  await page.mouse.move(2, 2);
+  await page.locator('.sprint-goal-popover').waitFor({ state: 'detached' });
   check(
-    (await renderedSprint
-      .getByRole('button', { name: 'Show more', exact: true })
-      .getAttribute('aria-expanded')) === 'false' &&
-      (await renderedGoal.evaluate((content) => content.inert)),
-    'Show less did not collapse and disable hidden content',
+    (await goalHint.getAttribute('aria-expanded')) === 'false',
+    'clicking the sprint goal hint left it on screen',
+  );
+  await renderedSprint.locator('.sprint-toggle').focus();
+  await page.keyboard.press('Tab');
+  await page.locator('.sprint-goal-popover').waitFor();
+  await page.keyboard.press('Escape');
+  check(
+    (await page.locator('.sprint-goal-popover').count()) === 0 &&
+      (await goalHint.getAttribute('aria-expanded')) === 'false',
+    'Escape did not close the sprint goal hint',
   );
   await page.getByRole('button', { name: 'Start sprint', exact: true }).click();
   await saved();
@@ -2238,13 +2332,15 @@ ${'unbrokencode'.repeat(12)}
   const boardGoalPanel = page.locator('#sprint-summary .sprint-panel').filter({
     has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
   });
-  await boardGoalPanel.locator('.sprint-goal-content h2').waitFor();
+  const boardGoal = await showGoal(boardGoalPanel);
+  await boardGoal.locator('.sprint-goal-content h2').waitFor();
   check(
-    (await boardGoalPanel.locator('.sprint-goal-content table').count()) === 1 &&
-      (await boardGoalPanel.locator('.sprint-goal-content a').count()) === 1 &&
-      (await boardGoalPanel.locator('.sprint-goal-content script').count()) === 0,
+    (await boardGoal.locator('.sprint-goal-content table').count()) === 1 &&
+      (await boardGoal.locator('.sprint-goal-content a').count()) === 1 &&
+      (await boardGoal.locator('.sprint-goal-content script').count()) === 0,
     'board sprint summary did not use the safe Markdown goal renderer',
   );
+  await page.mouse.move(2, 2);
   await nav('Sprints');
   await page.getByRole('heading', { name: 'Sprints', exact: true }).waitFor();
   check(
@@ -2486,31 +2582,35 @@ ${'unbrokencode'.repeat(12)}
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         `overflow ${theme} ${width}`,
       );
-      const sprintGoalFits = await page
-        .locator('#sprint-summary .sprint-panel')
-        .filter({
+      const goalPopover = await showGoal(
+        page.locator('#sprint-summary .sprint-panel').filter({
           has: page.getByRole('heading', { name: 'Sprint 2 · Delivery signals', exact: true }),
-        })
-        .evaluate((panel) => {
-          const goal = panel.querySelector('.sprint-goal'),
-            content = goal?.querySelector('.sprint-goal-content'),
-            heading = content?.querySelector('h2'),
-            link = content?.querySelector('a'),
-            table = content?.querySelector('table'),
-            code = content?.querySelector('pre');
-          if (!goal || !content || !heading || !link || !table || !code) return false;
-          const box = goal.getBoundingClientRect(),
-            linkBox = link.getBoundingClientRect(),
-            size = Number.parseFloat(getComputedStyle(heading).fontSize);
-          return (
-            goal.scrollWidth <= goal.clientWidth + 1 &&
-            linkBox.right <= box.right + 1 &&
-            size >= 14 &&
-            size <= 18 &&
-            ['auto', 'scroll'].includes(getComputedStyle(table).overflowX) &&
-            ['auto', 'scroll'].includes(getComputedStyle(code).overflowX)
-          );
-        });
+        }),
+      );
+      const sprintGoalFits = await goalPopover.evaluate((popover) => {
+        const goal = popover.querySelector('.sprint-goal'),
+          content = goal?.querySelector('.sprint-goal-content'),
+          heading = content?.querySelector('h2'),
+          link = content?.querySelector('a'),
+          table = content?.querySelector('table'),
+          code = content?.querySelector('pre');
+        if (!goal || !content || !heading || !link || !table || !code) return false;
+        const box = goal.getBoundingClientRect(),
+          outer = popover.getBoundingClientRect(),
+          linkBox = link.getBoundingClientRect(),
+          size = Number.parseFloat(getComputedStyle(heading).fontSize);
+        return (
+          outer.left >= 0 &&
+          outer.right <= innerWidth &&
+          goal.scrollWidth <= goal.clientWidth + 1 &&
+          linkBox.right <= box.right + 1 &&
+          size >= 14 &&
+          size <= 18 &&
+          ['auto', 'scroll'].includes(getComputedStyle(table).overflowX) &&
+          ['auto', 'scroll'].includes(getComputedStyle(code).overflowX)
+        );
+      });
+      await page.mouse.move(2, 2);
       check(sprintGoalFits, `sprint goal overflow or heading scale ${theme} ${width}`);
       await page.getByRole('button', { name: '＋ New item', exact: true }).focus();
       await page.keyboard.press('Enter');

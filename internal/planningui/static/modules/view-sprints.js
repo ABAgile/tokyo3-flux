@@ -9,17 +9,13 @@ import {
   metricListTemplate,
   maintenanceListTemplate,
 } from './layout.js';
-import { classNames } from './dom.js';
 import { html, shallowEqual } from './vdom.js';
 import { useId, useLayoutEffect, useRef, useState, h } from './vendor-preact.js';
+import { useEventListener, useHoverHint } from './ui-hooks.js';
+import { placeMenu } from './card-menu.js';
 
 import { setState, state, useStore, requireBoard } from './state.js';
-import {
-  actionIconTemplate,
-  writeIconTemplate,
-  accessButtonTemplate,
-  usePermissions,
-} from './permissions.js';
+import { actionIconTemplate, writeIconTemplate, accessButtonTemplate } from './permissions.js';
 import { done, blocked, scopeItems } from './items.js';
 import { boardLookups, itemLookup, selectLookups } from './lookups.js';
 import { sprintFilterItems, sprintResults } from './filters.js';
@@ -33,69 +29,84 @@ import { errorMessage, isAbortError } from './api.js';
 import { toggleBurndown, viewSprintScope } from './actions.js';
 import { sprintVelocityTemplate } from './view-velocity.js';
 
-// The sprint goal measures its rendered height to decide whether to offer
-// "Show more". Until the first measurement the goal stays inert.
-/** @param {{ value: string }} props */
-function SprintGoal({ value }) {
-  const contentID = `sprint-goal-${useId()}`;
-  const [expanded, setExpanded] = useState(false);
-  const [clipped, setClipped] = useState(/** @type {boolean | undefined} */ (undefined));
-  const content = useRef(/** @type {HTMLDivElement | null} */ (null));
-  const measure = () => {
-    const node = content.current;
-    if (!node) return;
-    const next = node.scrollHeight > node.clientHeight + 1;
-    setClipped((previous) => (previous === next ? previous : next));
-  };
-  useLayoutEffect(() => {
-    const observer = new ResizeObserver(measure);
-    const frame = requestAnimationFrame(() => {
-      if (!content.current?.isConnected) return;
-      measure();
-      observer.observe(content.current);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, []);
-  useLayoutEffect(() => measure(), [expanded, value]);
-  const measured = clipped !== undefined;
-  return html`<div class="sprint-goal">
-    <div
-      class=${classNames({ 'sprint-goal-content': true, 'is-expanded': expanded })}
-      id=${contentID}
-      inert=${!measured || (!expanded && clipped)}
-      ref=${content}
-    >${markdownTemplate(value)}</div
-    ><button
-      type="button"
-      class="sprint-goal-toggle"
-      hidden=${!measured || (!expanded && !clipped)}
-      aria-controls=${contentID}
-      aria-expanded=${String(expanded)}
-      onClick=${() => setExpanded((previous) => !previous)}
-    >${expanded ? 'Show less' : 'Show more'}</button>
-  </div>`;
+// The goal's rendered Markdown, with the note a closed sprint carries. It is a
+// hint while the panel is folded and a block under the title once it is open.
+/** @param {Flux.Sprint} s */
+function sprintGoalTemplate(s) {
+  return html`<div class="sprint-goal"><div class="sprint-goal-content">${markdownTemplate(s.goal)}</div></div>
+    ${
+      s.state === 'closed'
+        ? html`<p class="muted sprint-goal-note"
+            >Scope is preserved at closure. Archive this immutable sprint to keep it in paginated history; card details remain current.</p
+          >`
+        : null
+    }`;
 }
-/** @param {{ sprint: Flux.Sprint, expanded: boolean }} props */
-function SprintActions({ sprint: s, expanded }) {
-  const { busy } = usePermissions();
-  const label = expanded ? 'Hide burn down' : 'Show burn down';
-  return html`<div class="actions sprint-actions">
+// The hint's box, fixed and placed against the viewport from the button that
+// opened it.
+/** @param {{ sprint: Flux.Sprint, id: string, anchor: { current: HTMLElement | null } }} props */
+function SprintGoalPopover({ sprint: s, id, anchor }) {
+  const node = useRef(/** @type {HTMLDivElement | null} */ (null));
+  const [at, setAt] = useState(
+    /** @type {{ left: number, top: number } | undefined} */ (undefined),
+  );
+  useLayoutEffect(() => {
+    if (!anchor.current || !node.current) return;
+    const next = placeMenu({
+      anchor: anchor.current.getBoundingClientRect(),
+      size: node.current.getBoundingClientRect(),
+      viewport: { width: innerWidth, height: innerHeight },
+      beside: false,
+      align: 'start',
+    });
+    setAt((current) => (current?.left === next.left && current.top === next.top ? current : next));
+  });
+  return html`<div
+    class="sprint-goal-popover"
+    id=${id}
+    role="group"
+    aria-label="Sprint goal"
+    ref=${node}
+    style=${at ? { left: `${at.left}px`, top: `${at.top}px` } : { left: '0px', top: '0px', opacity: '0' }}
+  >${sprintGoalTemplate(s)}</div>`;
+}
+// While a sprint panel is folded its goal is an `i` hint beside the name, behaving
+// as every hint does (hover or keyboard focus, click ignored). Its box stays open
+// while the pointer is on it, so links in the goal work, and scrolling or
+// resizing the page closes it, since the box is fixed.
+/** @param {{ sprint: Flux.Sprint }} props */
+function SprintGoalHint({ sprint: s }) {
+  const popoverID = `sprint-goal-${useId()}`;
+  const wrapper = useRef(/** @type {HTMLSpanElement | null} */ (null));
+  const button = useRef(/** @type {HTMLButtonElement | null} */ (null));
+  const hint = useHoverHint(wrapper);
+  // The box's own scrolling is not the page moving.
+  useEventListener(window, 'resize', hint.close, { active: hint.open });
+  useEventListener(
+    document,
+    'scroll',
+    (event) => {
+      const target = /** @type {Node | null} */ (event.target);
+      if (!target || !wrapper.current?.contains(target)) hint.close();
+    },
+    { active: hint.open, capture: true },
+  );
+  return html`<span class="sprint-goal-hint-wrap" ref=${wrapper} ...${hint.wrapperProps}>
     <button
       type="button"
-      class="action-icon quiet"
-      data-icon="▥"
-      data-action-label=${label}
-      aria-label=${label}
-      title=${label}
-      data-burndown-toggle=${s.id}
-      aria-expanded=${String(expanded)}
-      aria-controls=${expanded ? `burndown-${s.id}` : null}
-      disabled=${busy}
-      onClick=${() => toggleBurndown(s.id)}
-    ></button>
+      class="help-trigger is-info sprint-goal-hint"
+      aria-label=${`Goal of ${s.name}`}
+      aria-expanded=${String(hint.open)}
+      aria-controls=${hint.open ? popoverID : null}
+      ref=${button}
+      ...${hint.triggerProps}
+    >i</button>
+    ${hint.open ? html`<${SprintGoalPopover} sprint=${s} id=${popoverID} anchor=${button} />` : null}
+  </span>`;
+}
+/** @param {{ sprint: Flux.Sprint }} props */
+function SprintActions({ sprint: s }) {
+  return html`<div class="actions sprint-actions">
     ${actionIconTemplate('View scope', '◎', () => viewSprintScope(s))}
     ${s.state !== 'closed' ? writeIconTemplate('Edit sprint', '✎', () => openDialog('sprint.edit', { sprint: s })) : null}
     ${
@@ -123,36 +134,62 @@ function SprintActions({ sprint: s, expanded }) {
 function selectItemLookup(current) {
   return itemLookup(current.board, current.archiveItems);
 }
-// A changed goal gets a fresh goal widget; otherwise it keeps its measurement.
+// A sprint panel is a header: the sprint's kind and dates, its name with a goal
+// hint, its counts and its actions. Clicking anywhere on it that is not a control
+// expands it, or folds it back, so the board stays the focus until a sprint is
+// asked for. Expanded, it states the sprint's goal under the title, in place of
+// the hint, and shows its burn-down chart. The name is the button for keyboards.
 /** @param {{ sprint: Flux.Sprint, items: readonly Flux.Item[] }} props */
 function SprintPanel({ sprint: s, items }) {
   const expanded = useStore((current) => current.burndownExpanded.includes(s.id));
   const lookups = useStore(selectLookups);
   const byID = useStore(selectItemLookup);
-  return html`<article class="panel sprint-panel" data-sprint-id=${s.id}>
-    <div class="sprint-info">
-      <div class="sprint-title-row">
-        <div class="sprint-title-copy">
-          <p class="eyebrow">${`${s.state.toUpperCase()} SPRINT`}</p>
-          <h2>${s.name}</h2>
+  const toggleFromBox = (/** @type {MouseEvent} */ event) => {
+    const target = /** @type {Element | null} */ (event.target);
+    if (target?.closest?.('button,a,input,select,textarea,summary,details,label')) return;
+    if (window.getSelection()?.toString()) return;
+    toggleBurndown(s.id);
+  };
+  return html`<article class="panel sprint-panel" data-sprint-id=${s.id} onClick=${toggleFromBox}>
+    <div class="sprint-head">
+      <div class="sprint-info">
+        <p class="sprint-kicker">
+          <span class="eyebrow">${`${s.state.toUpperCase()} SPRINT`}</span>
+          <small class="muted">${`${s.start} → ${s.end}`}</small>
+        </p>
+        <div class="sprint-title-row">
+          <h2 class="sprint-title-copy">
+            <button
+              type="button"
+              class="sprint-toggle"
+              title=${expanded ? 'Hide burn down' : 'Show burn down'}
+              aria-expanded=${String(expanded)}
+              aria-controls=${expanded ? `burndown-${s.id}` : null}
+              onClick=${() => toggleBurndown(s.id)}
+            ><span class="sprint-chevron" aria-hidden="true"></span><span>${s.name}</span></button>
+          </h2>
+          ${expanded ? null : html`<${SprintGoalHint} sprint=${s} />`}
         </div>
       </div>
-      <${SprintGoal} key=${s.goal} value=${s.goal} />
-      <small class="muted">${`${s.start} → ${s.end}`}</small>
-      ${
-        s.state === 'closed'
-          ? html`<small class="muted"
-              >Scope is preserved at closure. Archive this immutable sprint to keep it in paginated history; card details remain current.</small
-            >`
-          : null
-      }
+      <div class="sprint-side">
+        ${metricListTemplate([
+          [items.length, 'In scope'],
+          [
+            items.filter((i) => done(lookups, i)).length,
+            s.state === 'closed' ? 'Done now' : 'Done',
+          ],
+          [items.filter((i) => blocked(lookups, byID, i)).length, 'Blocked'],
+        ])}
+        <${SprintActions} sprint=${s} />
+      </div>
     </div>
-    <${SprintActions} sprint=${s} expanded=${expanded} />
-    ${metricListTemplate([
-      [items.length, 'In scope'],
-      [items.filter((i) => done(lookups, i)).length, s.state === 'closed' ? 'Done now' : 'Done'],
-      [items.filter((i) => blocked(lookups, byID, i)).length, 'Blocked'],
-    ])}
+    ${
+      expanded
+        ? html`<div class="sprint-goal-display">
+            <span class="eyebrow">GOAL</span>${sprintGoalTemplate(s)}
+          </div>`
+        : null
+    }
     ${expanded ? burndownTemplate(s) : null}
   </article>`;
 }

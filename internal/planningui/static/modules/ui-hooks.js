@@ -234,6 +234,23 @@ export function useEventListener(target, type, handler, { active = true, capture
   }, [target, type, active, capture]);
 }
 
+// The rendered width of an element, in whole pixels, kept current as it resizes;
+// 0 until it has been measured.
+/** @param {{ current: HTMLElement | null }} ref */
+export function useElementWidth(ref) {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const read = () => setWidth(Math.round(node.clientWidth));
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
+}
+
 // Calls `onChange` after a changed value has been committed to the DOM, so
 // form readers see the rendered controls. The first render does not report.
 /**

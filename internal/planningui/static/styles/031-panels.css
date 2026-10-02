@@ -6,58 +6,6 @@
   background: var(--panel);
   overflow-wrap: anywhere;
 }
-.sprint-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "info actions" "info metrics";
-  column-gap: var(--s6);
-  row-gap: var(--s4);
-  align-items: start;
-  min-width: 0;
-}
-.sprint-info {
-  grid-area: info;
-  min-width: 0;
-  display: grid;
-  gap: var(--s2);
-}
-.sprint-info p {
-  overflow-wrap: anywhere;
-}
-.sprint-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--s4);
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.sprint-title-copy {
-  display: grid;
-  gap: var(--s2);
-  min-width: 0;
-  flex: 1 1 260px;
-}
-.sprint-title-copy h2 {
-  overflow-wrap: anywhere;
-}
-.sprint-actions {
-  grid-area: actions;
-  justify-self: end;
-  align-self: start;
-  min-width: 0;
-}
-.sprint-panel > .metrics {
-  grid-area: metrics;
-  display: flex;
-  align-items: flex-start;
-  align-self: center;
-  justify-self: end;
-  gap: var(--s6);
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  min-width: 0;
-}
 .metric {
   display: grid;
   font-size: 12px;
@@ -67,49 +15,119 @@
   font-size: 28px;
   color: var(--ink);
 }
+/* A sprint panel is a header row (kind and dates, name and goal hint, counts,
+   actions) with the burn-down below it when expanded. The counts and actions
+   stay on the right and wrap beneath the name only when the width runs out. The
+   whole panel is the target for expanding it. */
+.sprint-panel {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+  padding: var(--s3) var(--s4);
+  cursor: pointer;
+}
+.sprint-panel:hover {
+  border-color: var(--accent);
+}
+.sprint-panel .burndown-data {
+  cursor: auto;
+}
+.sprint-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  min-width: 0;
+}
+.sprint-info {
+  display: grid;
+  flex: 1 1 280px;
+  gap: var(--s1);
+  min-width: 0;
+}
+.sprint-info p {
+  overflow-wrap: anywhere;
+}
+.sprint-kicker {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  margin: 0;
+}
+.sprint-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+.sprint-title-copy {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sprint-goal-hint {
+  flex: 0 0 auto;
+}
+.sprint-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: 0 var(--s1);
+  margin-left: calc(-1 * var(--s1));
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.sprint-chevron {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.sprint-chevron::before {
+  content: "▸";
+}
+.sprint-toggle[aria-expanded="true"] .sprint-chevron::before {
+  content: "▾";
+}
+.sprint-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s4);
+  margin-left: auto;
+  min-width: 0;
+}
+.sprint-side .metrics {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  min-width: 0;
+}
+.sprint-side .metric {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+}
+.sprint-side .metric strong {
+  font-size: 18px;
+}
 .sprints {
   display: grid;
   gap: var(--s4);
 }
-@media (max-width: 899px) {
-  .sprint-panel {
-    padding: var(--s4);
-  }
-  .sprint-info {
-    flex-basis: 100%;
-  }
-  .metrics {
-    gap: var(--s4);
-  }
-}
-@media (max-width: 1199px) {
-  .sprint-panel {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "info" "actions" "metrics";
-    gap: var(--s4);
-  }
-  .sprint-panel > .metrics {
-    width: 100%;
-    align-self: start;
-    justify-self: stretch;
-    gap: var(--s4);
-    justify-content: flex-start;
-    flex-wrap: wrap;
-  }
-  .sprint-title-row {
-    gap: var(--s3);
-  }
-  .sprint-actions {
-    justify-self: end;
-  }
-}
 @media (max-width: 480px) {
-  .sprint-title-row {
-    align-items: flex-start;
-  }
-  .sprint-actions {
+  /* The actions drop to their own row, right-aligned, as labelled buttons. */
+  .sprint-side {
     width: 100%;
-    justify-self: stretch;
+  }
+  .sprint-side .sprint-actions {
+    width: 100%;
     justify-content: flex-end;
   }
 }

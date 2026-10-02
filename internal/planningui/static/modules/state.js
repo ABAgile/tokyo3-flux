@@ -78,7 +78,7 @@ const initialState = {
   integrationConsent: false,
   integrationSubmitting: false,
   integrationFormError: '',
-  // Sprint ids whose burn-down chart is shown.
+  // Sprint ids whose panel is expanded to show its burn-down chart.
   burndownExpanded: [],
   // Burn-down requests in flight; the active content body is busy while any load.
   burndownPending: 0,

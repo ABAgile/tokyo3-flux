@@ -1,24 +1,37 @@
 .burndown-panel {
   display: grid;
-  gap: var(--s4);
+  gap: var(--s3);
   width: 100%;
 }
+/* Inside a sprint panel the chart is a section of it, not a second card. */
 .sprint-panel > .burndown-panel {
-  grid-column: 1 / -1;
+  padding: var(--s3) 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
 }
 .burndown-chart-row {
   display: grid;
-  grid-template-columns: minmax(220px, 0.32fr) minmax(0, 1fr);
-  gap: var(--s4);
+  grid-template-columns: minmax(170px, 0.28fr) minmax(0, 1fr);
+  gap: var(--s3);
   align-items: start;
   min-width: 0;
 }
 .burndown-context {
   display: grid;
-  gap: var(--s4);
+  gap: var(--s2);
   min-width: 0;
 }
 .burndown-head {
+  margin: 0;
+}
+.burndown-filter-condition {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s3);
+}
+.burndown-filter-condition p {
   margin: 0;
 }
 .burndown-head h3 {
@@ -33,23 +46,27 @@
   gap: var(--s2);
   margin: 0;
 }
+.burndown-context .burndown-metrics .metric strong {
+  font-size: 20px;
+}
 .burndown-note {
   margin: 0;
 }
 .burndown-figure {
   margin: 0;
-  padding: var(--s3);
+  padding: var(--s2) var(--s3);
   border: 1px solid var(--line);
   border-radius: var(--r2);
   background: var(--inset);
   min-width: 0;
   overflow: hidden;
 }
+.burndown-plot {
+  min-width: 0;
+}
 .burndown-svg {
   display: block;
-  width: 100%;
-  height: auto;
-  min-height: 160px;
+  max-width: 100%;
 }
 .burndown-grid {
   stroke: var(--line);
@@ -89,7 +106,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--s4);
-  margin-top: var(--s3);
+  margin-top: var(--s1);
   color: var(--muted);
   font-size: 12px;
 }
@@ -152,16 +169,13 @@
   background: var(--panel);
 }
 @media (max-width: 899px) {
-  .burndown-panel {
-    padding: var(--s4);
-  }
-  .burndown-chart-row {
-    grid-template-columns: 1fr;
-  }
   .burndown-figure {
     padding: var(--s2);
   }
-  .burndown-svg {
-    min-height: 140px;
+}
+/* The text column and the chart sit side by side down to a very small screen. */
+@media (max-width: 560px) {
+  .burndown-chart-row {
+    grid-template-columns: 1fr;
   }
 }

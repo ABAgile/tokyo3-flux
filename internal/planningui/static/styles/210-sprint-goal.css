@@ -4,15 +4,44 @@
   font-size: 14px;
   line-height: 1.5;
 }
-.sprint-goal-content {
-  max-height: 12em;
-  min-width: 0;
-  overflow: hidden;
-  overflow-wrap: anywhere;
+/* The goal shows in a hint beside the sprint's name, in a fixed-position box the
+   pointer can enter, so links in it work. */
+.sprint-goal-popover {
+  position: fixed;
+  z-index: 12;
+  width: max-content;
+  max-width: min(480px, calc(100vw - var(--s4)));
+  max-height: min(60vh, 420px);
+  padding: var(--s3);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r1);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+  cursor: auto;
+  box-shadow: 0 var(--s2) var(--s4) var(--line);
 }
-.sprint-goal-content.is-expanded {
-  max-height: none;
-  overflow: visible;
+/* Open, a sprint states its goal under the title: it is what the team is aiming
+   for, so it gets an accent rule and a label of its own. */
+.sprint-goal-display {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+  padding-left: var(--s3);
+  border-left: 3px solid var(--accent);
+}
+.sprint-goal-display .sprint-goal {
+  font-size: 15px;
+}
+.sprint-goal-note {
+  margin: var(--s2) 0 0;
+  font-size: 12px;
+}
+.sprint-goal-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .sprint-goal-content h1,
 .sprint-goal-content h2,
@@ -90,17 +119,4 @@
 }
 .sprint-goal-content a {
   overflow-wrap: anywhere;
-}
-.sprint-goal-toggle {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  text-decoration: underline;
-}
-.sprint-goal-toggle:hover {
-  background: transparent;
-  color: var(--ink);
 }

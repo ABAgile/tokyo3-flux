@@ -164,11 +164,11 @@ async function run(page) {
     await title('Kanban board');
 
     await nav('sprints', 'Sprints');
-    const show = page.getByRole('button', { name: 'Show burn down', exact: true }).first();
-    await show.click();
+    const sprintToggle = page.locator('.sprint-toggle').first();
+    await sprintToggle.click();
     await page.locator('.burndown-svg').first().waitFor();
     await capture(`${prefix}/sprints-burndown`);
-    await page.getByRole('button', { name: 'Hide burn down', exact: true }).first().click();
+    await sprintToggle.click();
     await page.locator('.burndown-panel').first().waitFor({ state: 'detached' });
 
     await nav('projects', 'Projects');
