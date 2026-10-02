@@ -17,9 +17,47 @@ var updateBoardContract = flag.Bool("update-board-contract", false, "rewrite the
 // always sent by /api/v2. TypeScript checks this same file against Flux.Board;
 // Node tests reuse it as real Go-shaped input rather than handwritten mocks.
 func TestBoardJSONContract(t *testing.T) {
-	at := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	board := contractBoard()
+	actual, err := json.MarshalIndent(board, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual = append(actual, '\n')
+	const fixture = "../../tests/fixtures/board.json"
+	if *updateBoardContract {
+		if err := os.MkdirAll("../../tests/fixtures", 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fixture, actual, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	golden, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actual, golden) {
+		t.Fatal("board JSON contract drift: review the Go/Flux types and run go test ./internal/planning -run '^TestBoardJSONContract$' -update-board-contract")
+	}
+	var decoded any
+	if err := json.Unmarshal(actual, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	assertBoardFields(t, reflect.TypeFor[Board](), decoded, "board")
+	if bytes.Contains(actual, []byte("must-not-be-exposed")) || bytes.Contains(actual, []byte("cleanup_queued")) {
+		t.Fatal("internal attachment fields leaked into JSON")
+	}
+}
+
+// contractAt is the fixed instant every contract fixture uses.
+var contractAt = time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+
+// contractBoard is the fully populated sample shared by the board, item and
+// read-page contract fixtures.
+func contractBoard() Board {
+	at := contractAt
 	target := LinkTarget{Project: 42, Kind: "mr", Number: 7}
-	board := Board{
+	return Board{
 		Workspace: Workspace{ID: "workspace-one", Name: "Contract team", Role: "admin", Revision: 4},
 		Role:      "admin", RefreshSeconds: 30, ConnectorInstance: "https://gitlab.example",
 		Integration: Integration{Instance: "https://gitlab.example", Projects: []int64{42}},
@@ -50,35 +88,6 @@ func TestBoardJSONContract(t *testing.T) {
 					State: "success", ProviderState: "success", CurrentHead: true, SourceUpdatedAt: &at},
 				Reviewers: []Reviewer{{ID: 42, Name: "Reviewer", Username: "reviewer", AvatarURL: "https://gitlab.example/avatar/42.png"}},
 			}}},
-	}
-	actual, err := json.MarshalIndent(board, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual = append(actual, '\n')
-	const fixture = "../../tests/fixtures/board.json"
-	if *updateBoardContract {
-		if err := os.MkdirAll("../../tests/fixtures", 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(fixture, actual, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	golden, err := os.ReadFile(fixture)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(actual, golden) {
-		t.Fatal("board JSON contract drift: review the Go/Flux types and run go test ./internal/planning -run '^TestBoardJSONContract$' -update-board-contract")
-	}
-	var decoded any
-	if err := json.Unmarshal(actual, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	assertBoardFields(t, reflect.TypeFor[Board](), decoded, "board")
-	if bytes.Contains(actual, []byte("must-not-be-exposed")) || bytes.Contains(actual, []byte("cleanup_queued")) {
-		t.Fatal("internal attachment fields leaked into JSON")
 	}
 }
 

@@ -485,6 +485,7 @@ GNU Make schedules four internal phony targets with `-j4 --output-sync=target`; 
 CI provisions PostgreSQL for the Go database tests and runs the `rendering`, `planning` and `drag-labels` browser suites against throwaway databases in a separate job.
 `tests/fixtures/board.json` is a fully populated Go board checked against `Flux.Board`, including nested field names and value types, and reused by Node tests.
 After an intentional contract change, update the Go sample and frontend declarations, then regenerate it with `go test ./internal/planning -run '^TestBoardJSONContract$' -update-board-contract`.
+`revision.json`, `item.json` and `read-pages.json` pin `/revision`, `/items/{item}` and the `/read/{view}` pages the same way; regenerate them with `go test ./internal/planning -run '^TestAPIJSONContract$' -update-api-contract`.
 
 ### Preact + HTM experiment
 
