@@ -64,6 +64,12 @@ No external fonts or assets are required for the base UI; optional GitLab avatar
 - Hints behave alike wherever they appear: a `?` beside a label for guidance, an `i` (bold italic serif, 16px in the same 20px circle) for details such as a work item's identity or a sprint's goal.
   A hint shows when the pointer rests on its button or on the hint for a moment, or when its button has keyboard focus, and it closes when the pointer leaves, on Escape, or when the page scrolls under a fixed hint.
   A mouse click does nothing, so a hint never stays on screen after the pointer has gone; only a device that cannot hover has no other way to open one, so there a tap toggles it and a tap elsewhere closes it.
+- One vocabulary for small marks.
+  `?` and `i` are round hover hints that ignore a click; `?` is guidance and `i` is details.
+  Anything that does something on click is an `action-icon` button with the same bordered square, hover and focus: `◎` views (scope, observations), `✎` edits and `■` stops.
+  Inside a card or row the same icon uses its compact 24px size and the same custom tooltip, placed against the viewport so a scrolling column never clips it.
+  Native `title` tooltips are not used on action icons.
+  Read-only status marks, such as a merge request's status icon, are borderless glyphs whose tooltip opens on hover or focus and which do nothing on click.
 - Theme toggle persists preference; initial theme follows system.
   Verify both themes at 1440px, 768px, and 390px and keyboard-only planning workflows.
 

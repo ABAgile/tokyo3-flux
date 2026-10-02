@@ -1,7 +1,7 @@
 # Projects, members and labels
 
 - Project management uses the existing dialog/controls, not a new component variant.
-  Repeated secondary maintenance actions use compact icon buttons on wide layouts with accessible labels and native tooltips; labels return at narrow touch widths.
+  Repeated secondary maintenance actions use compact icon buttons on wide layouts with accessible labels and custom hover tooltips; labels return at narrow touch widths.
   This applies to project/sprint/member/label row and panel actions, including lifecycle and destructive actions; create/add primary actions retain visible text.
 - Projects and GitLab integration share a single-column Projects maintenance view, with GitLab integration first.
   Its show state displays approved GitLab project chips; `Edit integration` keeps the existing inline approval form.

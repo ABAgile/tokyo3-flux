@@ -1,6 +1,6 @@
 # GitLab links and observations
 
-- Cards group associated merge requests in a labeled GitLab links block: each appears once as a compact direct GitLab link (`MR !IID`) with a compact non-interactive status icon whose single custom hover/focus tooltip and accessible label summarize the cached observation (without a native title tooltip), plus a `View observations` action in the block header.
+- Cards group associated merge requests in a labeled GitLab links block: each appears once as a compact direct GitLab link (`MR !IID`) with a compact non-interactive status icon whose single custom hover/focus tooltip and accessible label summarize the cached observation (without a native title tooltip), one per line so a status icon never separates from its link, plus the compact `◎` view action icon beside the block label (accessible name and custom tooltip `View observations`, as View scope has) that opens the observations dialog.
   Each MR observation includes its corresponding latest head pipeline status.
   The observations dialog exposes direct MR and pipeline links; the item editor manages associations with a dropdown multi-select, a paste-URL field and a button for the approved-link search fallback.
   Observation details use existing setup rows, badges, forms and live errors.

@@ -43,7 +43,7 @@
   visibility: visible;
 }
 @media (max-width: 480px) {
-  .action-icon {
+  .action-icon:not(.action-icon-compact) {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -55,7 +55,7 @@
     min-height: var(--s8);
     padding: var(--s2) var(--s3);
   }
-  .action-icon::after {
+  .action-icon:not(.action-icon-compact)::after {
     position: static;
     width: auto;
     max-width: none;
@@ -73,4 +73,26 @@
     font-size: 14px;
     line-height: 1.5;
   }
+}
+/* Inside a card or row the icon shrinks to a 24px square and keeps the label as
+   its tooltip at every width. The tooltip is fixed to the viewport, placed by
+   `useObservationTooltip`, so a scrolling column never clips it. */
+.action-icon.action-icon-compact {
+  display: inline-grid;
+  flex: 0 0 var(--s6);
+  width: var(--s6);
+  min-width: 0;
+  height: var(--s6);
+  min-height: 0;
+  padding: 0;
+  font-size: 16px;
+}
+.action-icon.action-icon-compact::after {
+  position: fixed;
+  top: var(--observation-tooltip-top, 0px);
+  left: var(--observation-tooltip-left, 0px);
+  transform: none;
+}
+.drag-source .action-icon.action-icon-compact::after {
+  display: none;
 }

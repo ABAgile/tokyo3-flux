@@ -10,7 +10,7 @@
   Selecting a named project shows current non-archived In scope, Done, Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics.
   The project lens uses the same full-width panel flow as sprint summaries, with a standard section gap between them.
   Desktop List rows use an Asana-like table grid with separate Title, Project, Participants, Sprints, Labels, and Links / Status columns plus a shared header, in the order a card shows them; the Participants cell carries the same participant avatars as a card, with no name text; descriptions are not shown and the title cell is title-only.
-  Links / Status owns blocked/archived state, a Board-aligned `GitLab links · count` header with View observations beside the label and left-aligned when wrapped, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width border.
+  Links / Status owns blocked/archived state, a Board-aligned `GitLab links · count` header with the compact `◎` observations action icon right beside the label, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width border.
   Observation status popovers are positioned against the viewport so list containers do not clip the last row.
   The Project cell shows all associated projects.
   List columns follow the width the work list itself gets, not the viewport, so the sidebar and an open detail pane never starve the title: Title and Participants always show, and Labels (from 520px), Sprints (640px), Links / Status (900px) and Project (1040px) join in that order as the list widens.

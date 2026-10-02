@@ -8,7 +8,7 @@ import {
 } from './layout.js';
 import { classNames } from './dom.js';
 import { html, memo } from './vdom.js';
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, h } from './vendor-preact.js';
+import { useCallback, useEffect, useMemo, useRef, useState, h } from './vendor-preact.js';
 
 import { state, useStore, requireBoard } from './state.js';
 import { usePermissions, accessButtonTemplate } from './permissions.js';
@@ -37,7 +37,11 @@ import {
 import { closeEditor, openDialog } from './dialog-state.js';
 import { CommandDialog, FormDialog } from './dialog.js';
 import { mergeEventProps, useDraggable, useDropZone } from './drag.js';
-import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
+import {
+  cardLinkTemplate,
+  cardObservationIconTemplate,
+  observationsButtonTemplate,
+} from './gitlab.js';
 import { CardMenu } from './card-menu.js';
 import { editItem } from './actions.js';
 import { useDismiss, useFocusRestore } from './ui-hooks.js';
@@ -250,23 +254,16 @@ function cardLinksTemplate(item, links) {
   return html`<div class="card-links-section" role="group" aria-label="GitLab links">
     <div class="card-links-head">
       <span class="card-links-label">${`GitLab links · ${links.length}`}</span>
-      <button
-        type="button"
-        class="card-link-details"
-        data-focus-key=${`item:${item.id}:observations`}
-        aria-label=${`View GitLab details · ${links.length}`}
-        title="Show linked GitLab observations"
-        onClick=${() => showLinks(item)}
-      >View observations</button>
+      ${observationsButtonTemplate(item, `item:${item.id}:observations`, 'View observations')}
     </div>
     <div class="card-links" aria-label="GitLab links">
       ${links.map(
-        (link) => html`<${Fragment} key=${link.id}
+        (link) => html`<span key=${link.id} class="card-link-line"
           >${
             link.kind === 'mr'
               ? cardObservationIconTemplate(link, `item:${item.id}:observation:${link.id}`)
               : null
-          }${cardLinkTemplate(link, `item:${item.id}:link:${link.id}`)}</${Fragment}
+          }${cardLinkTemplate(link, `item:${item.id}:link:${link.id}`)}</span
         >`,
       )}
     </div>

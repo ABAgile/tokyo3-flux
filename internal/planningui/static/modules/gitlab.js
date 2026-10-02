@@ -4,7 +4,7 @@ import { helpTextTemplate, emptyStateTemplate } from './layout.js';
 import { html } from './vdom.js';
 import { useEffect, useState, h } from './vendor-preact.js';
 import { state, useStore, requireBoard } from './state.js';
-import { writable } from './permissions.js';
+import { actionIconTemplate, writable } from './permissions.js';
 import { change } from './commands.js';
 import { openDialog, setEditorError } from './dialog-state.js';
 import { FormDialog } from './dialog.js';
@@ -67,6 +67,19 @@ export function cardLinkTemplate(link, focusKey) {
     target="_blank"
     rel="noopener noreferrer"
   >${linkLabel(link)}</a>`;
+}
+// Opens an item's observations. It is the site's "view" action icon (the `◎`
+// of View scope) in its compact size, so a card's links block stays small.
+/**
+ * @param {Flux.Item} item
+ * @param {string} focusKey
+ * @param {string} label
+ */
+export function observationsButtonTemplate(item, focusKey, label) {
+  return actionIconTemplate(label, '◎', () => showLinks(item), {
+    compact: true,
+    focusKey,
+  });
 }
 /**
  * @param {Flux.Link} link

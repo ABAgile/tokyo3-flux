@@ -137,7 +137,7 @@ async function run(page) {
   const linkSection = page.locator(`[data-item="${item.id}"] .card-links-section`);
   check(
     (await linkSection.getByText('GitLab links · 2', { exact: true }).count()) === 1 &&
-      (await linkSection.getByRole('button', { name: /^View GitLab details/ }).count()) === 1,
+      (await linkSection.getByRole('button', { name: /^View observations/ }).count()) === 1,
     'GitLab links are not grouped with one observations action',
   );
   // Each linked MR has its own status icon; inspect MR 7's.
@@ -256,7 +256,7 @@ async function run(page) {
       );
       await page
         .locator(`[data-item="${item.id}"]`)
-        .getByRole('button', { name: /^View GitLab details/ })
+        .getByRole('button', { name: /^View observations/ })
         .focus();
       await page.keyboard.press('Enter');
       await page

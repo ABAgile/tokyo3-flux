@@ -61,7 +61,7 @@ async function run(page) {
     card(item).getByRole('button', { name: item.title, exact: true }).click();
   const openObservations = (item) =>
     card(item)
-      .getByRole('button', { name: /^View GitLab details/ })
+      .getByRole('button', { name: /^View observations/ })
       .click();
   const close = () => page.getByRole('button', { name: 'Close editor', exact: true }).click();
   const attach = async (item, number, usePaste = false) => {
@@ -310,7 +310,7 @@ async function run(page) {
   );
   check(
     (await card(a)
-      .getByRole('button', { name: /^View GitLab details/ })
+      .getByRole('button', { name: /^View observations/ })
       .count()) === 1,
     'card observation details link missing',
   );
@@ -357,7 +357,7 @@ async function run(page) {
   await page.reload();
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   await card(a)
-    .getByRole('button', { name: /^View GitLab details/ })
+    .getByRole('button', { name: /^View observations/ })
     .waitFor({ timeout: 10000 });
   check(
     (await board()).links.find((l) => l.kind === 'mr' && l.number === 7).observation.pipeline
@@ -373,7 +373,7 @@ async function run(page) {
         `overflow ${theme} ${width}`,
       );
       await card(a)
-        .getByRole('button', { name: /^View GitLab details/ })
+        .getByRole('button', { name: /^View observations/ })
         .focus();
       await page.keyboard.press('Enter');
       check(
@@ -385,7 +385,7 @@ async function run(page) {
       await page.keyboard.press('Escape');
       check(
         await card(a)
-          .getByRole('button', { name: /^View GitLab details/ })
+          .getByRole('button', { name: /^View observations/ })
           .evaluate((e) => e === document.activeElement),
         'dialog focus return',
       );
@@ -401,7 +401,7 @@ async function run(page) {
   await page.reload();
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   await card(a)
-    .getByRole('button', { name: /^View GitLab details/ })
+    .getByRole('button', { name: /^View observations/ })
     .waitFor({ timeout: 10000 });
   await openEditor(a);
   // A read-only editor offers no link actions at all.
@@ -457,7 +457,7 @@ async function run(page) {
   await page.reload();
   await page.getByRole('combobox', { name: 'Scope', exact: true }).selectOption('all');
   await card(a)
-    .getByRole('button', { name: /^View GitLab details/ })
+    .getByRole('button', { name: /^View observations/ })
     .waitFor({ timeout: 10000 });
   await openEditor(b);
   // Chips become removable once the field is in edit mode.

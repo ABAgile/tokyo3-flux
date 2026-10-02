@@ -102,10 +102,8 @@
 .card-links-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--s1);
+  gap: var(--s2);
   min-width: 0;
-  flex-wrap: wrap;
 }
 .card-links-label {
   min-width: 0;
@@ -125,21 +123,23 @@
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.card-link-details {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  text-decoration: underline;
+/* Each merge request is one line: its status icon never separates from its link. */
+.card-links-section > .card-links {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s1);
 }
-.card-links-head .card-link-details {
-  margin-left: auto;
+.card-link-line {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
 }
-.card-link-details:hover {
-  background: transparent;
-  color: var(--ink);
+.card-link-line > .card-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .card-id {
   font-size: 12px;

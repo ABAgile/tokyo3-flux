@@ -16,7 +16,11 @@ import {
   attachmentPaperclipTemplate,
 } from './item-attachments.js';
 import { mergeEventProps, useDraggable, useDropZone } from './drag.js';
-import { cardLinkTemplate, cardObservationIconTemplate, showLinks } from './gitlab.js';
+import {
+  cardLinkTemplate,
+  cardObservationIconTemplate,
+  observationsButtonTemplate,
+} from './gitlab.js';
 import { ItemDetailPane } from './item-detail.js';
 import { prunedBulkSelection, BulkBar } from './bulk.js';
 import { closeDetail, selectItem, setBulkSelected } from './actions.js';
@@ -121,14 +125,7 @@ function linksTemplate(item, links) {
   return html`<div class="list-row-indicator list-row-links" aria-label=${count}>
     <div class="card-links-head">
       <span class="card-links-label">${`GitLab links · ${links.length}`}</span>
-      <button
-        type="button"
-        class="card-link-details list-row-observation-link"
-        data-focus-key=${`item:${item.id}:list-observations`}
-        aria-label=${`View observations · ${count}`}
-        title="Show linked GitLab observations"
-        onClick=${() => showLinks(item)}
-      >View observations</button>
+      ${observationsButtonTemplate(item, `item:${item.id}:list-observations`, 'View observations')}
     </div>
     ${links.map(
       (link) => html`<span key=${link.id} class="list-row-link-line"

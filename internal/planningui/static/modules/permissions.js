@@ -1,6 +1,7 @@
 // Role checks as state selectors, and the write/admin buttons that honor them.
 import { html, shallowEqual } from './vdom.js';
 import { state, useStore } from './state.js';
+import { useObservationTooltip } from './tooltip.js';
 
 /** @param {Flux.State} current */
 export function canWrite(current) {
@@ -81,30 +82,42 @@ function accessDisabled(access, permissions) {
  *   className?: string,
  *   access?: 'write' | 'admin',
  *   disabled?: boolean,
+ *   focusKey?: string,
+ *   compact?: boolean,
  * }} props
  */
-function ActionIcon({ label, icon, onClick, className, access, disabled }) {
+function ActionIcon({ label, icon, onClick, className, access, disabled, focusKey, compact }) {
   const permissions = usePermissions();
+  // The compact icon sits in scrolling cards, so its tooltip is placed against the viewport.
+  const tooltip = useObservationTooltip();
   return html`<button
     type="button"
-    class=${`action-icon${className ? ` ${className}` : ''}`}
+    class=${`action-icon${compact ? ' action-icon-compact' : ''}${className ? ` ${className}` : ''}`}
     data-icon=${icon}
     data-action-label=${label}
     aria-label=${label}
-    title=${label}
+    data-focus-key=${focusKey}
     data-write=${access === 'write' ? 'true' : null}
     data-admin-write=${access === 'admin' ? 'true' : null}
     disabled=${disabled ?? accessDisabled(access, permissions)}
     onClick=${onClick}
+    ref=${compact ? tooltip.ref : undefined}
+    style=${compact ? tooltip.style : undefined}
+    ...${compact ? tooltip.props : {}}
   ></button>`;
 }
 /**
  * @param {string} label
  * @param {string} icon
  * @param {() => void} onClick
- * @param {{ className?: string, access?: 'write' | 'admin', disabled?: boolean }} [options]
+ * @param {{ className?: string, access?: 'write' | 'admin', disabled?: boolean, focusKey?: string, compact?: boolean }} [options]
  */
-export function actionIconTemplate(label, icon, onClick, { className, access, disabled } = {}) {
+export function actionIconTemplate(
+  label,
+  icon,
+  onClick,
+  { className, access, disabled, focusKey, compact } = {},
+) {
   return html`<${ActionIcon}
     label=${label}
     icon=${icon}
@@ -112,6 +125,8 @@ export function actionIconTemplate(label, icon, onClick, { className, access, di
     className=${className}
     access=${access}
     disabled=${disabled}
+    focusKey=${focusKey}
+    compact=${compact}
   />`;
 }
 /**
