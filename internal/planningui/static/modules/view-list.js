@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef } from './vendor-preact.js';
 
 import { setState, state, useStore } from './state.js';
 import { projectBadgesTemplate, labelBadgeTemplate } from './items.js';
-import { memberName, participantStackTemplate } from './people.js';
+import { participantStackTemplate } from './people.js';
 import { itemDateStatus, dueDateBadgeTemplate } from './due-dates.js';
 import {
   attachmentCount,
@@ -194,8 +194,7 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
   const links = context.linksByItem.get(item.id) || NO_LINKS;
   const total = attachmentCount(item, list);
   const { draggable, ...dragEvents } = drag.props;
-  // The list shows the same participant aggregate as a card, and keeps the
-  // assignee's name in text so the column stays scannable as a table.
+  // The list shows the same participant avatars as a card.
   return html`<article
     class=${classNames({
       'list-row': true,
@@ -228,7 +227,6 @@ function ListRowView({ item, context, isBlocked, selected, bulkSelected }) {
       'list-cell-people',
       html`<div class="list-row-people">
         ${participantStackTemplate(lookups, item)}
-        <span class="list-row-assignee-name">${memberName(lookups, item.assignee)}</span>
       </div>`,
     )}
     ${listCellTemplate(

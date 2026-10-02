@@ -1,4 +1,6 @@
-@media (max-width: 999px) {
+/* The detail pane needs room beside the list: from 900px its 400px plus the gap
+   leave the list at least ~440px; below that the pane stacks under the list. */
+@media (max-width: 899px) {
   .list-detail-layout,
   .list-detail-layout.has-detail {
     grid-template-columns: 1fr;
@@ -20,7 +22,9 @@
     align-items: start;
     gap: var(--s2);
   }
-  .list-cell {
+  /* Stacked rows show every field, labeled. */
+  .list-row > .list-cell {
+    display: flex;
     align-items: flex-start;
     gap: var(--s2);
   }

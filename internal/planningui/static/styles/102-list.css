@@ -9,26 +9,86 @@
   grid-template-columns: minmax(0, 1fr);
 }
 .list-detail-layout.has-detail {
-  grid-template-columns: minmax(0, 1fr) minmax(420px, 520px);
-}
-/* With the detail pane open the Sprints (4th) and Links / Status (6th) columns go. */
-.list-detail-layout.has-detail .list-table-heading:nth-child(4),
-.list-detail-layout.has-detail .list-table-heading:nth-child(6),
-.list-detail-layout.has-detail .list-cell:nth-child(4),
-.list-detail-layout.has-detail .list-cell:nth-child(6) {
-  display: none;
+  grid-template-columns: minmax(0, 1fr) clamp(400px, 38%, 460px);
 }
 .planning-list {
   display: grid;
   gap: var(--s3);
   min-width: 0;
+  /* Columns follow the width the list really gets, not the viewport, so an open
+     detail pane or the sidebar never starves the title. */
+  container: list / inline-size;
 }
+/* Title and Participants (avatars only) always show; Labels, Sprints, Links /
+   Status and Project join, in that order, as the list gets wider. Cells are
+   Title 1, Project 2, Participants 3, Sprints 4, Labels 5, Links / Status 6. */
 .list-table-head,
 .list-row {
-  grid-template-columns: minmax(0, 2.3fr) minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1.2fr) minmax(
-      0,
-      1.35fr
-    ) minmax(190px, 1.5fr);
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 112px);
+}
+.list-table-heading:nth-child(2),
+.list-table-heading:nth-child(4),
+.list-table-heading:nth-child(5),
+.list-table-heading:nth-child(6),
+.list-cell:nth-child(2),
+.list-cell:nth-child(4),
+.list-cell:nth-child(5),
+.list-cell:nth-child(6) {
+  display: none;
+}
+@container list (min-width: 520px) {
+  .list-table-head,
+  .list-row {
+    grid-template-columns: minmax(0, 2.4fr) minmax(72px, 0.6fr) minmax(120px, 1.4fr);
+  }
+  .list-table-heading:nth-child(5) {
+    display: block;
+  }
+  .list-cell:nth-child(5) {
+    display: flex;
+  }
+}
+@container list (min-width: 640px) {
+  .list-table-head,
+  .list-row {
+    grid-template-columns:
+      minmax(0, 2.4fr) minmax(72px, 0.6fr) minmax(100px, 1.2fr)
+      minmax(120px, 1.4fr);
+  }
+  .list-table-heading:nth-child(4) {
+    display: block;
+  }
+  .list-cell:nth-child(4) {
+    display: flex;
+  }
+}
+@container list (min-width: 900px) {
+  .list-table-head,
+  .list-row {
+    grid-template-columns:
+      minmax(0, 2.4fr) minmax(72px, 0.6fr) minmax(100px, 1.2fr) minmax(120px, 1.4fr)
+      minmax(190px, 1.5fr);
+  }
+  .list-table-heading:nth-child(6) {
+    display: block;
+  }
+  .list-cell:nth-child(6) {
+    display: grid;
+  }
+}
+@container list (min-width: 1040px) {
+  .list-table-head,
+  .list-row {
+    grid-template-columns:
+      minmax(0, 2.4fr) minmax(72px, 1fr) minmax(72px, 0.6fr) minmax(100px, 1.2fr)
+      minmax(120px, 1.4fr) minmax(190px, 1.5fr);
+  }
+  .list-table-heading:nth-child(2) {
+    display: block;
+  }
+  .list-cell:nth-child(2) {
+    display: flex;
+  }
 }
 .list-table-head {
   display: grid;
@@ -129,10 +189,6 @@
   background: var(--panel);
   overflow-wrap: anywhere;
 }
-.list-detail-layout.has-detail .list-table-head,
-.list-detail-layout.has-detail .list-row {
-  grid-template-columns: minmax(0, 2.6fr) minmax(0, 1.2fr) minmax(0, 1.5fr) minmax(0, 1.8fr);
-}
 .list-row:hover {
   border-color: var(--accent);
 }
@@ -213,22 +269,6 @@
   color: var(--ink);
   font-weight: 600;
 }
-.list-row-observation-link {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  text-decoration: underline;
-}
-.list-row-links .list-row-observation-link {
-  margin-left: 0;
-}
-.list-row-observation-link:hover {
-  background: transparent;
-  color: var(--ink);
-}
 .list-row-indicator {
   display: inline-flex;
   align-items: center;
@@ -303,14 +343,6 @@
 .list-row-people .participant-stack {
   justify-content: flex-start;
   padding-left: 0;
-}
-.list-row-assignee-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 12px;
 }
 .list-row-title-details {
   display: grid;

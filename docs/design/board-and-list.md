@@ -9,13 +9,15 @@
   Compact column summaries show the count as x/n WIP or No limit, even when a project lens is active.
   Selecting a named project shows current non-archived In scope, Done, Blocked, Unscheduled and active-sprint coverage counts; these are not historical metrics.
   The project lens uses the same full-width panel flow as sprint summaries, with a standard section gap between them.
-  Desktop List rows use an Asana-like table grid with separate Title, Project, Participants, Sprints, Labels, and Links / Status columns plus a shared header, in the order a card shows them; the Participants cell carries the same participant stack as a card followed by the assignee's name in text, so the column stays scannable as a table; descriptions are not shown and the title cell is title-only.
+  Desktop List rows use an Asana-like table grid with separate Title, Project, Participants, Sprints, Labels, and Links / Status columns plus a shared header, in the order a card shows them; the Participants cell carries the same participant avatars as a card, with no name text; descriptions are not shown and the title cell is title-only.
   Links / Status owns blocked/archived state, a Board-aligned `GitLab links · count` header with View observations beside the label and left-aligned when wrapped, GitLab MR links one per line, and the attachment icon/count on its own line without a full-width border.
   Observation status popovers are positioned against the viewport so list containers do not clip the last row.
   The Project cell shows all associated projects.
-  When the detail pane is open, List hides the Sprints and Links / Status columns and expands the desktop detail track to `minmax(420px, 520px)` so the selected editor has more room.
-  At 480px and below, cells become labeled stacked fields without page-level horizontal scrolling.
-  With no selected item, desktop List uses a `minmax(0, 1fr) minmax(360px, 440px)` work-list/detail-pane split; below the desktop breakpoint, the detail pane becomes a full-width stacked section.
+  List columns follow the width the work list itself gets, not the viewport, so the sidebar and an open detail pane never starve the title: Title and Participants always show, and Labels (from 520px), Sprints (640px), Links / Status (900px) and Project (1040px) join in that order as the list widens.
+  Fields that do not fit are left out rather than scrolled sideways, so rows keep their click, drag and header alignment; the full set is always in the detail pane.
+  At 480px and below, cells become labeled stacked fields showing every field, without page-level horizontal scrolling.
+  With no selected item, the work list takes the full width.
+  With one selected, desktop List is a `minmax(0, 1fr) clamp(400px, 38%, 460px)` work-list/detail-pane split from 900px; below that, the detail pane becomes a full-width stacked section under the list.
   The sticky detail pane fits within the viewport with a 32px vertical gutter; its fields scroll independently and its footer stays visible.
 - Card ordering uses drag-and-drop; there are no separate up/down controls.
   The item editor’s `Move to` select remains the keyboard movement mechanism.

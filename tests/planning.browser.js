@@ -91,11 +91,8 @@ async function run(page) {
     'list rows do not show the participant stack',
   );
   check(
-    await page
-      .locator('.list-row .list-cell-people .list-row-assignee-name')
-      .first()
-      .evaluate((node) => node.textContent.trim().length > 0),
-    'list rows lost the assignee name',
+    (await page.locator('.list-row .list-row-assignee-name').count()) === 0,
+    'list rows show the assignee name in text instead of avatars only',
   );
   const listItemIDs = await page.locator('.list-row').evaluateAll((rows) => {
     const ids = rows.map((row) => row.dataset.item);
@@ -177,8 +174,8 @@ async function run(page) {
         .map((cell) => cell.dataset.label),
     );
   check(
-    visibleListFields.join('|') === 'Title|Project|Participants|Labels',
-    'detail pane did not compact the list columns',
+    visibleListFields.join('|') === 'Title|Participants|Labels',
+    'detail pane did not compact the list columns to what the narrowed list can hold',
   );
   await page.keyboard.press('Escape');
   check(

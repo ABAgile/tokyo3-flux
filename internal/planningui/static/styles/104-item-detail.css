@@ -100,7 +100,7 @@
 .item-detail-footer .archive-footer {
   margin-right: auto;
 }
-@media (max-width: 999px) {
+@media (max-width: 899px) {
   .item-detail-pane {
     position: static;
     max-height: none;
